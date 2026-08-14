@@ -40,15 +40,41 @@ flowchart LR
 └── Makefile                # Build, test, and run tasks
 ```
 
-## Quick Start (Docker)
+## How to Run
 
-To run the complete stack locally using Docker Compose:
+Flight provides a `Makefile` with shortcuts to run the project effortlessly. You can choose to run it entirely in Docker or natively with Go.
+
+### Option 1: Docker Compose (Recommended)
+This is the fastest way to get everything running, including the database and migrations.
 
 ```bash
-docker compose up --build -d postgres
-docker compose run --rm migrate
-docker compose up -d flight
+make dev
 ```
+> **What this does:**
+> 1. Starts a PostgreSQL database (`docker compose up --build -d postgres`).
+> 2. Runs the database migrations (`docker compose run --rm migrate`).
+> 3. Starts the Flight server on port `8080` (`docker compose up -d flight`).
+
+To verify it's running, open: `http://localhost:8080/health/ready`
+
+### Option 2: Native Go
+If you prefer running the Go code locally for easier debugging:
+
+1. **Start the database:**
+```bash
+docker compose up -d postgres
+```
+
+2. **Run migrations:**
+```bash
+make migrate
+```
+
+3. **Start the server:**
+```bash
+make run
+```
+> This will execute `go run ./cmd/flight serve`.
 
 > **Note**: For detailed setup instructions, deployment guides, and API documentation, please refer to the `docs/` folder.
 
