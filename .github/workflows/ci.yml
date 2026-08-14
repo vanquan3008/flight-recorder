@@ -1,0 +1,157 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-go@41dfa10bad2bb2ae585af6ee5bb4d7d973ad74ed # v5.1.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Format
+        run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
+      - name: Vet
+        run: go vet ./...
+      - name: Staticcheck
+        uses: dominikh/staticcheck-action@99cc357c3fc5518b2ee2885934575e0dc0a6a4de # v1.4.0
+        with:
+          version: "2026.1"
+          install-go: false
+      - name: Vulnerability scan
+        uses: golang/govulncheck-action@b625f0c822e11d0b503da13e61ffef6d4cdafa95 # v1.0.4
+        with:
+          go-version-file: go.mod
+          go-package: ./...
+
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-go@41dfa10bad2bb2ae585af6ee5bb4d7d973ad74ed # v5.1.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Test
+        run: go test -race -coverprofile=coverage.out ./...
+      - name: Upload coverage
+        uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2eb1cecbce25128df634d29 # v4.6.0
+        with:
+          files: coverage.out
+
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: flight
+          POSTGRES_USER: flight
+          POSTGRES_PASSWORD: flight-test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U flight -d flight"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 15
+    env:
+      FLIGHT_DATABASE_URL: postgres://flight:flight-test@127.0.0.1:5432/flight?sslmode=disable
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-go@41dfa10bad2bb2ae585af6ee5bb4d7d973ad74ed # v5.1.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build
+        run: |
+          go build -o bin/flight ./cmd/flight
+          go build -o bin/demo-service ./examples/demo-service
+      - name: Migrate clean PostgreSQL
+        run: |
+          set -euo pipefail
+          ./bin/flight migrate up
+          ./bin/flight migrate version | grep "version: 1, dirty: false"
+          FLIGHT_INTEGRATION_TEST=1 go test ./internal/postgres -run TestStoreEventsIdempotentIntegration
+      - name: Server smoke test
+        run: |
+          set -euo pipefail
+          ./bin/flight serve >flight.log 2>&1 &
+          server_pid=$!
+          demo_pid=
+          
+          trap 'kill -TERM "$demo_pid" "$server_pid" 2>/dev/null || true' EXIT
+          
+          echo "Waiting for server to be ready..."
+          ready=false
+          for attempt in $(seq 1 20); do
+            if curl --fail --silent http://127.0.0.1:8080/health/ready >/dev/null; then
+              ready=true
+              break
+            fi
+            sleep 0.5
+          done
+          
+          if [ "$ready" = false ]; then
+            echo "Server failed to start in time. Logs:"
+            cat flight.log
+            exit 1
+          fi
+          
+          echo "Starting demo service..."
+          OTEL_BSP_SCHEDULE_DELAY=100 ./bin/demo-service >demo.log 2>&1 &
+          demo_pid=$!
+          
+          demo_ready=false
+          for attempt in $(seq 1 20); do
+            if curl --silent -o /dev/null http://127.0.0.1:8090/error; then 
+              demo_ready=true
+              break
+            fi
+            sleep 0.25
+          done
+          
+          if [ "$demo_ready" = false ]; then
+            echo "Demo service failed to respond. Logs:"
+            cat demo.log
+            exit 1
+          fi
+          
+          events_ready=false
+          for attempt in $(seq 1 20); do
+            event_count=$(psql "$FLIGHT_DATABASE_URL" -tAc "SELECT count(*) FROM events WHERE service_name = 'flight-demo'")
+            if [ "$event_count" -ge 1 ]; then 
+              events_ready=true
+              break
+            fi
+            sleep 0.5
+          done
+          
+          if [ "$events_ready" = false ]; then
+            echo "Failed to find ingested events in PostgreSQL."
+            exit 1
+          fi
+          
+          curl --fail --silent http://127.0.0.1:8080/metrics | grep "flight_build_info" >/dev/null
+          curl --fail --silent http://127.0.0.1:8080/metrics | grep 'flight_ingested_records_total{signal="traces"}' >/dev/null
+          
+          kill -TERM "$demo_pid"
+          wait "$demo_pid" || true
+          kill -TERM "$server_pid"
+          wait "$server_pid" || true
+          trap - EXIT

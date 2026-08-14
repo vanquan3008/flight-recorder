@@ -1,0 +1,19 @@
+/bin/
+/data/
+/.env
+*.local.yaml
+coverage.out
+
+# Logs
+*.log
+
+# Docker
+.dockerignore
+
+# IDEs
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
