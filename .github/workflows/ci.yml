@@ -114,7 +114,7 @@ jobs:
           fi
           
           echo "Starting demo service..."
-          OTEL_BSP_SCHEDULE_DELAY=100 ./bin/demo-service >demo.log 2>&1 &
+          OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://127.0.0.1:4318/v1/traces OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf OTEL_BSP_SCHEDULE_DELAY=100 ./bin/demo-service >demo.log 2>&1 &
           demo_pid=$!
           
           demo_ready=false
