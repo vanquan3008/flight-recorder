@@ -27,12 +27,12 @@ jobs:
       - name: Vet
         run: go vet ./...
       - name: Staticcheck
-        uses: dominikh/staticcheck-action@99cc357c3fc5518b2ee2885934575e0dc0a6a4de # v1.4.0
+        uses: dominikh/staticcheck-action@v1.4.0
         with:
           version: "2026.1"
           install-go: false
       - name: Vulnerability scan
-        uses: golang/govulncheck-action@b625f0c822e11d0b503da13e61ffef6d4cdafa95 # v1.0.4
+        uses: golang/govulncheck-action@v1
         with:
           go-version-file: go.mod
           go-package: ./...
