@@ -1,0 +1,93 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  verify:
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - uses: ./.github/actions/setup-go
+
+      - name: Resolve version
+        id: version
+        run: |
+          if ! [[ "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Tag must be semver (example: v0.1.0)."
+            exit 1
+          fi
+          tag="${GITHUB_REF_NAME#v}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Build release binaries
+        run: |
+          tag="${{ steps.version.outputs.tag }}"
+          commit="${{ github.sha }}"
+          build_time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          mkdir -p dist
+          for target in linux/amd64 linux/arm64; do
+            GOOS=${target%/*} GOARCH=${target#*/} CGO_ENABLED=0 go build -trimpath \
+              -ldflags="-s -w -X main.version=${tag} -X main.commit=${commit} -X main.buildTime=${build_time}" \
+              -o "dist/flight-${target//\//-}" ./cmd/flight
+          done
+          (cd dist && sha256sum flight-* > SHA256SUMS)
+
+      - name: Log in to GHCR
+        uses: docker/login-action@9780b0c442788bb1491be57a9eaabd0f3bfaa5de # v3.3.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@8e5442c4ef58f5d8a5ca663f5351477c5a81992d # v5.5.1
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=sha
+
+      - name: Build and push image
+        uses: docker/build-push-action@14487c7820662c4b682a9a2c082f975cb161722 # v6.7.0
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.version.outputs.tag }}
+            COMMIT=${{ github.sha }}
+            BUILD_TIME=${{ github.run_started_at }}
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@a8a982cfeaa6a0a072aaaf7e905cec274a285e16 # v2.0.8
+        with:
+          generate_release_notes: true
+          files: |
+            dist/flight-linux-amd64
+            dist/flight-linux-arm64
+            dist/SHA256SUMS

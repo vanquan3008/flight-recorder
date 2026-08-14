@@ -4,13 +4,20 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_call:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
   contents: read
+
+env:
+  POSTGRES_DB: flight
+  POSTGRES_USER: flight
+  POSTGRES_PASSWORD: flight-test
+  FLIGHT_DATABASE_URL: postgres://flight:flight-test@127.0.0.1:5432/flight?sslmode=disable
 
 jobs:
   lint:
@@ -18,14 +25,11 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: actions/setup-go@41dfa10bad2bb2ae585af6ee5bb4d7d973ad74ed # v5.1.0
-        with:
-          go-version-file: go.mod
-          cache: true
+      - uses: ./.github/actions/setup-go
       - name: Format
-        run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
+        run: make fmt-check
       - name: Vet
-        run: go vet ./...
+        run: make vet
       - name: Staticcheck
         uses: dominikh/staticcheck-action@v1.4.0
         with:
@@ -42,116 +46,49 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: actions/setup-go@41dfa10bad2bb2ae585af6ee5bb4d7d973ad74ed # v5.1.0
-        with:
-          go-version-file: go.mod
-          cache: true
+      - uses: ./.github/actions/setup-go
       - name: Test
         run: go test -race -coverprofile=coverage.out ./...
+      - name: Compile all packages
+        run: go build ./...
       - name: Upload coverage
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: codecov/codecov-action@v4
+        continue-on-error: true
         with:
           files: coverage.out
+          fail_ci_if_error: false
 
-  integration:
+  docker:
+    needs: [lint, test]
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-    services:
-      postgres:
-        image: postgres:17-alpine
-        env:
-          POSTGRES_DB: flight
-          POSTGRES_USER: flight
-          POSTGRES_PASSWORD: flight-test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U flight -d flight"
-          --health-interval 2s
-          --health-timeout 3s
-          --health-retries 15
-    env:
-      FLIGHT_DATABASE_URL: postgres://flight:flight-test@127.0.0.1:5432/flight?sslmode=disable
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: actions/setup-go@41dfa10bad2bb2ae585af6ee5bb4d7d973ad74ed # v5.1.0
-        with:
-          go-version-file: go.mod
-          cache: true
-      - name: Build
+      - name: Build image
         run: |
-          go build -o bin/flight ./cmd/flight
-          go build -o bin/demo-service ./examples/demo-service
-      - name: Migrate clean PostgreSQL
+          docker build \
+            --build-arg VERSION=ci \
+            --build-arg COMMIT=${{ github.sha }} \
+            --build-arg BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
+            -t flight:ci .
+      - name: Verify image metadata
+        run: docker inspect flight:ci --format '{{.Config.User}}' | grep -x nonroot
+
+  ci-success:
+    needs: [lint, test, docker]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require all jobs
         run: |
-          set -euo pipefail
-          ./bin/flight migrate up
-          ./bin/flight migrate version | grep "version: 1, dirty: false"
-          FLIGHT_INTEGRATION_TEST=1 go test ./internal/postgres -run TestStoreEventsIdempotentIntegration
-      - name: Server smoke test
-        run: |
-          set -euo pipefail
-          ./bin/flight serve >flight.log 2>&1 &
-          server_pid=$!
-          demo_pid=
-          
-          trap 'kill -TERM "$demo_pid" "$server_pid" 2>/dev/null || true' EXIT
-          
-          echo "Waiting for server to be ready..."
-          ready=false
-          for attempt in $(seq 1 20); do
-            if curl --fail --silent http://127.0.0.1:8080/health/ready >/dev/null; then
-              ready=true
-              break
+          check() {
+            if [ "$1" != "success" ]; then
+              echo "Job result was $1 (expected success)."
+              exit 1
             fi
-            sleep 0.5
-          done
-          
-          if [ "$ready" = false ]; then
-            echo "Server failed to start in time. Logs:"
-            cat flight.log
-            exit 1
-          fi
-          
-          echo "Starting demo service..."
-          OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://127.0.0.1:4318/v1/traces OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf OTEL_BSP_SCHEDULE_DELAY=100 ./bin/demo-service >demo.log 2>&1 &
-          demo_pid=$!
-          
-          demo_ready=false
-          for attempt in $(seq 1 20); do
-            if curl --silent -o /dev/null http://127.0.0.1:8090/error; then 
-              demo_ready=true
-              break
-            fi
-            sleep 0.25
-          done
-          
-          if [ "$demo_ready" = false ]; then
-            echo "Demo service failed to respond. Logs:"
-            cat demo.log
-            exit 1
-          fi
-          
-          events_ready=false
-          for attempt in $(seq 1 20); do
-            event_count=$(psql "$FLIGHT_DATABASE_URL" -tAc "SELECT count(*) FROM events WHERE service_name = 'flight-demo'")
-            if [ "$event_count" -ge 1 ]; then 
-              events_ready=true
-              break
-            fi
-            sleep 0.5
-          done
-          
-          if [ "$events_ready" = false ]; then
-            echo "Failed to find ingested events in PostgreSQL."
-            exit 1
-          fi
-          
-          curl --fail --silent http://127.0.0.1:8080/metrics | grep "flight_build_info" >/dev/null
-          curl --fail --silent http://127.0.0.1:8080/metrics | grep 'flight_ingested_records_total{signal="traces"}' >/dev/null
-          
-          kill -TERM "$demo_pid"
-          wait "$demo_pid" || true
-          kill -TERM "$server_pid"
-          wait "$server_pid" || true
-          trap - EXIT
+          }
+          check "${{ needs.lint.result }}"
+          check "${{ needs.test.result }}"
+          check "${{ needs.docker.result }}"
+

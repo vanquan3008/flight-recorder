@@ -1,7 +1,13 @@
-.PHONY: build test test-race vet staticcheck vulncheck fmt-check run dev migrate migrate-version clean
+.PHONY: build build-all test test-race vet staticcheck vulncheck fmt-check ci run dev migrate migrate-version clean
 
 build:
 	go build -o bin/flight ./cmd/flight
+
+build-all:
+	go build -o bin/flight ./cmd/flight
+	go build -o bin/demo-service ./examples/demo-service
+
+ci: fmt-check vet staticcheck vulncheck test-race build-all
 
 test:
 	go test ./...

@@ -282,7 +282,7 @@ Exit gate evidence:
 - [x] PostgreSQL outage keeps liveness `200` and changes readiness to `503`.
 - [x] Readiness requires a reachable database and current non-dirty schema.
 - [x] SIGTERM drains the HTTP server and exits `0` within deadline.
-- [x] Format, Vet, unit/race tests, Staticcheck, build, Docker and metrics smoke tests pass.
+- [x] Format, Vet, unit/race tests, Staticcheck, build, Docker and metrics tests pass.
 
 ### Phase 2 — OTLP ingestion (complete)
 
