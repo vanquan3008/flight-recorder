@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/flight-observability/flight/internal/config"
@@ -15,7 +16,8 @@ import (
 )
 
 type Database struct {
-	pool *pgxpool.Pool
+	pool          *pgxpool.Pool
+	metadataCache sync.Map
 }
 
 func Open(applicationContext context.Context, configuration config.DatabaseConfig) (*Database, error) {
@@ -68,25 +70,33 @@ func (database *Database) StoreEvents(ctx context.Context, ingestion config.Inge
 	}
 	defer func() { _ = transaction.Rollback(ctx) }()
 
-	if _, insertError := transaction.Exec(ctx, `
-		INSERT INTO projects (id, slug, name)
-		VALUES ($1, $2, $3)
-		ON CONFLICT (id) DO UPDATE SET slug = EXCLUDED.slug, name = EXCLUDED.name, updated_at = now()`,
-		ingestion.ProjectID, ingestion.ProjectSlug, ingestion.ProjectName); insertError != nil {
-		return fmt.Errorf("ensure ingestion project: %w", insertError)
-	}
-	if _, insertError := transaction.Exec(ctx, `
-		INSERT INTO environments (id, project_id, name)
-		VALUES ($1, $2, $3)
-		ON CONFLICT (project_id, id) DO UPDATE SET name = EXCLUDED.name`,
-		ingestion.EnvironmentID, ingestion.ProjectID, ingestion.EnvironmentName); insertError != nil {
-		return fmt.Errorf("ensure ingestion environment: %w", insertError)
+	envKey := fmt.Sprintf("env:%s:%s", ingestion.ProjectID, ingestion.EnvironmentID)
+	if _, cached := database.metadataCache.Load(envKey); !cached {
+		if _, insertError := transaction.Exec(ctx, `
+			INSERT INTO projects (id, slug, name)
+			VALUES ($1, $2, $3)
+			ON CONFLICT (id) DO UPDATE SET slug = EXCLUDED.slug, name = EXCLUDED.name, updated_at = now()`,
+			ingestion.ProjectID, ingestion.ProjectSlug, ingestion.ProjectName); insertError != nil {
+			return fmt.Errorf("ensure ingestion project: %w", insertError)
+		}
+		if _, insertError := transaction.Exec(ctx, `
+			INSERT INTO environments (id, project_id, name)
+			VALUES ($1, $2, $3)
+			ON CONFLICT (project_id, id) DO UPDATE SET name = EXCLUDED.name`,
+			ingestion.EnvironmentID, ingestion.ProjectID, ingestion.EnvironmentName); insertError != nil {
+			return fmt.Errorf("ensure ingestion environment: %w", insertError)
+		}
+		database.metadataCache.Store(envKey, true)
 	}
 
 	services := make(map[string]struct{})
 	for _, event := range events {
 		if event.ProjectID != ingestion.ProjectID || event.Environment != ingestion.EnvironmentName {
 			return errors.New("event ingestion scope mismatch")
+		}
+		svcKey := fmt.Sprintf("svc:%s:%s:%s", ingestion.ProjectID, ingestion.EnvironmentID, event.ServiceName)
+		if _, cached := database.metadataCache.Load(svcKey); cached {
+			continue
 		}
 		if _, exists := services[event.ServiceName]; exists {
 			continue
@@ -100,6 +110,7 @@ func (database *Database) StoreEvents(ctx context.Context, ingestion config.Inge
 			serviceID, ingestion.ProjectID, ingestion.EnvironmentID, event.ServiceName); insertError != nil {
 			return fmt.Errorf("ensure ingestion service: %w", insertError)
 		}
+		database.metadataCache.Store(svcKey, true)
 	}
 
 	batch := &pgx.Batch{}

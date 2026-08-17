@@ -1,5 +1,7 @@
 # Incident model
 
+> **Status:** Phase 3 — designed, **not yet implemented**. No `internal/incident/` package exists in the current codebase.
+
 Incident is Flight's central aggregate. It summarizes equivalent failures and references immutable event evidence rather than duplicating telemetry.
 
 V1 candidates are deterministic: HTTP server status at least 500, exception Event, or ERROR/FATAL log. Fingerprints normalize service, route/operation, error type, and message whitespace/case. AI and fuzzy clustering are not part of V1.

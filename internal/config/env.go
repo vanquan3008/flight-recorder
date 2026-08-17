@@ -1,0 +1,195 @@
+package config
+
+import (
+	"errors"
+	"fmt"
+	"log/slog"
+	"os"
+	"strconv"
+	"strings"
+	"time"
+)
+
+func applyEnvironment(configuration *Config) error {
+	configuration.HTTP.Address = environmentValue("FLIGHT_HTTP_ADDRESS", configuration.HTTP.Address)
+	configuration.Ingestion.GRPCAddress = environmentValue("FLIGHT_INGESTION_GRPC_ADDRESS", configuration.Ingestion.GRPCAddress)
+	configuration.Ingestion.HTTPAddress = environmentValue("FLIGHT_INGESTION_HTTP_ADDRESS", configuration.Ingestion.HTTPAddress)
+	configuration.Ingestion.ProjectID = environmentValue("FLIGHT_INGESTION_PROJECT_ID", configuration.Ingestion.ProjectID)
+	configuration.Ingestion.ProjectSlug = environmentValue("FLIGHT_INGESTION_PROJECT_SLUG", configuration.Ingestion.ProjectSlug)
+	configuration.Ingestion.ProjectName = environmentValue("FLIGHT_INGESTION_PROJECT_NAME", configuration.Ingestion.ProjectName)
+	configuration.Ingestion.EnvironmentID = environmentValue("FLIGHT_INGESTION_ENVIRONMENT_ID", configuration.Ingestion.EnvironmentID)
+	configuration.Ingestion.EnvironmentName = environmentValue("FLIGHT_INGESTION_ENVIRONMENT_NAME", configuration.Ingestion.EnvironmentName)
+	configuration.Database.URL = environmentValue("FLIGHT_DATABASE_URL", configuration.Database.URL)
+	configuration.Database.MigrationsPath = environmentValue("FLIGHT_MIGRATIONS_PATH", configuration.Database.MigrationsPath)
+
+	var parseError error
+	if configuration.HTTP.ReadHeaderTimeout, parseError = readDuration("FLIGHT_HTTP_READ_HEADER_TIMEOUT", configuration.HTTP.ReadHeaderTimeout); parseError != nil {
+		return parseError
+	}
+	if configuration.HTTP.ReadTimeout, parseError = readDuration("FLIGHT_HTTP_READ_TIMEOUT", configuration.HTTP.ReadTimeout); parseError != nil {
+		return parseError
+	}
+	if configuration.HTTP.WriteTimeout, parseError = readDuration("FLIGHT_HTTP_WRITE_TIMEOUT", configuration.HTTP.WriteTimeout); parseError != nil {
+		return parseError
+	}
+	if configuration.HTTP.IdleTimeout, parseError = readDuration("FLIGHT_HTTP_IDLE_TIMEOUT", configuration.HTTP.IdleTimeout); parseError != nil {
+		return parseError
+	}
+	if configuration.ShutdownTimeout, parseError = readDuration("FLIGHT_SHUTDOWN_TIMEOUT", configuration.ShutdownTimeout); parseError != nil {
+		return parseError
+	}
+	if configuration.HTTP.MaxHeaderBytes, parseError = readPositiveInteger("FLIGHT_HTTP_MAX_HEADER_BYTES", configuration.HTTP.MaxHeaderBytes); parseError != nil {
+		return parseError
+	}
+	if configuration.HTTP.ManagementMaxBodyBytes, parseError = readPositiveInt64("FLIGHT_HTTP_MANAGEMENT_MAX_BODY_BYTES", configuration.HTTP.ManagementMaxBodyBytes); parseError != nil {
+		return parseError
+	}
+	if configuration.Ingestion.MaxRequestBytes, parseError = readPositiveInt64("FLIGHT_INGESTION_MAX_REQUEST_BYTES", configuration.Ingestion.MaxRequestBytes); parseError != nil {
+		return parseError
+	}
+	if configuration.Ingestion.MaxRecordsPerRequest, parseError = readPositiveInteger("FLIGHT_INGESTION_MAX_RECORDS_PER_REQUEST", configuration.Ingestion.MaxRecordsPerRequest); parseError != nil {
+		return parseError
+	}
+	if configuration.Ingestion.MaxAttributesPerRecord, parseError = readPositiveInteger("FLIGHT_INGESTION_MAX_ATTRIBUTES_PER_RECORD", configuration.Ingestion.MaxAttributesPerRecord); parseError != nil {
+		return parseError
+	}
+	if configuration.Ingestion.MaxAttributeValueBytes, parseError = readPositiveInteger("FLIGHT_INGESTION_MAX_ATTRIBUTE_VALUE_BYTES", configuration.Ingestion.MaxAttributeValueBytes); parseError != nil {
+		return parseError
+	}
+	if configuration.Ingestion.MaxAttributeDepth, parseError = readPositiveInteger("FLIGHT_INGESTION_MAX_ATTRIBUTE_DEPTH", configuration.Ingestion.MaxAttributeDepth); parseError != nil {
+		return parseError
+	}
+	if configuration.Ingestion.QueueSize, parseError = readPositiveInteger("FLIGHT_INGESTION_QUEUE_SIZE", configuration.Ingestion.QueueSize); parseError != nil {
+		return parseError
+	}
+	if configuration.Ingestion.QueueMaxBytes, parseError = readPositiveInt64("FLIGHT_INGESTION_QUEUE_MAX_BYTES", configuration.Ingestion.QueueMaxBytes); parseError != nil {
+		return parseError
+	}
+	if configuration.Ingestion.EnqueueTimeout, parseError = readDuration("FLIGHT_INGESTION_ENQUEUE_TIMEOUT", configuration.Ingestion.EnqueueTimeout); parseError != nil {
+		return parseError
+	}
+	if configuration.Ingestion.BatchSize, parseError = readPositiveInteger("FLIGHT_INGESTION_BATCH_SIZE", configuration.Ingestion.BatchSize); parseError != nil {
+		return parseError
+	}
+	if configuration.Ingestion.BatchTimeout, parseError = readDuration("FLIGHT_INGESTION_BATCH_TIMEOUT", configuration.Ingestion.BatchTimeout); parseError != nil {
+		return parseError
+	}
+	if configuration.Ingestion.FlushInterval, parseError = readDuration("FLIGHT_INGESTION_FLUSH_INTERVAL", configuration.Ingestion.FlushInterval); parseError != nil {
+		return parseError
+	}
+	if configuration.Ingestion.Workers, parseError = readPositiveInteger("FLIGHT_INGESTION_WORKERS", configuration.Ingestion.Workers); parseError != nil {
+		return parseError
+	}
+	if redactedKeys, exists := os.LookupEnv("FLIGHT_INGESTION_REDACTED_KEYS"); exists {
+		configuration.Ingestion.RedactedKeys = splitCommaSeparated(redactedKeys)
+	}
+	if configuration.Database.MaxConnections, parseError = readPositiveInt32("FLIGHT_DATABASE_MAX_CONNECTIONS", configuration.Database.MaxConnections); parseError != nil {
+		return parseError
+	}
+	if configuration.Database.MinConnections, parseError = readNonNegativeInt32("FLIGHT_DATABASE_MIN_CONNECTIONS", configuration.Database.MinConnections); parseError != nil {
+		return parseError
+	}
+	if configuration.Database.MaxConnectionLifetime, parseError = readDuration("FLIGHT_DATABASE_MAX_CONNECTION_LIFETIME", configuration.Database.MaxConnectionLifetime); parseError != nil {
+		return parseError
+	}
+	if configuration.Database.MaxConnectionIdleTime, parseError = readDuration("FLIGHT_DATABASE_MAX_CONNECTION_IDLE_TIME", configuration.Database.MaxConnectionIdleTime); parseError != nil {
+		return parseError
+	}
+	if configuration.Database.HealthCheckPeriod, parseError = readDuration("FLIGHT_DATABASE_HEALTH_CHECK_PERIOD", configuration.Database.HealthCheckPeriod); parseError != nil {
+		return parseError
+	}
+	if configuration.Database.ReadinessTimeout, parseError = readDuration("FLIGHT_DATABASE_READINESS_TIMEOUT", configuration.Database.ReadinessTimeout); parseError != nil {
+		return parseError
+	}
+	if configuration.LogLevel, parseError = parseLogLevel(environmentValue("FLIGHT_LOG_LEVEL", configuration.LogLevel.String())); parseError != nil {
+		return parseError
+	}
+	return nil
+}
+
+func splitCommaSeparated(value string) []string {
+	parts := strings.Split(value, ",")
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	return result
+}
+
+func environmentValue(name, fallback string) string {
+	if value, exists := os.LookupEnv(name); exists {
+		return value
+	}
+	return fallback
+}
+
+func readDuration(name string, fallback time.Duration) (time.Duration, error) {
+	rawValue, exists := os.LookupEnv(name)
+	if !exists {
+		return fallback, nil
+	}
+	parsedDuration, parseError := time.ParseDuration(rawValue)
+	if parseError != nil || parsedDuration <= 0 {
+		return 0, fmt.Errorf("%s must be a positive duration", name)
+	}
+	return parsedDuration, nil
+}
+
+func readPositiveInteger(name string, fallback int) (int, error) {
+	rawValue, exists := os.LookupEnv(name)
+	if !exists {
+		return fallback, nil
+	}
+	parsedInteger, parseError := strconv.Atoi(rawValue)
+	if parseError != nil || parsedInteger <= 0 {
+		return 0, fmt.Errorf("%s must be a positive integer", name)
+	}
+	return parsedInteger, nil
+}
+
+func readPositiveInt64(name string, fallback int64) (int64, error) {
+	rawValue, exists := os.LookupEnv(name)
+	if !exists {
+		return fallback, nil
+	}
+	parsedInteger, parseError := strconv.ParseInt(rawValue, 10, 64)
+	if parseError != nil || parsedInteger <= 0 {
+		return 0, fmt.Errorf("%s must be a positive integer", name)
+	}
+	return parsedInteger, nil
+}
+
+func readPositiveInt32(name string, fallback int32) (int32, error) {
+	parsedInteger, parseError := readInt32(name, fallback)
+	if parseError != nil || parsedInteger <= 0 {
+		return 0, fmt.Errorf("%s must be a positive integer", name)
+	}
+	return parsedInteger, nil
+}
+
+func readNonNegativeInt32(name string, fallback int32) (int32, error) {
+	parsedInteger, parseError := readInt32(name, fallback)
+	if parseError != nil || parsedInteger < 0 {
+		return 0, fmt.Errorf("%s must be a non-negative integer", name)
+	}
+	return parsedInteger, nil
+}
+
+func readInt32(name string, fallback int32) (int32, error) {
+	rawValue, exists := os.LookupEnv(name)
+	if !exists {
+		return fallback, nil
+	}
+	parsedInteger, parseError := strconv.ParseInt(rawValue, 10, 32)
+	return int32(parsedInteger), parseError
+}
+
+func parseLogLevel(value string) (slog.Level, error) {
+	var level slog.Level
+	if parseError := level.UnmarshalText([]byte(strings.ToUpper(value))); parseError != nil {
+		return 0, errors.New("FLIGHT_LOG_LEVEL/log_level must be debug, info, warn, or error")
+	}
+	return level, nil
+}
