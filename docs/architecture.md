@@ -2,6 +2,8 @@
 
 Flight begins as a modular monolith: one binary, one PostgreSQL database, and an optional filesystem artifact volume. This minimizes operational failure modes while preserving explicit domain and security boundaries.
 
+> **Implementation status:** Phases 0–2 (OTLP ingestion, storage, and management health/metrics) are implemented and verified. The incident engine described below is Phase 3 design work and is **not yet implemented**.
+
 ## System flow
 
 ```mermaid

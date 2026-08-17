@@ -1,5 +1,9 @@
 # ADR-007: Incident-centric domain
 
+## Status
+
+Accepted (design). Implementation is pending and tracked as Phase 3; the incident engine is **not yet implemented**.
+
 ## Context
 
 Operators need a coherent production failure rather than another raw-signal browser.

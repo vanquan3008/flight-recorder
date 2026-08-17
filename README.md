@@ -29,7 +29,6 @@ flowchart LR
 ├── internal/               # Core domain logic and bounded contexts
 │   ├── config/             # Strict configuration loading and validation
 │   ├── httpapi/            # Management HTTP server and middleware
-│   ├── incident/           # Failure detection and deduplication
 │   ├── ingest/otlp/        # OTLP receivers and protobuf normalization
 │   ├── pipeline/           # Bounded ingestion pipeline and batching
 │   ├── postgres/           # Database connections and event storage

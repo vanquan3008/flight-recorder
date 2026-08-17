@@ -47,7 +47,7 @@ type Event struct {
 
 func (event Event) Validate() error {
 	if event.ID == "" || event.ProjectID == "" || event.ServiceName == "" {
-		return errors.New("event ID, project ID, and service name are required")
+		return errors.New("Event ID, project ID, and service name are required")
 	}
 	if event.Timestamp.IsZero() {
 		return errors.New("event timestamp is required")

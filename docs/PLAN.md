@@ -43,7 +43,7 @@ The management lane has separate HTTP limits and database pool budget so a slow 
 - `telemetry` owns the canonical event, validation rules, and stable string values.
 - `pipeline` owns bounded queues, batching, overload policy, and lifecycle.
 - `postgres` owns SQL and transaction semantics. Repository interfaces are introduced only where a domain consumer needs substitution in tests.
-- `incident` owns detection, fingerprinting, deduplication, occurrence counting, and timeline rules.
+- `incident` (Phase 3, not yet implemented) owns detection, fingerprinting, deduplication, occurrence counting, and timeline rules.
 - `httpapi` owns transport concerns, authentication middleware, request IDs, pagination, and error envelopes.
 - `capture` owns bounded body capture and redaction. It does not perform replay.
 - `blob` owns opaque artifact keys and filesystem access.
@@ -58,7 +58,7 @@ cmd/flight/              single binary and subcommand dispatch
 internal/config/         validated configuration
 internal/httpapi/        server lifecycle and HTTP transport
 internal/telemetry/      canonical events
-internal/incident/       detection/fingerprinting, then incident service
+internal/incident/       Phase 3 detection/fingerprinting, then incident service
 internal/ingest/otlp/    Phase 2 OTLP adapters
 internal/pipeline/       Phase 2 bounded batch pipeline
 internal/postgres/       Phase 1 pgx pool and schema readiness

@@ -73,7 +73,7 @@ jobs:
             --build-arg BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
             -t flight:ci .
       - name: Verify image metadata
-        run: docker inspect flight:ci --format '{{.Config.User}}' | grep -x nonroot
+        run: docker inspect flight:ci --format '{{.Config.User}}' | grep -E '^nonroot(:nonroot)?$'
 
   ci-success:
     needs: [lint, test, docker]

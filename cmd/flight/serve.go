@@ -10,6 +10,8 @@ import (
 	"os/signal"
 	"syscall"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/flight-observability/flight/internal/config"
 	"github.com/flight-observability/flight/internal/httpapi"
 	ingestotlp "github.com/flight-observability/flight/internal/ingest/otlp"
@@ -20,7 +22,7 @@ import (
 )
 
 func runServer(arguments []string) int {
-	flags := flag.NewFlagSet("serve", flag.ContinueOnError)
+	flags := flag.NewFlagSet("Serve", flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
 	configFile := flags.String("config", "", "path to a versioned YAML configuration file")
 	if parseError := flags.Parse(arguments); parseError != nil {
@@ -64,7 +66,7 @@ func runServer(arguments []string) int {
 	)
 	ingestionPipeline.Start()
 
-	logger.Info("starting Flight",
+	logger.Info("Starting Flight",
 		"version", version,
 		"http_address", configuration.HTTP.Address,
 		"otlp_grpc_address", configuration.Ingestion.GRPCAddress,
@@ -78,17 +80,22 @@ func runServer(arguments []string) int {
 		}
 		return database.Ready(readinessContext)
 	}, metricRegistry)
-	runtimeContext, cancelRuntime := context.WithCancel(applicationContext)
-	results := make(chan error, 2)
-	go func() { results <- httpServer.Run(runtimeContext) }()
-	go func() { results <- otlpServer.Run(runtimeContext) }()
 
-	serveError := <-results
-	cancelRuntime()
-	serveError = errors.Join(serveError, <-results)
+	group, runtimeContext := errgroup.WithContext(applicationContext)
+
+	group.Go(func() error {
+		return httpServer.Run(runtimeContext)
+	})
+	group.Go(func() error {
+		return otlpServer.Run(runtimeContext)
+	})
+
+	serveError := group.Wait()
+
 	shutdownContext, cancelShutdown := context.WithTimeout(context.Background(), configuration.ShutdownTimeout)
 	pipelineError := ingestionPipeline.Shutdown(shutdownContext)
 	cancelShutdown()
+
 	if runtimeError := errors.Join(serveError, pipelineError); runtimeError != nil {
 		logger.Error("server stopped", "error", runtimeError)
 		return 1
