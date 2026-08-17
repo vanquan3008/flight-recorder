@@ -9,6 +9,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/joho/godotenv"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -79,6 +80,8 @@ type DatabaseConfig struct {
 }
 
 func Load(configFile string) (Config, error) {
+	_ = godotenv.Load()
+
 	configuration := defaultConfig()
 	if configFile == "" {
 		configFile = os.Getenv("FLIGHT_CONFIG_FILE")

@@ -332,6 +332,42 @@ Run load/soak, race, fuzz, outage, migration, backup/restore, container, depende
 
 Exit gate: all final validation commands and E2E paths have recorded evidence; no critical/high known security findings; rollback and restore are rehearsed; SLO/capacity guidance is documented.
 
+### Phase 9 — Web UI & Dashboard
+
+Implement a modern frontend (React/Vue/Svelte) to visualize incidents, provide a dashboard for traces, and allow for replay comparisons visually.
+
+Exit gate: Users can view, search, and replay incidents completely from the browser.
+
+### Phase 10 — Real-time Alerting & Webhooks
+
+Implement real-time alerting via Webhooks, Slack, Teams, and integrations with PagerDuty/Opsgenie for critical incidents.
+
+Exit gate: Configured rules trigger alerts automatically in integrated external channels upon new incident detection.
+
+### Phase 11 — Advanced Analytics & SLOs
+
+Implement error budget tracking, service reliability metrics (MTTR/MTBF), and visual reporting graphs based on incident frequency.
+
+Exit gate: The dashboard displays real-time SLO and analytics charts reliably from PostgreSQL or an analytical backend.
+
+### Phase 12 — Service Topology Map
+
+Implement a dependency graph visualization derived from OTLP trace data to highlight failing services intuitively.
+
+Exit gate: The UI renders an interactive service map where degraded services are marked in red based on active incidents.
+
+### Phase 13 — Multi-tenant & Enterprise RBAC
+
+Implement granular roles (Admin/Viewer), single sign-on (SSO), and full data isolation across multiple organizations/teams.
+
+Exit gate: Users belonging to different teams cannot read each other's incidents, and SSO flows successfully provision identities.
+
+### Phase 14 — AI-powered Root Cause Analysis
+
+Integrate LLM capabilities to analyze stack traces, summarize incidents in natural language, and suggest immediate code fixes.
+
+Exit gate: Each incident page includes a high-quality AI summary and actionable mitigation steps without manual intervention.
+
 ## Risks and mitigations
 
 | Risk | Consequence | Mitigation / proof |
@@ -384,3 +420,7 @@ Flight V1 is production-ready only when all of the following are evidenced:
 - Load test meets the declared throughput/latency/retention envelope with documented resources.
 - Dependency scan, image scan, threat-model review, backup/restore drill, and documentation review pass.
 - Every unexecuted validation is reported as unverified; no inferred success is accepted.
+- The Web UI provides full visibility and control over incidents without requiring CLI tools.
+- Real-time alerts dispatch accurately to configured Webhooks or chat integrations.
+- SLOs and Service Topology maps render correctly on the dashboard.
+- AI summaries for incidents generate cleanly, providing accurate and actionable mitigations.

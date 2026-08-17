@@ -2,11 +2,11 @@ services:
   postgres:
     image: postgres:17-alpine
     environment:
-      POSTGRES_DB: flight
-      POSTGRES_USER: flight
-      POSTGRES_PASSWORD: flight-dev-only
+      POSTGRES_DB: ${POSTGRES_DB:-flight}
+      POSTGRES_USER: ${POSTGRES_USER:-flight}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-flight-dev-only}
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U flight -d flight"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-flight} -d ${POSTGRES_DB:-flight}"]
       interval: 2s
       timeout: 3s
       retries: 15
@@ -23,7 +23,7 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      FLIGHT_DATABASE_URL: postgres://flight:flight-dev-only@postgres:5432/flight?sslmode=disable
+      FLIGHT_DATABASE_URL: ${FLIGHT_DATABASE_URL:-postgres://${POSTGRES_USER:-flight}:${POSTGRES_PASSWORD:-flight-dev-only}@postgres:5432/${POSTGRES_DB:-flight}?sslmode=disable}
     command: ["migrate", "up"]
 
   flight:
@@ -33,9 +33,9 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      FLIGHT_HTTP_ADDRESS: ":8080"
-      FLIGHT_LOG_LEVEL: info
-      FLIGHT_DATABASE_URL: postgres://flight:flight-dev-only@postgres:5432/flight?sslmode=disable
+      FLIGHT_HTTP_ADDRESS: ${FLIGHT_HTTP_ADDRESS:-:8080}
+      FLIGHT_LOG_LEVEL: ${FLIGHT_LOG_LEVEL:-info}
+      FLIGHT_DATABASE_URL: ${FLIGHT_DATABASE_URL:-postgres://${POSTGRES_USER:-flight}:${POSTGRES_PASSWORD:-flight-dev-only}@postgres:5432/${POSTGRES_DB:-flight}?sslmode=disable}
     init: true
     read_only: true
     tmpfs:
@@ -59,8 +59,8 @@ services:
     healthcheck:
       disable: true
     environment:
-      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://flight:4318/v1/traces
-      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-http://flight:4318/v1/traces}
+      OTEL_EXPORTER_OTLP_PROTOCOL: ${OTEL_EXPORTER_OTLP_PROTOCOL:-http/protobuf}
     ports:
       - "8090:8090"
 
