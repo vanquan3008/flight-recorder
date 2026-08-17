@@ -39,6 +39,16 @@ flowchart LR
 └── Makefile                # Build, test, and run tasks
 ```
 
+## Configuration
+
+Flight is fully configured using environment variables. You can create a `.env` file in the root of the project to customize settings. 
+For example:
+```env
+FLIGHT_LOG_LEVEL=debug
+FLIGHT_HTTP_ADDRESS=:8080
+```
+Docker Compose also picks up this `.env` file automatically to configure PostgreSQL and other services.
+
 ## How to Run
 
 Flight provides a `Makefile` with shortcuts to run the project effortlessly. You can choose to run it entirely in Docker or natively with Go.
