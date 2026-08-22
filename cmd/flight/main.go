@@ -27,7 +27,7 @@ func run(args []string) int {
 	case "migrate":
 		return runMigrations(args[1:])
 	case "version":
-		fmt.Printf("flight %s\ncommit: %s\nbuilt: %s\n", version, commit, buildTime)
+		fmt.Printf("Flight %s\ncommit: %s\nbuilt: %s\n", version, commit, buildTime)
 		return 0
 	case "healthcheck":
 		return healthcheck()

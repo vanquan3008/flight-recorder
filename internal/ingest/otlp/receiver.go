@@ -7,20 +7,34 @@ import (
 	"github.com/flight-observability/flight/internal/config"
 	flightmetrics "github.com/flight-observability/flight/internal/metrics"
 	"github.com/flight-observability/flight/internal/pipeline"
+	"github.com/flight-observability/flight/internal/postgres"
 	collectorlogspb "go.opentelemetry.io/proto/otlp/collector/logs/v1"
 	collectortracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"time"
 )
 
 type Receiver struct {
-	normalizer *normalizer
-	pipeline   *pipeline.Pipeline
-	metrics    *flightmetrics.Registry
+	normalizer   *normalizer
+	pipeline     *pipeline.Pipeline
+	metrics      *flightmetrics.Registry
+	authenticate func(context.Context, string) (postgres.Principal, error)
 }
 
-func NewReceiver(configuration config.IngestionConfig, ingestionPipeline *pipeline.Pipeline, metricRegistry *flightmetrics.Registry) *Receiver {
-	return &Receiver{normalizer: newNormalizer(configuration), pipeline: ingestionPipeline, metrics: metricRegistry}
+func NewReceiver(configuration config.IngestionConfig, ingestionPipeline *pipeline.Pipeline, metricRegistry *flightmetrics.Registry, authenticate func(context.Context, string) (postgres.Principal, error)) *Receiver {
+	return &Receiver{normalizer: newNormalizer(configuration), pipeline: ingestionPipeline, metrics: metricRegistry, authenticate: authenticate}
+}
+
+func (receiver *Receiver) authorize(ctx context.Context, rawKey string) error {
+	if receiver.authenticate == nil {
+		return nil
+	}
+	principal, authError := receiver.authenticate(ctx, rawKey)
+	if authError != nil || principal.ProjectID != receiver.normalizer.configuration.ProjectID || !hasScope(principal.Scopes, "ingest") {
+		return errors.New("OTLP authentication failed")
+	}
+	return nil
 }
 
 func (receiver *Receiver) exportTraces(ctx context.Context, request *collectortracepb.ExportTraceServiceRequest) (*collectortracepb.ExportTraceServiceResponse, error) {
@@ -31,12 +45,9 @@ func (receiver *Receiver) exportTraces(ctx context.Context, request *collectortr
 		receiver.metrics.ObserveRejected("traces", "validation", rejected)
 	}
 	if submitError != nil {
-		admissionRejected := len(events) - persisted
-		rejected += admissionRejected
-		receiver.metrics.ObserveRejected("traces", "admission_or_storage", admissionRejected)
-		if persisted == 0 && len(events) > 0 {
-			return nil, errors.New("trace ingestion unavailable")
-		}
+		// Partial success tells an OTLP client not to retry. Storage and admission
+		// failures are temporary, so fail the whole request and rely on stable IDs.
+		return nil, errors.New("trace ingestion unavailable")
 	}
 	response := &collectortracepb.ExportTraceServiceResponse{}
 	if rejected > 0 {
@@ -56,12 +67,8 @@ func (receiver *Receiver) exportLogs(ctx context.Context, request *collectorlogs
 		receiver.metrics.ObserveRejected("logs", "validation", rejected)
 	}
 	if submitError != nil {
-		admissionRejected := len(events) - persisted
-		rejected += admissionRejected
-		receiver.metrics.ObserveRejected("logs", "admission_or_storage", admissionRejected)
-		if persisted == 0 && len(events) > 0 {
-			return nil, errors.New("log ingestion unavailable")
-		}
+		// See trace export: temporary failures must remain retryable.
+		return nil, errors.New("log ingestion unavailable")
 	}
 	response := &collectorlogspb.ExportLogsServiceResponse{}
 	if rejected > 0 {
@@ -78,7 +85,20 @@ type traceService struct {
 	receiver *Receiver
 }
 
-func (service *traceService) Export(ctx context.Context, request *collectortracepb.ExportTraceServiceRequest) (*collectortracepb.ExportTraceServiceResponse, error) {
+func (service *traceService) Export(ctx context.Context, request *collectortracepb.ExportTraceServiceRequest) (response *collectortracepb.ExportTraceServiceResponse, returnError error) {
+	startedAt := time.Now()
+	defer func() {
+		outcome := "ok"
+		if returnError != nil {
+			outcome = status.Code(returnError).String()
+		} else if response.GetPartialSuccess() != nil {
+			outcome = "partial"
+		}
+		service.receiver.metrics.ObserveOTLPRequest("grpc", "traces", outcome, time.Since(startedAt))
+	}()
+	if authError := service.receiver.authorize(ctx, grpcAPIKey(ctx)); authError != nil {
+		return nil, status.Error(codes.Unauthenticated, "OTLP authentication failed")
+	}
 	response, exportError := service.receiver.exportTraces(ctx, request)
 	if exportError != nil {
 		return nil, status.Error(codes.Unavailable, exportError.Error())
@@ -91,10 +111,32 @@ type logsService struct {
 	receiver *Receiver
 }
 
-func (service *logsService) Export(ctx context.Context, request *collectorlogspb.ExportLogsServiceRequest) (*collectorlogspb.ExportLogsServiceResponse, error) {
+func (service *logsService) Export(ctx context.Context, request *collectorlogspb.ExportLogsServiceRequest) (response *collectorlogspb.ExportLogsServiceResponse, returnError error) {
+	startedAt := time.Now()
+	defer func() {
+		outcome := "ok"
+		if returnError != nil {
+			outcome = status.Code(returnError).String()
+		} else if response.GetPartialSuccess() != nil {
+			outcome = "partial"
+		}
+		service.receiver.metrics.ObserveOTLPRequest("grpc", "logs", outcome, time.Since(startedAt))
+	}()
+	if authError := service.receiver.authorize(ctx, grpcAPIKey(ctx)); authError != nil {
+		return nil, status.Error(codes.Unauthenticated, "OTLP authentication failed")
+	}
 	response, exportError := service.receiver.exportLogs(ctx, request)
 	if exportError != nil {
 		return nil, status.Error(codes.Unavailable, exportError.Error())
 	}
 	return response, nil
+}
+
+func hasScope(scopes []string, wanted string) bool {
+	for _, scope := range scopes {
+		if scope == wanted {
+			return true
+		}
+	}
+	return false
 }

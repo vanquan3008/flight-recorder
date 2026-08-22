@@ -102,3 +102,31 @@ func TestSubmitRejectsWhenQueueStaysFull(t *testing.T) {
 		t.Fatal(shutdownError)
 	}
 }
+
+func BenchmarkSubmitBatch(b *testing.B) {
+	events := make([]telemetry.Event, 256)
+	for index := range events {
+		events[index] = telemetry.Event{ID: "event", ServiceName: "benchmark", Attributes: map[string]any{"index": index}}
+	}
+	ingestionPipeline := New(4096, 64<<20, 256, 4, time.Second, time.Second, time.Millisecond, func(context.Context, []telemetry.Event) error {
+		return nil
+	}, flightmetrics.New("benchmark", "benchmark", "benchmark"))
+	ingestionPipeline.Start()
+	b.Cleanup(func() {
+		shutdownContext, cancelShutdown := context.WithTimeout(context.Background(), time.Second)
+		defer cancelShutdown()
+		if shutdownError := ingestionPipeline.Shutdown(shutdownContext); shutdownError != nil {
+			b.Error(shutdownError)
+		}
+	})
+	b.ReportAllocs()
+	b.ResetTimer()
+	b.RunParallel(func(parallel *testing.PB) {
+		for parallel.Next() {
+			if persisted, submitError := ingestionPipeline.Submit(context.Background(), events); submitError != nil || persisted != len(events) {
+				b.Errorf("submit = (%d, %v)", persisted, submitError)
+				return
+			}
+		}
+	})
+}

@@ -11,6 +11,7 @@ import (
 )
 
 func applyEnvironment(configuration *Config) error {
+	var parseError error
 	configuration.HTTP.Address = environmentValue("FLIGHT_HTTP_ADDRESS", configuration.HTTP.Address)
 	configuration.Ingestion.GRPCAddress = environmentValue("FLIGHT_INGESTION_GRPC_ADDRESS", configuration.Ingestion.GRPCAddress)
 	configuration.Ingestion.HTTPAddress = environmentValue("FLIGHT_INGESTION_HTTP_ADDRESS", configuration.Ingestion.HTTPAddress)
@@ -21,8 +22,22 @@ func applyEnvironment(configuration *Config) error {
 	configuration.Ingestion.EnvironmentName = environmentValue("FLIGHT_INGESTION_ENVIRONMENT_NAME", configuration.Ingestion.EnvironmentName)
 	configuration.Database.URL = environmentValue("FLIGHT_DATABASE_URL", configuration.Database.URL)
 	configuration.Database.MigrationsPath = environmentValue("FLIGHT_MIGRATIONS_PATH", configuration.Database.MigrationsPath)
+	configuration.Auth.BootstrapAPIKey = environmentValue("FLIGHT_AUTH_BOOTSTRAP_API_KEY", configuration.Auth.BootstrapAPIKey)
+	configuration.TLS.CertificateFile = environmentValue("FLIGHT_TLS_CERTIFICATE_FILE", configuration.TLS.CertificateFile)
+	configuration.TLS.PrivateKeyFile = environmentValue("FLIGHT_TLS_PRIVATE_KEY_FILE", configuration.TLS.PrivateKeyFile)
+	if configuration.Replay.Enabled, parseError = readBoolean("FLIGHT_REPLAY_ENABLED", configuration.Replay.Enabled); parseError != nil {
+		return parseError
+	}
+	if replayAllowedHosts, exists := os.LookupEnv("FLIGHT_REPLAY_ALLOWED_HOSTS"); exists {
+		configuration.Replay.AllowedHosts = splitCommaSeparated(replayAllowedHosts)
+	}
+	if configuration.Replay.AllowPrivate, parseError = readBoolean("FLIGHT_REPLAY_ALLOW_PRIVATE", configuration.Replay.AllowPrivate); parseError != nil {
+		return parseError
+	}
+	if configuration.Retention.MaxAge, parseError = readNonNegativeDuration("FLIGHT_RETENTION_MAX_AGE", configuration.Retention.MaxAge); parseError != nil {
+		return parseError
+	}
 
-	var parseError error
 	if configuration.HTTP.ReadHeaderTimeout, parseError = readDuration("FLIGHT_HTTP_READ_HEADER_TIMEOUT", configuration.HTTP.ReadHeaderTimeout); parseError != nil {
 		return parseError
 	}
@@ -38,10 +53,28 @@ func applyEnvironment(configuration *Config) error {
 	if configuration.ShutdownTimeout, parseError = readDuration("FLIGHT_SHUTDOWN_TIMEOUT", configuration.ShutdownTimeout); parseError != nil {
 		return parseError
 	}
+	if configuration.Replay.Timeout, parseError = readDuration("FLIGHT_REPLAY_TIMEOUT", configuration.Replay.Timeout); parseError != nil {
+		return parseError
+	}
+	if configuration.Retention.CheckInterval, parseError = readDuration("FLIGHT_RETENTION_CHECK_INTERVAL", configuration.Retention.CheckInterval); parseError != nil {
+		return parseError
+	}
 	if configuration.HTTP.MaxHeaderBytes, parseError = readPositiveInteger("FLIGHT_HTTP_MAX_HEADER_BYTES", configuration.HTTP.MaxHeaderBytes); parseError != nil {
 		return parseError
 	}
 	if configuration.HTTP.ManagementMaxBodyBytes, parseError = readPositiveInt64("FLIGHT_HTTP_MANAGEMENT_MAX_BODY_BYTES", configuration.HTTP.ManagementMaxBodyBytes); parseError != nil {
+		return parseError
+	}
+	if configuration.Replay.MaxResponseBytes, parseError = readPositiveInt64("FLIGHT_REPLAY_MAX_RESPONSE_BYTES", configuration.Replay.MaxResponseBytes); parseError != nil {
+		return parseError
+	}
+	if configuration.Replay.MaxRequestBytes, parseError = readPositiveInt64("FLIGHT_REPLAY_MAX_REQUEST_BYTES", configuration.Replay.MaxRequestBytes); parseError != nil {
+		return parseError
+	}
+	if configuration.Replay.MaxConcurrent, parseError = readPositiveInteger("FLIGHT_REPLAY_MAX_CONCURRENT", configuration.Replay.MaxConcurrent); parseError != nil {
+		return parseError
+	}
+	if configuration.Retention.BatchSize, parseError = readPositiveInteger("FLIGHT_RETENTION_BATCH_SIZE", configuration.Retention.BatchSize); parseError != nil {
 		return parseError
 	}
 	if configuration.Ingestion.MaxRequestBytes, parseError = readPositiveInt64("FLIGHT_INGESTION_MAX_REQUEST_BYTES", configuration.Ingestion.MaxRequestBytes); parseError != nil {
@@ -135,6 +168,30 @@ func readDuration(name string, fallback time.Duration) (time.Duration, error) {
 		return 0, fmt.Errorf("%s must be a positive duration", name)
 	}
 	return parsedDuration, nil
+}
+
+func readNonNegativeDuration(name string, fallback time.Duration) (time.Duration, error) {
+	rawValue, exists := os.LookupEnv(name)
+	if !exists {
+		return fallback, nil
+	}
+	parsedDuration, parseError := time.ParseDuration(rawValue)
+	if parseError != nil || parsedDuration < 0 {
+		return 0, fmt.Errorf("%s must be a non-negative duration", name)
+	}
+	return parsedDuration, nil
+}
+
+func readBoolean(name string, fallback bool) (bool, error) {
+	rawValue, exists := os.LookupEnv(name)
+	if !exists {
+		return fallback, nil
+	}
+	parsed, parseError := strconv.ParseBool(rawValue)
+	if parseError != nil {
+		return false, fmt.Errorf("%s must be a boolean", name)
+	}
+	return parsed, nil
 }
 
 func readPositiveInteger(name string, fallback int) (int, error) {

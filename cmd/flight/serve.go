@@ -9,15 +9,17 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"golang.org/x/sync/errgroup"
 
 	"github.com/flight-observability/flight/internal/config"
 	"github.com/flight-observability/flight/internal/httpapi"
 	ingestotlp "github.com/flight-observability/flight/internal/ingest/otlp"
-	"github.com/flight-observability/flight/internal/metrics"
+	flightmetrics "github.com/flight-observability/flight/internal/metrics"
 	"github.com/flight-observability/flight/internal/pipeline"
 	"github.com/flight-observability/flight/internal/postgres"
+	"github.com/flight-observability/flight/internal/replay"
 	"github.com/flight-observability/flight/internal/telemetry"
 )
 
@@ -49,8 +51,29 @@ func runServer(arguments []string) int {
 		return 1
 	}
 	defer database.Close()
+	if scopeError := database.EnsureIngestionScope(applicationContext, configuration.Ingestion); scopeError != nil {
+		logger.Error("ingestion scope initialization failed", "error", scopeError)
+		return 1
+	}
+	if authError := database.EnsureBootstrapAPIKey(applicationContext, configuration.Ingestion.ProjectID, configuration.Auth.BootstrapAPIKey); authError != nil {
+		logger.Error("bootstrap API key initialization failed", "error", authError)
+		return 1
+	}
+	var replayExecutor *replay.Executor
+	if configuration.Replay.Enabled {
+		policy, policyError := replay.NewPolicy(configuration.Replay.AllowedHosts, configuration.Replay.AllowPrivate)
+		if policyError != nil {
+			logger.Error("replay policy initialization failed", "error", policyError)
+			return 1
+		}
+		replayExecutor, policyError = replay.NewExecutor(policy, configuration.Replay.Timeout, configuration.Replay.MaxResponseBytes, configuration.Replay.MaxConcurrent)
+		if policyError != nil {
+			logger.Error("replay executor initialization failed", "error", policyError)
+			return 1
+		}
+	}
 
-	metricRegistry := metrics.New(version, commit, buildTime)
+	selfMetrics := flightmetrics.New(version, commit, buildTime)
 	ingestionPipeline := pipeline.New(
 		configuration.Ingestion.QueueSize,
 		configuration.Ingestion.QueueMaxBytes,
@@ -62,7 +85,7 @@ func runServer(arguments []string) int {
 		func(storeContext context.Context, events []telemetry.Event) error {
 			return database.StoreEvents(storeContext, configuration.Ingestion, events)
 		},
-		metricRegistry,
+		selfMetrics,
 	)
 	ingestionPipeline.Start()
 
@@ -72,23 +95,38 @@ func runServer(arguments []string) int {
 		"otlp_grpc_address", configuration.Ingestion.GRPCAddress,
 		"otlp_http_address", configuration.Ingestion.HTTPAddress,
 	)
-	otlpReceiver := ingestotlp.NewReceiver(configuration.Ingestion, ingestionPipeline, metricRegistry)
+	if configuration.TLS.CertificateFile == "" {
+		logger.Warn("OTLP listeners are plaintext; use TLS or terminate TLS before Flight")
+	}
+	if configuration.Auth.BootstrapAPIKey == "" {
+		logger.Warn("OTLP ingest authentication is disabled")
+	}
+	var authenticateOTLP func(context.Context, string) (postgres.Principal, error)
+	if configuration.Auth.BootstrapAPIKey != "" {
+		authenticateOTLP = database.AuthenticateAPIKey
+	}
+	otlpReceiver := ingestotlp.NewReceiver(configuration.Ingestion, ingestionPipeline, selfMetrics, authenticateOTLP)
 	otlpServer := ingestotlp.NewServer(configuration, otlpReceiver)
-	httpServer := httpapi.New(configuration, logger, func(readinessContext context.Context) error {
+	managementServer := httpapi.New(configuration, logger, func(readinessContext context.Context) error {
 		if !ingestionPipeline.Ready() || !otlpServer.Ready() {
 			return errors.New("ingestion runtime is not ready")
 		}
 		return database.Ready(readinessContext)
-	}, metricRegistry)
+	}, selfMetrics, database, replayExecutor)
 
 	group, runtimeContext := errgroup.WithContext(applicationContext)
 
 	group.Go(func() error {
-		return httpServer.Run(runtimeContext)
+		return managementServer.Run(runtimeContext)
 	})
 	group.Go(func() error {
 		return otlpServer.Run(runtimeContext)
 	})
+	if configuration.Retention.MaxAge > 0 {
+		group.Go(func() error {
+			return runRetention(runtimeContext, logger, database, configuration.Retention.MaxAge, configuration.Retention.CheckInterval, configuration.Retention.BatchSize)
+		})
+	}
 
 	serveError := group.Wait()
 
@@ -103,4 +141,31 @@ func runServer(arguments []string) int {
 
 	logger.Info("server stopped")
 	return 0
+}
+
+func runRetention(ctx context.Context, logger *slog.Logger, database *postgres.Database, maxAge, interval time.Duration, batchSize int) error {
+	prune := func() {
+		pruneContext, cancelPrune := context.WithTimeout(ctx, 30*time.Second)
+		deleted, pruneError := database.DeleteEventsBefore(pruneContext, time.Now().UTC().Add(-maxAge), batchSize)
+		cancelPrune()
+		if pruneError != nil {
+			logger.Error("retention cleanup failed", "error", pruneError)
+			return
+		}
+		if deleted > 0 {
+			logger.Info("retention cleanup completed", "deleted_events", deleted)
+		}
+	}
+
+	prune()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			prune()
+		}
+	}
 }

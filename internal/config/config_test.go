@@ -46,6 +46,19 @@ var configEnvironment = []string{
 	"FLIGHT_DATABASE_HEALTH_CHECK_PERIOD",
 	"FLIGHT_DATABASE_READINESS_TIMEOUT",
 	"FLIGHT_MIGRATIONS_PATH",
+	"FLIGHT_AUTH_BOOTSTRAP_API_KEY",
+	"FLIGHT_TLS_CERTIFICATE_FILE",
+	"FLIGHT_TLS_PRIVATE_KEY_FILE",
+	"FLIGHT_RETENTION_MAX_AGE",
+	"FLIGHT_RETENTION_CHECK_INTERVAL",
+	"FLIGHT_RETENTION_BATCH_SIZE",
+	"FLIGHT_REPLAY_ENABLED",
+	"FLIGHT_REPLAY_ALLOWED_HOSTS",
+	"FLIGHT_REPLAY_ALLOW_PRIVATE",
+	"FLIGHT_REPLAY_TIMEOUT",
+	"FLIGHT_REPLAY_MAX_REQUEST_BYTES",
+	"FLIGHT_REPLAY_MAX_RESPONSE_BYTES",
+	"FLIGHT_REPLAY_MAX_CONCURRENT",
 }
 
 func TestLoadYAMLThenEnvironmentOverride(t *testing.T) {
@@ -115,6 +128,46 @@ func TestValidateRejectsResourceExhaustingQueue(t *testing.T) {
 	configuration.Ingestion.QueueSize = maxIngestionQueueSize + 1
 	if validationError := configuration.Validate(); validationError == nil {
 		t.Fatal("expected resource-exhausting queue size to fail")
+	}
+}
+
+func TestValidateRejectsShortBootstrapAPIKey(t *testing.T) {
+	configuration := defaultConfig()
+	configuration.Database.URL = "postgres://test"
+	configuration.Auth.BootstrapAPIKey = "too-short"
+	if validationError := configuration.Validate(); validationError == nil {
+		t.Fatal("expected short bootstrap key to fail")
+	}
+}
+
+func TestValidateRequiresReplayAllowlist(t *testing.T) {
+	configuration := defaultConfig()
+	configuration.Database.URL = "postgres://test"
+	configuration.Replay.Enabled = true
+	if validationError := configuration.Validate(); validationError == nil {
+		t.Fatal("expected enabled replay without allowlist to fail")
+	}
+}
+
+func TestValidateRequiresCompleteTLSConfiguration(t *testing.T) {
+	configuration := defaultConfig()
+	configuration.Database.URL = "postgres://flight:flight@localhost/flight"
+	configuration.TLS.CertificateFile = "certificate.pem"
+	if validateError := configuration.Validate(); validateError == nil {
+		t.Fatal("expected incomplete TLS configuration to fail")
+	}
+}
+
+func TestLoadAllowsDisabledRetention(t *testing.T) {
+	clearConfigEnvironment(t)
+	t.Setenv("FLIGHT_DATABASE_URL", "postgres://test")
+	t.Setenv("FLIGHT_RETENTION_MAX_AGE", "0s")
+	configuration, loadError := Load("")
+	if loadError != nil {
+		t.Fatal(loadError)
+	}
+	if configuration.Retention.MaxAge != 0 {
+		t.Fatalf("retention max age = %s", configuration.Retention.MaxAge)
 	}
 }
 

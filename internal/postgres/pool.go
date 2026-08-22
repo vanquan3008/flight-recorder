@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/flight-observability/flight/internal/config"
@@ -16,8 +15,7 @@ import (
 )
 
 type Database struct {
-	pool          *pgxpool.Pool
-	metadataCache sync.Map
+	pool *pgxpool.Pool
 }
 
 func Open(applicationContext context.Context, configuration config.DatabaseConfig) (*Database, error) {
@@ -60,33 +58,28 @@ func (database *Database) Close() {
 	database.pool.Close()
 }
 
+func (database *Database) EnsureIngestionScope(ctx context.Context, ingestion config.IngestionConfig) error {
+	if _, executeError := database.pool.Exec(ctx, `
+		WITH project AS (
+			INSERT INTO projects (id, slug, name)
+			VALUES ($1, $2, $3)
+			ON CONFLICT (id) DO UPDATE
+			SET slug = EXCLUDED.slug, name = EXCLUDED.name, updated_at = now()
+			RETURNING id
+		)
+		INSERT INTO environments (id, project_id, name)
+		SELECT $4, id, $5 FROM project
+		ON CONFLICT (project_id, id) DO UPDATE SET name = EXCLUDED.name`,
+		ingestion.ProjectID, ingestion.ProjectSlug, ingestion.ProjectName,
+		ingestion.EnvironmentID, ingestion.EnvironmentName); executeError != nil {
+		return fmt.Errorf("ensure ingestion scope: %w", executeError)
+	}
+	return nil
+}
+
 func (database *Database) StoreEvents(ctx context.Context, ingestion config.IngestionConfig, events []telemetry.Event) error {
 	if len(events) == 0 {
 		return nil
-	}
-	transaction, beginError := database.pool.Begin(ctx)
-	if beginError != nil {
-		return fmt.Errorf("begin event batch: %w", beginError)
-	}
-	defer func() { _ = transaction.Rollback(ctx) }()
-
-	envKey := fmt.Sprintf("env:%s:%s", ingestion.ProjectID, ingestion.EnvironmentID)
-	if _, cached := database.metadataCache.Load(envKey); !cached {
-		if _, insertError := transaction.Exec(ctx, `
-			INSERT INTO projects (id, slug, name)
-			VALUES ($1, $2, $3)
-			ON CONFLICT (id) DO UPDATE SET slug = EXCLUDED.slug, name = EXCLUDED.name, updated_at = now()`,
-			ingestion.ProjectID, ingestion.ProjectSlug, ingestion.ProjectName); insertError != nil {
-			return fmt.Errorf("ensure ingestion project: %w", insertError)
-		}
-		if _, insertError := transaction.Exec(ctx, `
-			INSERT INTO environments (id, project_id, name)
-			VALUES ($1, $2, $3)
-			ON CONFLICT (project_id, id) DO UPDATE SET name = EXCLUDED.name`,
-			ingestion.EnvironmentID, ingestion.ProjectID, ingestion.EnvironmentName); insertError != nil {
-			return fmt.Errorf("ensure ingestion environment: %w", insertError)
-		}
-		database.metadataCache.Store(envKey, true)
 	}
 
 	services := make(map[string]struct{})
@@ -94,26 +87,25 @@ func (database *Database) StoreEvents(ctx context.Context, ingestion config.Inge
 		if event.ProjectID != ingestion.ProjectID || event.Environment != ingestion.EnvironmentName {
 			return errors.New("event ingestion scope mismatch")
 		}
-		svcKey := fmt.Sprintf("svc:%s:%s:%s", ingestion.ProjectID, ingestion.EnvironmentID, event.ServiceName)
-		if _, cached := database.metadataCache.Load(svcKey); cached {
-			continue
-		}
 		if _, exists := services[event.ServiceName]; exists {
 			continue
 		}
 		services[event.ServiceName] = struct{}{}
-		serviceID := telemetry.DeterministicID(time.Now().UTC(), ingestion.EnvironmentID, event.ServiceName)
-		if _, insertError := transaction.Exec(ctx, `
-			INSERT INTO services (id, project_id, environment_id, name)
-			VALUES ($1, $2, $3, $4)
-			ON CONFLICT (project_id, environment_id, name) DO NOTHING`,
-			serviceID, ingestion.ProjectID, ingestion.EnvironmentID, event.ServiceName); insertError != nil {
-			return fmt.Errorf("ensure ingestion service: %w", insertError)
-		}
-		database.metadataCache.Store(svcKey, true)
 	}
 
 	batch := &pgx.Batch{}
+	statementCount := 0
+	serviceTimestamp := time.Now().UTC()
+	for serviceName := range services {
+		serviceID := telemetry.DeterministicID(serviceTimestamp, ingestion.EnvironmentID, serviceName)
+		batch.Queue(`
+			INSERT INTO services (id, project_id, environment_id, name)
+			VALUES ($1, $2, $3, $4)
+			ON CONFLICT (project_id, environment_id, name) DO NOTHING`,
+			serviceID, ingestion.ProjectID, ingestion.EnvironmentID, serviceName)
+		statementCount++
+	}
+
 	for _, event := range events {
 		attributes, marshalError := json.Marshal(event.Attributes)
 		if marshalError != nil {
@@ -137,9 +129,22 @@ func (database *Database) StoreEvents(ctx context.Context, ingestion config.Inge
 			event.Timestamp, nullableDuration(event.Duration), nullableString(event.Severity), nullableString(event.Status), nullableInt(event.HTTPStatus),
 			nullableString(event.Operation), nullableString(event.ErrorType), nullableString(event.ErrorMessage), attributes, nullableString(event.PayloadRef),
 		)
+		statementCount++
+		signalStatements, signalError := queueSignalRecord(batch, ingestion, event)
+		if signalError != nil {
+			return signalError
+		}
+		statementCount += signalStatements
 	}
+
+	transaction, beginError := database.pool.Begin(ctx)
+	if beginError != nil {
+		return fmt.Errorf("begin event batch: %w", beginError)
+	}
+	defer func() { _ = transaction.Rollback(ctx) }()
+
 	results := transaction.SendBatch(ctx, batch)
-	for range events {
+	for range statementCount {
 		if _, executeError := results.Exec(); executeError != nil {
 			_ = results.Close()
 			return fmt.Errorf("insert event batch: %w", executeError)
@@ -148,10 +153,108 @@ func (database *Database) StoreEvents(ctx context.Context, ingestion config.Inge
 	if closeError := results.Close(); closeError != nil {
 		return fmt.Errorf("close event batch: %w", closeError)
 	}
+	if incidentError := storeIncidents(ctx, transaction, ingestion, events); incidentError != nil {
+		return incidentError
+	}
 	if commitError := transaction.Commit(ctx); commitError != nil {
 		return fmt.Errorf("commit event batch: %w", commitError)
 	}
 	return nil
+}
+
+func queueSignalRecord(batch *pgx.Batch, ingestion config.IngestionConfig, event telemetry.Event) (int, error) {
+	switch event.Signal {
+	case "":
+		return 0, nil
+	case telemetry.SignalTrace:
+		resourceAttributes, resourceError := marshalJSON(event.ResourceAttributes)
+		if resourceError != nil {
+			return 0, fmt.Errorf("encode span resource attributes: %w", resourceError)
+		}
+		scopeAttributes, scopeError := marshalJSON(event.ScopeAttributes)
+		if scopeError != nil {
+			return 0, fmt.Errorf("encode span scope attributes: %w", scopeError)
+		}
+		recordAttributes, recordError := marshalJSON(event.RecordAttributes)
+		if recordError != nil {
+			return 0, fmt.Errorf("encode span attributes: %w", recordError)
+		}
+		spanEvents, eventsError := marshalJSON(event.SpanEvents)
+		if eventsError != nil {
+			return 0, fmt.Errorf("encode span events: %w", eventsError)
+		}
+		spanLinks, linksError := marshalJSON(event.SpanLinks)
+		if linksError != nil {
+			return 0, fmt.Errorf("encode span links: %w", linksError)
+		}
+		batch.Queue(`
+			INSERT INTO spans (
+				event_id, project_id, environment_id, trace_id, span_id, parent_span_id,
+				trace_state, span_name, span_kind, started_at, ended_at, status_code, status_message, flags,
+				service_name, service_version, resource_schema_url, resource_attributes,
+				scope_name, scope_version, scope_schema_url, scope_attributes, span_attributes,
+				span_events, span_links, dropped_attributes_count, dropped_events_count, dropped_links_count
+			) VALUES (
+				$1, $2, $3, $4, $5, $6,
+				$7, $8, $9, $10, $11, $12, $13, $14,
+				$15, $16, $17, $18,
+				$19, $20, $21, $22, $23,
+				$24, $25, $26, $27, $28
+			)
+			ON CONFLICT (event_id) DO NOTHING`,
+			event.ID, ingestion.ProjectID, ingestion.EnvironmentID, event.TraceID, event.SpanID, nullableString(event.ParentSpanID),
+			event.TraceState, event.Operation, event.SpanKind, event.Timestamp, event.Timestamp.Add(event.Duration), event.Status, event.StatusMessage, int64(event.TraceFlags),
+			event.ServiceName, nullableString(event.ServiceVersion), event.ResourceSchemaURL, resourceAttributes,
+			event.ScopeName, event.ScopeVersion, event.ScopeSchemaURL, scopeAttributes, recordAttributes,
+			spanEvents, spanLinks, event.DroppedAttributes, event.DroppedEvents, event.DroppedLinks,
+		)
+		return 1, nil
+	case telemetry.SignalLog:
+		resourceAttributes, resourceError := marshalJSON(event.ResourceAttributes)
+		if resourceError != nil {
+			return 0, fmt.Errorf("encode log resource attributes: %w", resourceError)
+		}
+		scopeAttributes, scopeError := marshalJSON(event.ScopeAttributes)
+		if scopeError != nil {
+			return 0, fmt.Errorf("encode log scope attributes: %w", scopeError)
+		}
+		recordAttributes, recordError := marshalJSON(event.RecordAttributes)
+		if recordError != nil {
+			return 0, fmt.Errorf("encode log attributes: %w", recordError)
+		}
+		body, bodyError := marshalJSON(event.LogBody)
+		if bodyError != nil {
+			return 0, fmt.Errorf("encode log body: %w", bodyError)
+		}
+		batch.Queue(`
+			INSERT INTO logs (
+				event_id, project_id, environment_id, occurred_at, observed_at, trace_id, span_id,
+				trace_flags, severity_number, severity_text, body, event_name, service_name, service_version,
+				resource_schema_url, resource_attributes, scope_name, scope_version, scope_schema_url,
+				scope_attributes, log_attributes, dropped_attributes_count
+			) VALUES (
+				$1, $2, $3, $4, $5, $6, $7,
+				$8, $9, $10, $11, $12, $13, $14,
+				$15, $16, $17, $18, $19,
+				$20, $21, $22
+			)
+			ON CONFLICT (event_id) DO NOTHING`,
+			event.ID, ingestion.ProjectID, ingestion.EnvironmentID, event.Timestamp, nullableTime(event.ObservedTimestamp), nullableString(event.TraceID), nullableString(event.SpanID),
+			int64(event.TraceFlags), event.SeverityNumber, event.Severity, body, event.LogEventName, event.ServiceName, nullableString(event.ServiceVersion),
+			event.ResourceSchemaURL, resourceAttributes, event.ScopeName, event.ScopeVersion, event.ScopeSchemaURL,
+			scopeAttributes, recordAttributes, event.DroppedAttributes,
+		)
+		return 1, nil
+	default:
+		return 0, fmt.Errorf("unsupported telemetry signal %q", event.Signal)
+	}
+}
+
+func marshalJSON(value any) ([]byte, error) {
+	if value == nil {
+		return []byte("null"), nil
+	}
+	return json.Marshal(value)
 }
 
 func nullableString(value string) any {
@@ -173,4 +276,11 @@ func nullableDuration(value time.Duration) any {
 		return nil
 	}
 	return value.Nanoseconds()
+}
+
+func nullableTime(value time.Time) any {
+	if value.IsZero() {
+		return nil
+	}
+	return value
 }

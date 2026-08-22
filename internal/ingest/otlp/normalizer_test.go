@@ -39,8 +39,8 @@ func TestNormalizeTraceRedactsBeforeReturningEvent(t *testing.T) {
 	}
 	resource := &resourcepb.Resource{Attributes: []*commonpb.KeyValue{stringKeyValue("service.name", "checkout")}}
 
-	first, firstError := normalizer.span(resource, nil, span)
-	second, secondError := normalizer.span(resource, nil, span)
+	first, firstError := normalizer.span(resource, "", nil, "", span)
+	second, secondError := normalizer.span(resource, "", nil, "", span)
 	if firstError != nil || secondError != nil {
 		t.Fatalf("normalize errors: %v, %v", firstError, secondError)
 	}
@@ -69,7 +69,7 @@ func TestNormalizeRejectsInvalidHTTPStatus(t *testing.T) {
 		Attributes:        []*commonpb.KeyValue{intKeyValue("http.response.status_code", 999)},
 	}
 	resource := &resourcepb.Resource{Attributes: []*commonpb.KeyValue{stringKeyValue("service.name", "checkout")}}
-	if _, normalizeError := normalizer.span(resource, nil, span); normalizeError == nil {
+	if _, normalizeError := normalizer.span(resource, "", nil, "", span); normalizeError == nil {
 		t.Fatal("expected invalid HTTP status to be rejected")
 	}
 }
@@ -84,7 +84,7 @@ func TestNormalizeLogRecord(t *testing.T) {
 		Body:           &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: "job failed"}},
 		Attributes:     []*commonpb.KeyValue{stringKeyValue("api.token", "secret")},
 	}
-	event, normalizeError := normalizer.logRecord(resource, nil, record)
+	event, normalizeError := normalizer.logRecord(resource, "", nil, "", record)
 	if normalizeError != nil {
 		t.Fatal(normalizeError)
 	}
@@ -93,6 +93,93 @@ func TestNormalizeLogRecord(t *testing.T) {
 	}
 	if event.Attributes["api.token"] != "[REDACTED]" {
 		t.Fatalf("log secret was not redacted: %#v", event.Attributes)
+	}
+}
+
+func TestNormalizePreservesTraceStructure(t *testing.T) {
+	normalizer := newNormalizer(testIngestionConfig())
+	startedAt := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
+	resource := &resourcepb.Resource{Attributes: []*commonpb.KeyValue{stringKeyValue("service.name", "checkout"), stringKeyValue("cloud.region", "ap-southeast-1")}}
+	scope := &commonpb.InstrumentationScope{Name: "checkout-sdk", Version: "1.2.3", Attributes: []*commonpb.KeyValue{stringKeyValue("scope.attribute", "scope-value")}}
+	span := &tracepb.Span{
+		TraceId:                bytes.Repeat([]byte{1}, 16),
+		SpanId:                 bytes.Repeat([]byte{2}, 8),
+		TraceState:             "vendor=value",
+		Flags:                  1,
+		Name:                   "POST /checkout",
+		Kind:                   tracepb.Span_SPAN_KIND_SERVER,
+		StartTimeUnixNano:      uint64(startedAt.UnixNano()),
+		EndTimeUnixNano:        uint64(startedAt.Add(time.Second).UnixNano()),
+		Status:                 &tracepb.Status{Code: tracepb.Status_STATUS_CODE_ERROR, Message: "payment failed"},
+		Attributes:             []*commonpb.KeyValue{stringKeyValue("http.route", "/checkout")},
+		DroppedAttributesCount: 2,
+		DroppedEventsCount:     3,
+		DroppedLinksCount:      4,
+		Events: []*tracepb.Span_Event{{
+			TimeUnixNano:           uint64(startedAt.Add(time.Millisecond).UnixNano()),
+			Name:                   "payment.failed",
+			Attributes:             []*commonpb.KeyValue{stringKeyValue("error.code", "declined")},
+			DroppedAttributesCount: 5,
+		}},
+		Links: []*tracepb.Span_Link{{
+			TraceId:                bytes.Repeat([]byte{3}, 16),
+			SpanId:                 bytes.Repeat([]byte{4}, 8),
+			TraceState:             "linked=value",
+			Flags:                  1,
+			Attributes:             []*commonpb.KeyValue{stringKeyValue("link.type", "follows_from")},
+			DroppedAttributesCount: 6,
+		}},
+	}
+	event, normalizeError := normalizer.span(resource, "https://resource.schema", scope, "https://scope.schema", span)
+	if normalizeError != nil {
+		t.Fatal(normalizeError)
+	}
+	if event.Signal != telemetry.SignalTrace || event.TraceState != "vendor=value" || event.TraceFlags != 1 || event.SpanKind != int32(tracepb.Span_SPAN_KIND_SERVER) {
+		t.Fatalf("missing trace identity: %+v", event)
+	}
+	if event.ResourceSchemaURL != "https://resource.schema" || event.ScopeSchemaURL != "https://scope.schema" || event.ResourceAttributes["cloud.region"] != "ap-southeast-1" || event.ScopeAttributes["scope.attribute"] != "scope-value" || event.RecordAttributes["http.route"] != "/checkout" {
+		t.Fatalf("missing trace attributes: %+v", event)
+	}
+	if event.StatusMessage != "payment failed" || event.DroppedAttributes != 2 || event.DroppedEvents != 3 || event.DroppedLinks != 4 || len(event.SpanEvents) != 1 || len(event.SpanLinks) != 1 {
+		t.Fatalf("missing span details: %+v", event)
+	}
+	if event.SpanEvents[0].Attributes["error.code"] != "declined" || event.SpanLinks[0].Attributes["link.type"] != "follows_from" || event.SpanLinks[0].TraceState != "linked=value" {
+		t.Fatalf("missing event/link details: %+v", event)
+	}
+}
+
+func TestNormalizePreservesLogStructure(t *testing.T) {
+	normalizer := newNormalizer(testIngestionConfig())
+	occurredAt := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
+	observedAt := occurredAt.Add(time.Second)
+	resource := &resourcepb.Resource{Attributes: []*commonpb.KeyValue{stringKeyValue("service.name", "worker"), stringKeyValue("host.name", "worker-1")}}
+	scope := &commonpb.InstrumentationScope{Name: "zap", Version: "1.0.0", Attributes: []*commonpb.KeyValue{stringKeyValue("scope.attribute", "scope-value")}}
+	record := &logspb.LogRecord{
+		TimeUnixNano:           uint64(occurredAt.UnixNano()),
+		ObservedTimeUnixNano:   uint64(observedAt.UnixNano()),
+		TraceId:                bytes.Repeat([]byte{1}, 16),
+		SpanId:                 bytes.Repeat([]byte{2}, 8),
+		Flags:                  1,
+		SeverityNumber:         logspb.SeverityNumber_SEVERITY_NUMBER_ERROR,
+		SeverityText:           "ERROR",
+		Body:                   &commonpb.AnyValue{Value: &commonpb.AnyValue_KvlistValue{KvlistValue: &commonpb.KeyValueList{Values: []*commonpb.KeyValue{stringKeyValue("message", "job failed")}}}},
+		Attributes:             []*commonpb.KeyValue{stringKeyValue("job.id", "job-1")},
+		DroppedAttributesCount: 2,
+		EventName:              "job.failure",
+	}
+	event, normalizeError := normalizer.logRecord(resource, "https://resource.schema", scope, "https://scope.schema", record)
+	if normalizeError != nil {
+		t.Fatal(normalizeError)
+	}
+	if event.Signal != telemetry.SignalLog || event.ObservedTimestamp != observedAt || event.TraceFlags != 1 || event.SeverityNumber != int32(logspb.SeverityNumber_SEVERITY_NUMBER_ERROR) || event.LogEventName != "job.failure" {
+		t.Fatalf("missing log fields: %+v", event)
+	}
+	if event.ResourceAttributes["host.name"] != "worker-1" || event.ScopeAttributes["scope.attribute"] != "scope-value" || event.RecordAttributes["job.id"] != "job-1" {
+		t.Fatalf("missing log attributes: %+v", event)
+	}
+	body, ok := event.LogBody.(map[string]any)
+	if !ok || body["message"] != "job failed" || event.DroppedAttributes != 2 {
+		t.Fatalf("missing log body: %+v", event)
 	}
 }
 
@@ -105,7 +192,7 @@ func TestNormalizeRejectsMissingService(t *testing.T) {
 		StartTimeUnixNano: uint64(startedAt.UnixNano()),
 		EndTimeUnixNano:   uint64(startedAt.Add(time.Millisecond).UnixNano()),
 	}
-	if _, normalizeError := normalizer.span(&resourcepb.Resource{}, nil, span); normalizeError == nil {
+	if _, normalizeError := normalizer.span(&resourcepb.Resource{}, "", nil, "", span); normalizeError == nil {
 		t.Fatal("expected missing service.name to be rejected")
 	}
 }
