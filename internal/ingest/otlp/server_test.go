@@ -3,6 +3,7 @@ package otlp
 import (
 	"bytes"
 	"context"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -19,9 +20,11 @@ import (
 	logspb "go.opentelemetry.io/proto/otlp/logs/v1"
 	resourcepb "go.opentelemetry.io/proto/otlp/resource/v1"
 	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
+	statuspb "google.golang.org/genproto/googleapis/rpc/status"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/test/bufconn"
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -35,7 +38,7 @@ func TestOTLPHTTPLogsPersistBeforeSuccess(t *testing.T) {
 	ingestionPipeline.Start()
 	ingestionConfiguration := testIngestionConfig()
 	ingestionConfiguration.MaxRequestBytes = 1 << 20
-	receiver := NewReceiver(ingestionConfiguration, ingestionPipeline, metricRegistry)
+	receiver := NewReceiver(ingestionConfiguration, ingestionPipeline, metricRegistry, nil)
 	server := NewServer(config.Config{
 		Ingestion:       ingestionConfiguration,
 		HTTP:            config.HTTPConfig{MaxHeaderBytes: 1 << 20},
@@ -81,7 +84,7 @@ func TestOTLPGRPCTracesPersistBeforeSuccess(t *testing.T) {
 	ingestionPipeline.Start()
 	ingestionConfiguration := testIngestionConfig()
 	ingestionConfiguration.MaxRequestBytes = 1 << 20
-	server := NewServer(config.Config{Ingestion: ingestionConfiguration}, NewReceiver(ingestionConfiguration, ingestionPipeline, metricRegistry))
+	server := NewServer(config.Config{Ingestion: ingestionConfiguration}, NewReceiver(ingestionConfiguration, ingestionPipeline, metricRegistry, nil))
 	listener := bufconn.Listen(1 << 20)
 	go func() { _ = server.grpcServer.Serve(listener) }()
 	t.Cleanup(server.grpcServer.Stop)
@@ -129,6 +132,80 @@ func TestOTLPHTTPRejectsOversizedBody(t *testing.T) {
 	server.httpServer.Handler.ServeHTTP(responseRecorder, httpRequest)
 	if responseRecorder.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("status = %d", responseRecorder.Code)
+	}
+	if responseRecorder.Header().Get("Content-Type") != "application/x-protobuf" {
+		t.Fatalf("content type = %q", responseRecorder.Header().Get("Content-Type"))
+	}
+	responseStatus := &statuspb.Status{}
+	if unmarshalError := proto.Unmarshal(responseRecorder.Body.Bytes(), responseStatus); unmarshalError != nil {
+		t.Fatal(unmarshalError)
+	}
+	if responseStatus.GetMessage() != "OTLP request body too large" {
+		t.Fatalf("status message = %q", responseStatus.GetMessage())
+	}
+}
+
+func TestOTLPHTTPJSONErrorsUseJSONStatus(t *testing.T) {
+	server := NewServer(config.Config{Ingestion: config.IngestionConfig{MaxRequestBytes: 1024}}, nil)
+	httpRequest := httptest.NewRequest(http.MethodPost, "/v1/traces", bytes.NewBufferString("not JSON"))
+	httpRequest.Header.Set("Content-Type", "application/json")
+	responseRecorder := httptest.NewRecorder()
+	server.httpServer.Handler.ServeHTTP(responseRecorder, httpRequest)
+	if responseRecorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d", responseRecorder.Code)
+	}
+	if responseRecorder.Header().Get("Content-Type") != "application/json" {
+		t.Fatalf("content type = %q", responseRecorder.Header().Get("Content-Type"))
+	}
+	responseStatus := &statuspb.Status{}
+	if unmarshalError := protojson.Unmarshal(responseRecorder.Body.Bytes(), responseStatus); unmarshalError != nil {
+		t.Fatal(unmarshalError)
+	}
+	if responseStatus.GetMessage() != "invalid OTLP JSON" {
+		t.Fatalf("status message = %q", responseStatus.GetMessage())
+	}
+}
+
+func TestOTLPHTTPStorageFailureIsRetryable(t *testing.T) {
+	metricRegistry := flightmetrics.New("test", "test", "test")
+	ingestionPipeline := pipeline.New(4, 1<<20, 1, 1, time.Second, 10*time.Millisecond, time.Millisecond, func(context.Context, []telemetry.Event) error {
+		return errors.New("database unavailable")
+	}, metricRegistry)
+	ingestionPipeline.Start()
+	t.Cleanup(func() {
+		shutdownContext, cancelShutdown := context.WithTimeout(context.Background(), time.Second)
+		defer cancelShutdown()
+		if shutdownError := ingestionPipeline.Shutdown(shutdownContext); shutdownError != nil {
+			t.Error(shutdownError)
+		}
+	})
+
+	ingestionConfiguration := testIngestionConfig()
+	ingestionConfiguration.MaxRequestBytes = 1 << 20
+	server := NewServer(config.Config{Ingestion: ingestionConfiguration}, NewReceiver(ingestionConfiguration, ingestionPipeline, metricRegistry, nil))
+	requestMessage := &collectortracepb.ExportTraceServiceRequest{ResourceSpans: []*tracepb.ResourceSpans{{
+		Resource: &resourcepb.Resource{Attributes: []*commonpb.KeyValue{stringKeyValue("service.name", "api")}},
+		ScopeSpans: []*tracepb.ScopeSpans{{Spans: []*tracepb.Span{{
+			TraceId:           bytes.Repeat([]byte{1}, 16),
+			SpanId:            bytes.Repeat([]byte{2}, 8),
+			Name:              "GET /",
+			StartTimeUnixNano: uint64(time.Now().UTC().UnixNano()),
+			EndTimeUnixNano:   uint64(time.Now().UTC().Add(time.Millisecond).UnixNano()),
+		}}}},
+	}}}
+	body, marshalError := proto.Marshal(requestMessage)
+	if marshalError != nil {
+		t.Fatal(marshalError)
+	}
+	httpRequest := httptest.NewRequest(http.MethodPost, "/v1/traces", bytes.NewReader(body))
+	httpRequest.Header.Set("Content-Type", "application/x-protobuf")
+	responseRecorder := httptest.NewRecorder()
+	server.httpServer.Handler.ServeHTTP(responseRecorder, httpRequest)
+	if responseRecorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, body = %q", responseRecorder.Code, responseRecorder.Body.String())
+	}
+	if responseRecorder.Header().Get("Retry-After") != "1" {
+		t.Fatalf("retry-after = %q", responseRecorder.Header().Get("Retry-After"))
 	}
 }
 

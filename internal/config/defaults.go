@@ -47,6 +47,16 @@ func defaultConfig() Config {
 			ReadinessTimeout:      2 * time.Second,
 			MigrationsPath:        "./migrations",
 		},
+		Replay: ReplayConfig{
+			Timeout:          5 * time.Second,
+			MaxRequestBytes:  64 << 10,
+			MaxResponseBytes: 64 << 10,
+			MaxConcurrent:    2,
+		},
+		Retention: RetentionConfig{
+			CheckInterval: time.Hour,
+			BatchSize:     10_000,
+		},
 		ShutdownTimeout: 15 * time.Second,
 		LogLevel:        slog.LevelInfo,
 	}

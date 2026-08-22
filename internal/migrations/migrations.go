@@ -12,7 +12,7 @@ import (
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 )
 
-const CurrentVersion uint = 1
+const CurrentVersion uint = 3
 
 func Run(databaseURL, migrationsPath, operation string, steps int) (result string, runError error) {
 	if operation != "up" && operation != "down" && operation != "version" {

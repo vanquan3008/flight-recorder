@@ -31,6 +31,10 @@ type Config struct {
 	HTTP            HTTPConfig      `yaml:"http"`
 	Ingestion       IngestionConfig `yaml:"ingestion"`
 	Database        DatabaseConfig  `yaml:"database"`
+	Auth            AuthConfig      `yaml:"auth"`
+	TLS             TLSConfig       `yaml:"tls"`
+	Retention       RetentionConfig `yaml:"retention"`
+	Replay          ReplayConfig    `yaml:"replay"`
 	ShutdownTimeout time.Duration   `yaml:"shutdown_timeout"`
 	LogLevel        slog.Level      `yaml:"log_level"`
 }
@@ -77,6 +81,31 @@ type DatabaseConfig struct {
 	HealthCheckPeriod     time.Duration `yaml:"health_check_period"`
 	ReadinessTimeout      time.Duration `yaml:"readiness_timeout"`
 	MigrationsPath        string        `yaml:"migrations_path"`
+}
+
+type AuthConfig struct {
+	BootstrapAPIKey string `yaml:"bootstrap_api_key"`
+}
+
+type TLSConfig struct {
+	CertificateFile string `yaml:"certificate_file"`
+	PrivateKeyFile  string `yaml:"private_key_file"`
+}
+
+type RetentionConfig struct {
+	MaxAge        time.Duration `yaml:"max_age"`
+	CheckInterval time.Duration `yaml:"check_interval"`
+	BatchSize     int           `yaml:"batch_size"`
+}
+
+type ReplayConfig struct {
+	Enabled          bool          `yaml:"enabled"`
+	AllowedHosts     []string      `yaml:"allowed_hosts"`
+	AllowPrivate     bool          `yaml:"allow_private"`
+	Timeout          time.Duration `yaml:"timeout"`
+	MaxRequestBytes  int64         `yaml:"max_request_bytes"`
+	MaxResponseBytes int64         `yaml:"max_response_bytes"`
+	MaxConcurrent    int           `yaml:"max_concurrent"`
 }
 
 func Load(configFile string) (Config, error) {

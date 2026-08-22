@@ -20,6 +20,8 @@ type Registry struct {
 	ingestionBytes     prometheus.Gauge
 	batchDuration      prometheus.Histogram
 	storageErrors      prometheus.Counter
+	otlpRequests       *prometheus.CounterVec
+	otlpDuration       *prometheus.HistogramVec
 }
 
 func New(version, commit, buildTime string) *Registry {
@@ -65,13 +67,24 @@ func New(version, commit, buildTime string) *Registry {
 		Name:      "event_storage_errors_total",
 		Help:      "Event batch persistence failures after bounded retries.",
 	})
+	otlpRequests := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "flight",
+		Name:      "otlp_requests_total",
+		Help:      "OTLP export requests completed.",
+	}, []string{"transport", "signal", "outcome"})
+	otlpDuration := prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Namespace: "flight",
+		Name:      "otlp_request_duration_seconds",
+		Help:      "OTLP export request duration.",
+		Buckets:   prometheus.DefBuckets,
+	}, []string{"transport", "signal"})
 	buildInfo := prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: "flight",
 		Name:      "build_info",
 		Help:      "Flight build and runtime information.",
 	}, []string{"version", "commit", "build_time", "go_version"})
 
-	prometheusRegistry.MustRegister(httpRequests, databaseReady, ingestedRecords, rejectedRecords, ingestionQueue, ingestionBytes, batchDuration, storageErrors, buildInfo)
+	prometheusRegistry.MustRegister(httpRequests, databaseReady, ingestedRecords, rejectedRecords, ingestionQueue, ingestionBytes, batchDuration, storageErrors, otlpRequests, otlpDuration, buildInfo)
 	buildInfo.WithLabelValues(version, commit, buildTime, runtime.Version()).Set(1)
 
 	return &Registry{
@@ -84,7 +97,14 @@ func New(version, commit, buildTime string) *Registry {
 		ingestionBytes:     ingestionBytes,
 		batchDuration:      batchDuration,
 		storageErrors:      storageErrors,
+		otlpRequests:       otlpRequests,
+		otlpDuration:       otlpDuration,
 	}
+}
+
+func (registry *Registry) ObserveOTLPRequest(transport, signal, outcome string, duration time.Duration) {
+	registry.otlpRequests.WithLabelValues(transport, signal, outcome).Inc()
+	registry.otlpDuration.WithLabelValues(transport, signal).Observe(duration.Seconds())
 }
 
 func (registry *Registry) ObserveIngested(signal string, count int) {

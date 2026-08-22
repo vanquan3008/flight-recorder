@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -15,6 +16,19 @@ import (
 )
 
 var ErrUnavailable = errors.New("ingestion pipeline unavailable")
+
+const maxPooledEstimateBytes = 64 << 10
+
+type estimateEncoder struct {
+	buffer  bytes.Buffer
+	encoder *json.Encoder
+}
+
+var estimateEncoders = sync.Pool{New: func() any {
+	estimator := &estimateEncoder{}
+	estimator.encoder = json.NewEncoder(&estimator.buffer)
+	return estimator
+}}
 
 type StoreFunc func(context.Context, []telemetry.Event) error
 
@@ -261,9 +275,15 @@ func (pipeline *Pipeline) releaseBytes(count int64) {
 }
 
 func estimateBytes(event telemetry.Event) int64 {
-	encoded, encodeError := json.Marshal(event)
-	if encodeError != nil || len(encoded) == 0 {
+	estimator := estimateEncoders.Get().(*estimateEncoder)
+	estimator.buffer.Reset()
+	encodeError := estimator.encoder.Encode(event)
+	encodedBytes := estimator.buffer.Len()
+	if estimator.buffer.Cap() <= maxPooledEstimateBytes {
+		estimateEncoders.Put(estimator)
+	}
+	if encodeError != nil || encodedBytes == 0 {
 		return 1
 	}
-	return int64(len(encoded))
+	return int64(encodedBytes)
 }

@@ -10,6 +10,13 @@ import (
 
 type EventType string
 
+type Signal string
+
+const (
+	SignalTrace Signal = "TRACE"
+	SignalLog   Signal = "LOG"
+)
+
 const (
 	EventHTTPServer EventType = "HTTP_SERVER"
 	EventHTTPClient EventType = "HTTP_CLIENT"
@@ -23,26 +30,64 @@ const (
 )
 
 type Event struct {
-	ID             string
-	ProjectID      string
-	Environment    string
-	ServiceName    string
-	ServiceVersion string
-	TraceID        string
-	SpanID         string
-	ParentSpanID   string
-	RequestID      string
-	Type           EventType
-	Timestamp      time.Time
-	Duration       time.Duration
-	Severity       string
-	Status         string
-	HTTPStatus     int
-	Operation      string
-	ErrorType      string
-	ErrorMessage   string
-	Attributes     map[string]any
-	PayloadRef     string
+	ID                 string
+	ProjectID          string
+	Environment        string
+	ServiceName        string
+	ServiceVersion     string
+	TraceID            string
+	SpanID             string
+	ParentSpanID       string
+	RequestID          string
+	Type               EventType
+	Timestamp          time.Time
+	Duration           time.Duration
+	Severity           string
+	Status             string
+	HTTPStatus         int
+	Operation          string
+	ErrorType          string
+	ErrorMessage       string
+	Attributes         map[string]any
+	PayloadRef         string
+	Signal             Signal
+	ResourceAttributes map[string]any
+	ResourceSchemaURL  string
+	ScopeName          string
+	ScopeVersion       string
+	ScopeSchemaURL     string
+	ScopeAttributes    map[string]any
+	RecordAttributes   map[string]any
+
+	TraceState        string
+	TraceFlags        uint32
+	SpanKind          int32
+	StatusMessage     string
+	DroppedAttributes uint32
+	DroppedEvents     uint32
+	DroppedLinks      uint32
+	SpanEvents        []SpanEvent
+	SpanLinks         []SpanLink
+	ObservedTimestamp time.Time
+	SeverityNumber    int32
+	LogBody           any
+	LogEventName      string
+}
+
+type SpanEvent struct {
+	Timestamp         time.Time
+	Name              string
+	Attributes        map[string]any
+	DroppedAttributes uint32
+}
+
+type SpanLink struct {
+	TraceID           string
+	SpanID            string
+	TraceState        string
+	Flags             uint32
+	Attributes        map[string]any
+	DroppedAttributes uint32
 }
 
 func (event Event) Validate() error {

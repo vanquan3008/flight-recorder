@@ -11,32 +11,55 @@ import (
 
 	"github.com/flight-observability/flight/internal/config"
 	"github.com/flight-observability/flight/internal/metrics"
+	"github.com/flight-observability/flight/internal/postgres"
+	"github.com/flight-observability/flight/internal/replay"
 )
 
 type Server struct {
-	httpServer       *http.Server
-	logger           *slog.Logger
-	metrics          *metrics.Registry
-	readinessCheck   func(context.Context) error
-	readinessTimeout time.Duration
-	maxBodyBytes     int64
-	ready            atomic.Bool
-	shutdownTimeout  time.Duration
+	httpServer            *http.Server
+	logger                *slog.Logger
+	metrics               *metrics.Registry
+	readinessCheck        func(context.Context) error
+	readinessTimeout      time.Duration
+	maxBodyBytes          int64
+	ready                 atomic.Bool
+	shutdownTimeout       time.Duration
+	database              *postgres.Database
+	replay                *replay.Executor
+	replayMaxRequestBytes int64
 }
 
-func New(configuration config.Config, logger *slog.Logger, readinessCheck func(context.Context) error, metricRegistry *metrics.Registry) *Server {
+func New(configuration config.Config, logger *slog.Logger, readinessCheck func(context.Context) error, metricRegistry *metrics.Registry, database *postgres.Database, replayExecutor *replay.Executor) *Server {
 	server := &Server{
-		logger:           logger,
-		metrics:          metricRegistry,
-		readinessCheck:   readinessCheck,
-		readinessTimeout: configuration.Database.ReadinessTimeout,
-		maxBodyBytes:     configuration.HTTP.ManagementMaxBodyBytes,
-		shutdownTimeout:  configuration.ShutdownTimeout,
+		logger:                logger,
+		metrics:               metricRegistry,
+		readinessCheck:        readinessCheck,
+		readinessTimeout:      configuration.Database.ReadinessTimeout,
+		maxBodyBytes:          configuration.HTTP.ManagementMaxBodyBytes,
+		shutdownTimeout:       configuration.ShutdownTimeout,
+		database:              database,
+		replay:                replayExecutor,
+		replayMaxRequestBytes: configuration.Replay.MaxRequestBytes,
 	}
 	router := http.NewServeMux()
 	router.HandleFunc("GET /health/live", server.live)
 	router.HandleFunc("GET /health/ready", server.readiness)
 	router.Handle("GET /metrics", metricRegistry.Handler())
+	router.Handle("GET /", webHandler())
+	if database != nil && configuration.Auth.BootstrapAPIKey != "" {
+		router.HandleFunc("GET /api/v1/traces", server.listTraces)
+		router.HandleFunc("GET /api/v1/traces/{traceID}", server.getTrace)
+		router.HandleFunc("GET /api/v1/traces/{traceID}/logs", server.listTraceLogs)
+		router.HandleFunc("GET /api/v1/logs", server.listLogs)
+		router.HandleFunc("GET /api/v1/logs/{eventID}", server.getLog)
+		router.HandleFunc("GET /api/v1/services", server.listServices)
+		router.HandleFunc("GET /api/v1/services/{service}/dependencies", server.listServiceDependencies)
+		router.HandleFunc("GET /api/v1/incidents", server.listIncidents)
+		router.HandleFunc("GET /api/v1/incidents/{incidentID}", server.getIncident)
+		if replayExecutor != nil {
+			router.HandleFunc("POST /api/v1/incidents/{incidentID}/replays", server.replayIncident)
+		}
+	}
 
 	var requestHandler http.Handler = router
 	requestHandler = server.withBodyLimit(requestHandler)

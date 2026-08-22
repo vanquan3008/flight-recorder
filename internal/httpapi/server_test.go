@@ -65,6 +65,19 @@ func TestMetricsAreExposed(t *testing.T) {
 	}
 }
 
+func TestDashboardIsServed(t *testing.T) {
+	httpServer := newTestServer(func(context.Context) error { return nil })
+	responseRecorder := httptest.NewRecorder()
+	httpRequest := httptest.NewRequest(http.MethodGet, "/", nil)
+	httpServer.httpServer.Handler.ServeHTTP(responseRecorder, httpRequest)
+	if responseRecorder.Code != http.StatusOK {
+		t.Fatalf("status = %d", responseRecorder.Code)
+	}
+	if contentSecurityPolicy := responseRecorder.Header().Get("Content-Security-Policy"); contentSecurityPolicy == "" {
+		t.Fatal("dashboard response is missing a Content-Security-Policy")
+	}
+}
+
 func TestMetricMethodBoundsCardinality(t *testing.T) {
 	if normalizedMethod := metricMethod("ATTACKER-CONTROLLED"); normalizedMethod != "OTHER" {
 		t.Fatalf("method = %q", normalizedMethod)
@@ -78,5 +91,5 @@ func newTestServer(readinessCheck func(context.Context) error) *Server {
 		ShutdownTimeout: time.Second,
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	return New(configuration, logger, readinessCheck, flightmetrics.New("test", "test", "test"))
+	return New(configuration, logger, readinessCheck, flightmetrics.New("test", "test", "test"), nil, nil)
 }

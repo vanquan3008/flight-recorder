@@ -29,6 +29,11 @@ services:
   flight:
     build: .
     image: flight:dev
+    # Compose uses .env for interpolation only; env_file also passes Flight's
+    # runtime settings, including authentication, into the container.
+    env_file:
+      - path: .env
+        required: false
     depends_on:
       postgres:
         condition: service_healthy
@@ -49,20 +54,6 @@ services:
       interval: 10s
       timeout: 3s
       retries: 3
-
-  demo:
-    image: flight:dev
-    depends_on:
-      flight:
-        condition: service_healthy
-    entrypoint: ["/demo-service"]
-    healthcheck:
-      disable: true
-    environment:
-      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-http://flight:4318/v1/traces}
-      OTEL_EXPORTER_OTLP_PROTOCOL: ${OTEL_EXPORTER_OTLP_PROTOCOL:-http/protobuf}
-    ports:
-      - "8090:8090"
 
 volumes:
   flight-postgres:

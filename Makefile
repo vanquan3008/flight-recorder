@@ -5,7 +5,7 @@ build:
 
 build-all:
 	go build -o bin/flight ./cmd/flight
-	go build -o bin/demo-service ./examples/demo-service
+	go build -o bin/flight-agent ./cmd/flight-agent
 
 ci: fmt-check vet staticcheck vulncheck test-race build-all
 
@@ -32,7 +32,7 @@ run:
 
 dev:
 	docker compose up --build -d postgres
-	docker compose run --rm migrate
+	docker compose run --build --rm migrate
 	docker compose up -d flight
 
 migrate:

@@ -49,7 +49,7 @@ func (normalizer *normalizer) traces(resourceSpans []*tracepb.ResourceSpans) ([]
 					rejected++
 					continue
 				}
-				event, normalizeError := normalizer.span(resourceGroup.GetResource(), scopeGroup.GetScope(), span)
+				event, normalizeError := normalizer.span(resourceGroup.GetResource(), resourceGroup.GetSchemaUrl(), scopeGroup.GetScope(), scopeGroup.GetSchemaUrl(), span)
 				if normalizeError != nil {
 					rejected++
 					continue
@@ -73,7 +73,7 @@ func (normalizer *normalizer) logs(resourceLogs []*logspb.ResourceLogs) ([]telem
 					rejected++
 					continue
 				}
-				event, normalizeError := normalizer.logRecord(resourceGroup.GetResource(), scopeGroup.GetScope(), record)
+				event, normalizeError := normalizer.logRecord(resourceGroup.GetResource(), resourceGroup.GetSchemaUrl(), scopeGroup.GetScope(), scopeGroup.GetSchemaUrl(), record)
 				if normalizeError != nil {
 					rejected++
 					continue
@@ -85,7 +85,7 @@ func (normalizer *normalizer) logs(resourceLogs []*logspb.ResourceLogs) ([]telem
 	return events, rejected
 }
 
-func (normalizer *normalizer) span(resource *resourcepb.Resource, scope *commonpb.InstrumentationScope, span *tracepb.Span) (telemetry.Event, error) {
+func (normalizer *normalizer) span(resource *resourcepb.Resource, resourceSchemaURL string, scope *commonpb.InstrumentationScope, scopeSchemaURL string, span *tracepb.Span) (telemetry.Event, error) {
 	attributes := newAttributeBuilder(normalizer)
 	if addError := attributes.addAll(resource.GetAttributes()); addError != nil {
 		return telemetry.Event{}, addError
@@ -97,13 +97,16 @@ func (normalizer *normalizer) span(resource *resourcepb.Resource, scope *commonp
 		return telemetry.Event{}, addError
 	}
 	for _, spanEvent := range span.GetEvents() {
-		if spanEvent.GetName() == "exception" {
-			if addError := attributes.addAll(spanEvent.GetAttributes()); addError != nil {
-				return telemetry.Event{}, addError
-			}
+		if addError := attributes.addAll(spanEvent.GetAttributes()); addError != nil {
+			return telemetry.Event{}, addError
 		}
 	}
-	if textError := normalizer.validateText(scope.GetName(), scope.GetVersion(), span.GetName(), span.GetStatus().GetMessage()); textError != nil {
+	for _, link := range span.GetLinks() {
+		if addError := attributes.addAll(link.GetAttributes()); addError != nil {
+			return telemetry.Event{}, addError
+		}
+	}
+	if textError := normalizer.validateText(resourceSchemaURL, scope.GetName(), scope.GetVersion(), scopeSchemaURL, span.GetName(), span.GetStatus().GetMessage(), span.GetTraceState()); textError != nil {
 		return telemetry.Event{}, textError
 	}
 	if scope.GetName() != "" {
@@ -115,6 +118,26 @@ func (normalizer *normalizer) span(resource *resourcepb.Resource, scope *commonp
 		if addError := attributes.addSynthetic("otel.scope.version", scope.GetVersion()); addError != nil {
 			return telemetry.Event{}, addError
 		}
+	}
+	resourceAttributes, resourceAttributesError := normalizer.attributeValues(resource.GetAttributes())
+	if resourceAttributesError != nil {
+		return telemetry.Event{}, resourceAttributesError
+	}
+	scopeAttributes, scopeAttributesError := normalizer.attributeValues(scope.GetAttributes())
+	if scopeAttributesError != nil {
+		return telemetry.Event{}, scopeAttributesError
+	}
+	recordAttributes, recordAttributesError := normalizer.attributeValues(span.GetAttributes())
+	if recordAttributesError != nil {
+		return telemetry.Event{}, recordAttributesError
+	}
+	spanEvents, spanEventsError := normalizer.normalizeSpanEvents(span.GetEvents())
+	if spanEventsError != nil {
+		return telemetry.Event{}, spanEventsError
+	}
+	spanLinks, spanLinksError := normalizer.normalizeSpanLinks(span.GetLinks())
+	if spanLinksError != nil {
+		return telemetry.Event{}, spanLinksError
 	}
 
 	if span.GetStartTimeUnixNano() == 0 || span.GetStartTimeUnixNano() > maxSignedNanoseconds || span.GetEndTimeUnixNano() > maxSignedNanoseconds || span.GetEndTimeUnixNano() < span.GetStartTimeUnixNano() || span.GetEndTimeUnixNano()-span.GetStartTimeUnixNano() > maxSignedNanoseconds || !validIdentifier(span.GetTraceId(), 16, false) || !validIdentifier(span.GetSpanId(), 8, false) || !validIdentifier(span.GetParentSpanId(), 8, true) {
@@ -135,23 +158,40 @@ func (normalizer *normalizer) span(resource *resourcepb.Resource, scope *commonp
 		return telemetry.Event{}, httpStatusError
 	}
 	event := telemetry.Event{
-		ProjectID:      normalizer.configuration.ProjectID,
-		Environment:    normalizer.configuration.EnvironmentName,
-		ServiceName:    stringAttribute(attributes.values, "service.name"),
-		ServiceVersion: stringAttribute(attributes.values, "service.version"),
-		TraceID:        traceID,
-		SpanID:         spanID,
-		ParentSpanID:   hex.EncodeToString(span.GetParentSpanId()),
-		RequestID:      requestID(attributes.values),
-		Type:           eventType,
-		Timestamp:      timestamp,
-		Duration:       endTimestamp.Sub(timestamp),
-		Status:         spanStatus(span),
-		HTTPStatus:     httpStatus,
-		Operation:      span.GetName(),
-		ErrorType:      errorType,
-		ErrorMessage:   errorMessage,
-		Attributes:     attributes.values,
+		ProjectID:          normalizer.configuration.ProjectID,
+		Environment:        normalizer.configuration.EnvironmentName,
+		ServiceName:        stringAttribute(attributes.values, "service.name"),
+		ServiceVersion:     stringAttribute(attributes.values, "service.version"),
+		TraceID:            traceID,
+		SpanID:             spanID,
+		ParentSpanID:       hex.EncodeToString(span.GetParentSpanId()),
+		RequestID:          requestID(attributes.values),
+		Type:               eventType,
+		Timestamp:          timestamp,
+		Duration:           endTimestamp.Sub(timestamp),
+		Status:             spanStatus(span),
+		HTTPStatus:         httpStatus,
+		Operation:          span.GetName(),
+		ErrorType:          errorType,
+		ErrorMessage:       errorMessage,
+		Attributes:         attributes.values,
+		Signal:             telemetry.SignalTrace,
+		ResourceAttributes: resourceAttributes,
+		ResourceSchemaURL:  resourceSchemaURL,
+		ScopeName:          scope.GetName(),
+		ScopeVersion:       scope.GetVersion(),
+		ScopeSchemaURL:     scopeSchemaURL,
+		ScopeAttributes:    scopeAttributes,
+		RecordAttributes:   recordAttributes,
+		TraceState:         span.GetTraceState(),
+		TraceFlags:         span.GetFlags(),
+		SpanKind:           int32(span.GetKind()),
+		StatusMessage:      span.GetStatus().GetMessage(),
+		DroppedAttributes:  span.GetDroppedAttributesCount(),
+		DroppedEvents:      span.GetDroppedEventsCount(),
+		DroppedLinks:       span.GetDroppedLinksCount(),
+		SpanEvents:         spanEvents,
+		SpanLinks:          spanLinks,
 	}
 	event.ID = telemetry.DeterministicID(timestamp, normalizer.configuration.ProjectID, traceID, spanID)
 	if validationError := event.Validate(); validationError != nil {
@@ -160,7 +200,7 @@ func (normalizer *normalizer) span(resource *resourcepb.Resource, scope *commonp
 	return event, nil
 }
 
-func (normalizer *normalizer) logRecord(resource *resourcepb.Resource, scope *commonpb.InstrumentationScope, record *logspb.LogRecord) (telemetry.Event, error) {
+func (normalizer *normalizer) logRecord(resource *resourcepb.Resource, resourceSchemaURL string, scope *commonpb.InstrumentationScope, scopeSchemaURL string, record *logspb.LogRecord) (telemetry.Event, error) {
 	attributes := newAttributeBuilder(normalizer)
 	if addError := attributes.addAll(resource.GetAttributes()); addError != nil {
 		return telemetry.Event{}, addError
@@ -179,8 +219,20 @@ func (normalizer *normalizer) logRecord(resource *resourcepb.Resource, scope *co
 	if marshalError != nil || len(bodyJSON) > normalizer.configuration.MaxAttributeValueBytes {
 		return telemetry.Event{}, errors.New("log body is invalid")
 	}
-	if textError := normalizer.validateText(scope.GetName(), scope.GetVersion(), record.GetSeverityText()); textError != nil {
+	if textError := normalizer.validateText(resourceSchemaURL, scope.GetName(), scope.GetVersion(), scopeSchemaURL, record.GetSeverityText(), record.GetEventName()); textError != nil {
 		return telemetry.Event{}, textError
+	}
+	resourceAttributes, resourceAttributesError := normalizer.attributeValues(resource.GetAttributes())
+	if resourceAttributesError != nil {
+		return telemetry.Event{}, resourceAttributesError
+	}
+	scopeAttributes, scopeAttributesError := normalizer.attributeValues(scope.GetAttributes())
+	if scopeAttributesError != nil {
+		return telemetry.Event{}, scopeAttributesError
+	}
+	recordAttributes, recordAttributesError := normalizer.attributeValues(record.GetAttributes())
+	if recordAttributesError != nil {
+		return telemetry.Event{}, recordAttributesError
 	}
 	bodyText := fmt.Sprint(body)
 	if addError := attributes.addSynthetic("log.body", body); addError != nil {
@@ -210,20 +262,34 @@ func (normalizer *normalizer) logRecord(resource *resourcepb.Resource, scope *co
 		severity = strings.TrimPrefix(record.GetSeverityNumber().String(), "SEVERITY_NUMBER_")
 	}
 	event := telemetry.Event{
-		ProjectID:      normalizer.configuration.ProjectID,
-		Environment:    normalizer.configuration.EnvironmentName,
-		ServiceName:    stringAttribute(attributes.values, "service.name"),
-		ServiceVersion: stringAttribute(attributes.values, "service.version"),
-		TraceID:        traceID,
-		SpanID:         spanID,
-		RequestID:      requestID(attributes.values),
-		Type:           eventType,
-		Timestamp:      timestamp,
-		Severity:       severity,
-		Operation:      scope.GetName(),
-		ErrorType:      errorType,
-		ErrorMessage:   errorMessage,
-		Attributes:     attributes.values,
+		ProjectID:          normalizer.configuration.ProjectID,
+		Environment:        normalizer.configuration.EnvironmentName,
+		ServiceName:        stringAttribute(attributes.values, "service.name"),
+		ServiceVersion:     stringAttribute(attributes.values, "service.version"),
+		TraceID:            traceID,
+		SpanID:             spanID,
+		RequestID:          requestID(attributes.values),
+		Type:               eventType,
+		Timestamp:          timestamp,
+		Severity:           severity,
+		Operation:          scope.GetName(),
+		ErrorType:          errorType,
+		ErrorMessage:       errorMessage,
+		Attributes:         attributes.values,
+		Signal:             telemetry.SignalLog,
+		ResourceAttributes: resourceAttributes,
+		ResourceSchemaURL:  resourceSchemaURL,
+		ScopeName:          scope.GetName(),
+		ScopeVersion:       scope.GetVersion(),
+		ScopeSchemaURL:     scopeSchemaURL,
+		ScopeAttributes:    scopeAttributes,
+		RecordAttributes:   recordAttributes,
+		TraceFlags:         record.GetFlags(),
+		ObservedTimestamp:  unixNanos(record.GetObservedTimeUnixNano()),
+		SeverityNumber:     int32(record.GetSeverityNumber()),
+		DroppedAttributes:  record.GetDroppedAttributesCount(),
+		LogBody:            body,
+		LogEventName:       record.GetEventName(),
 	}
 	identityAttributes, _ := json.Marshal(attributes.values)
 	// ponytail: OTLP logs have no universal source ID, so exact duplicates at
@@ -233,6 +299,69 @@ func (normalizer *normalizer) logRecord(resource *resourcepb.Resource, scope *co
 		return telemetry.Event{}, validationError
 	}
 	return event, nil
+}
+
+func (normalizer *normalizer) attributeValues(attributes []*commonpb.KeyValue) (map[string]any, error) {
+	builder := newAttributeBuilder(normalizer)
+	if addError := builder.addAll(attributes); addError != nil {
+		return nil, addError
+	}
+	return builder.values, nil
+}
+
+func (normalizer *normalizer) normalizeSpanEvents(events []*tracepb.Span_Event) ([]telemetry.SpanEvent, error) {
+	result := make([]telemetry.SpanEvent, 0, len(events))
+	for _, event := range events {
+		if event.GetTimeUnixNano() > maxSignedNanoseconds {
+			return nil, errors.New("span event timestamp is invalid")
+		}
+		if textError := normalizer.validateText(event.GetName()); textError != nil {
+			return nil, textError
+		}
+		attributes, attributesError := normalizer.attributeValues(event.GetAttributes())
+		if attributesError != nil {
+			return nil, attributesError
+		}
+		result = append(result, telemetry.SpanEvent{
+			Timestamp:         unixNanos(event.GetTimeUnixNano()),
+			Name:              event.GetName(),
+			Attributes:        attributes,
+			DroppedAttributes: event.GetDroppedAttributesCount(),
+		})
+	}
+	return result, nil
+}
+
+func (normalizer *normalizer) normalizeSpanLinks(links []*tracepb.Span_Link) ([]telemetry.SpanLink, error) {
+	result := make([]telemetry.SpanLink, 0, len(links))
+	for _, link := range links {
+		if !validIdentifier(link.GetTraceId(), 16, false) || !validIdentifier(link.GetSpanId(), 8, false) {
+			return nil, errors.New("span link identity is invalid")
+		}
+		if textError := normalizer.validateText(link.GetTraceState()); textError != nil {
+			return nil, textError
+		}
+		attributes, attributesError := normalizer.attributeValues(link.GetAttributes())
+		if attributesError != nil {
+			return nil, attributesError
+		}
+		result = append(result, telemetry.SpanLink{
+			TraceID:           hex.EncodeToString(link.GetTraceId()),
+			SpanID:            hex.EncodeToString(link.GetSpanId()),
+			TraceState:        link.GetTraceState(),
+			Flags:             link.GetFlags(),
+			Attributes:        attributes,
+			DroppedAttributes: link.GetDroppedAttributesCount(),
+		})
+	}
+	return result, nil
+}
+
+func unixNanos(value uint64) time.Time {
+	if value == 0 {
+		return time.Time{}
+	}
+	return time.Unix(0, int64(value)).UTC()
 }
 
 func (normalizer *normalizer) redacts(key string) bool {

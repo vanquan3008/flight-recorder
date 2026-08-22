@@ -56,6 +56,21 @@ func (configuration Config) Validate() error {
 	if strings.TrimSpace(configuration.Database.MigrationsPath) == "" {
 		return errors.New("database.migrations_path must not be empty")
 	}
+	if configuration.Auth.BootstrapAPIKey != "" && len(configuration.Auth.BootstrapAPIKey) < 32 {
+		return errors.New("auth.bootstrap_api_key must contain at least 32 characters")
+	}
+	if (configuration.TLS.CertificateFile == "") != (configuration.TLS.PrivateKeyFile == "") {
+		return errors.New("tls.certificate_file and tls.private_key_file must be set together")
+	}
+	if configuration.Replay.Enabled && len(configuration.Replay.AllowedHosts) == 0 {
+		return errors.New("replay.allowed_hosts is required when replay is enabled")
+	}
+	if configuration.Replay.Timeout <= 0 || configuration.Replay.MaxRequestBytes <= 0 || configuration.Replay.MaxRequestBytes > 4<<20 || configuration.Replay.MaxResponseBytes <= 0 || configuration.Replay.MaxResponseBytes > 4<<20 || configuration.Replay.MaxConcurrent <= 0 || configuration.Replay.MaxConcurrent > 16 {
+		return errors.New("replay limits are invalid")
+	}
+	if configuration.Retention.MaxAge < 0 || configuration.Retention.CheckInterval <= 0 || configuration.Retention.BatchSize <= 0 || configuration.Retention.BatchSize > maxIngestionBatchSize {
+		return errors.New("retention limits are invalid")
+	}
 	if configuration.ShutdownTimeout <= 0 {
 		return errors.New("shutdown_timeout must be positive")
 	}
