@@ -3,6 +3,9 @@ package postgres
 import (
 	"context"
 	"os"
+	"slices"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -42,8 +45,12 @@ func TestStoreEventsIdempotentIntegration(t *testing.T) {
 	if bootstrapError := database.EnsureBootstrapAPIKey(context.Background(), ingestion.ProjectID, bootstrapKey); bootstrapError != nil {
 		t.Fatalf("bootstrap API key on fresh scope: %v", bootstrapError)
 	}
-	if principal, authError := database.AuthenticateAPIKey(context.Background(), bootstrapKey); authError != nil || principal.ProjectID != ingestion.ProjectID {
+	principal, authError := database.AuthenticateAPIKey(context.Background(), bootstrapKey)
+	if authError != nil || principal.ProjectID != ingestion.ProjectID {
 		t.Fatalf("authenticate bootstrap API key: principal=%#v error=%v", principal, authError)
+	}
+	if slices.Contains(principal.Scopes, "alert") {
+		t.Fatal("bootstrap key contains removed alert scope")
 	}
 	t.Cleanup(func() {
 		defer database.Close()
@@ -224,6 +231,73 @@ func TestStoreEventsDeduplicatesIncidentsIntegration(t *testing.T) {
 	if incidents != 2 || occurrences != 2 {
 		t.Fatalf("incidents=%d occurrences=%d", incidents, occurrences)
 	}
+}
+
+func BenchmarkStoreEventsIntegration(b *testing.B) {
+	if os.Getenv("FLIGHT_INTEGRATION_TEST") != "1" {
+		b.Skip("set FLIGHT_INTEGRATION_TEST=1 against a migrated disposable PostgreSQL database")
+	}
+	databaseURL := os.Getenv("FLIGHT_DATABASE_URL")
+	if databaseURL == "" {
+		b.Fatal("FLIGHT_DATABASE_URL is required")
+	}
+	database, openError := Open(context.Background(), config.DatabaseConfig{
+		URL:                   databaseURL,
+		MaxConnections:        4,
+		MaxConnectionLifetime: time.Minute,
+		MaxConnectionIdleTime: time.Minute,
+		HealthCheckPeriod:     time.Minute,
+	})
+	if openError != nil {
+		b.Fatal(openError)
+	}
+	ingestion := config.IngestionConfig{
+		ProjectID:       "01900000-0000-7000-8000-000000000501",
+		ProjectSlug:     "store-benchmark",
+		ProjectName:     "Store Benchmark",
+		EnvironmentID:   "01900000-0000-7000-8000-000000000502",
+		EnvironmentName: "benchmark",
+	}
+	if scopeError := database.EnsureIngestionScope(context.Background(), ingestion); scopeError != nil {
+		b.Fatal(scopeError)
+	}
+	b.Cleanup(func() {
+		if _, deleteError := database.pool.Exec(context.Background(), "DELETE FROM projects WHERE id = $1", ingestion.ProjectID); deleteError != nil {
+			b.Errorf("delete benchmark project: %v", deleteError)
+		}
+		database.Close()
+	})
+
+	const batchSize = 256
+	message := strings.Repeat("representative log payload ", 16)
+	startedAt := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
+	b.ResetTimer()
+	for iteration := 0; iteration < b.N; iteration++ {
+		events := make([]telemetry.Event, batchSize)
+		for index := range events {
+			timestamp := startedAt.Add(time.Duration(iteration*batchSize+index) * time.Nanosecond)
+			events[index] = telemetry.Event{
+				ID:                 telemetry.DeterministicID(timestamp, "store-benchmark", strconv.Itoa(iteration), strconv.Itoa(index)),
+				ProjectID:          ingestion.ProjectID,
+				Environment:        ingestion.EnvironmentName,
+				ServiceName:        "benchmark-service",
+				Type:               telemetry.EventLog,
+				Timestamp:          timestamp,
+				Severity:           "INFO",
+				Attributes:         map[string]any{"iteration": iteration, "record": index},
+				Signal:             telemetry.SignalLog,
+				ResourceAttributes: map[string]any{"service.name": "benchmark-service"},
+				ScopeAttributes:    map[string]any{},
+				RecordAttributes:   map[string]any{"source": "benchmark"},
+				LogBody:            map[string]any{"message": message},
+			}
+		}
+		if storeError := database.StoreEvents(context.Background(), ingestion, events); storeError != nil {
+			b.Fatal(storeError)
+		}
+	}
+	b.StopTimer()
+	b.ReportMetric(float64(batchSize*b.N)/b.Elapsed().Seconds(), "records/s")
 }
 
 func ensureIntegrationScope(t *testing.T, database *Database, ingestion config.IngestionConfig) {
