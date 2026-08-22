@@ -1,8 +1,8 @@
 # Flight
 
-Incident-centric observability and production replay for OpenTelemetry workloads.
+Flight is an early-stage, self-hosted OpenTelemetry trace and log service. It receives OTLP data, redacts configured sensitive attributes, applies bounded batch persistence, and stores canonical events plus first-class spans/logs in PostgreSQL.
 
-Flight accepts standard OpenTelemetry data (traces and logs), detects failures, correlates them into actionable incidents, and enables safe request replay for debugging.
+With a bootstrap API key configured, it provides project-scoped trace/log search, service and incident views, and a minimal browser UI. Optional replay is disabled by default; it forwards only redacted JSON bodies and an allowlisted set of non-secret headers to explicit allowlisted hosts, then records every attempt. A file log agent is included for shipping local log files.
 
 ## Architecture Overview
 
@@ -14,40 +14,32 @@ flowchart LR
     Normalize --> Queue[Bounded Queue]
     Queue --> Batch[Batch Workers]
     Batch -->|Commit| PG[(PostgreSQL)]
-    PG -.-> Detect[Incident Engine]
-    Detect -.-> API[Management API / CLI]
+    PG --> Health[Health and Prometheus metrics]
+    PG --> API[Authenticated query API and UI]
 ```
 
 ## Repository Structure
 
 ```text
-.
-├── cmd/flight/             # Main binary and subcommands (serve, migrate)
-├── configs/                # Example YAML configurations
-├── docs/                   # Architecture, ADRs, security, and planning documentation
-├── examples/               # Demo applications (e.g., synthetic trace producer)
-├── internal/               # Core domain logic and bounded contexts
-│   ├── config/             # Strict configuration loading and validation
-│   ├── httpapi/            # Management HTTP server and middleware
-│   ├── ingest/otlp/        # OTLP receivers and protobuf normalization
-│   ├── pipeline/           # Bounded ingestion pipeline and batching
-│   ├── postgres/           # Database connections and event storage
-│   └── telemetry/          # Canonical event model
-├── migrations/             # Versioned PostgreSQL SQL migrations
-├── Dockerfile              # Distroless, non-root container build
-├── compose.yaml            # Docker Compose stack for local development
-└── Makefile                # Build, test, and run tasks
+cmd/          binaries
+docs/         operations documentation
+internal/     application packages
+migrations/   PostgreSQL migrations
 ```
 
 ## Configuration
 
-Flight is fully configured using environment variables. You can create a `.env` file in the root of the project to customize settings. 
-For example:
+Flight uses compiled defaults, then an optional versioned YAML file, then environment overrides. Create `.env` only when overriding defaults:
+
 ```env
-FLIGHT_LOG_LEVEL=debug
-FLIGHT_HTTP_ADDRESS=:8080
+POSTGRES_PASSWORD=replace-with-a-local-password
+FLIGHT_DATABASE_URL=postgres://flight:replace-with-a-local-password@postgres:5432/flight?sslmode=disable
+FLIGHT_AUTH_BOOTSTRAP_API_KEY=replace-with-a-secret-at-least-32-characters
 ```
-Docker Compose also picks up this `.env` file automatically to configure PostgreSQL and other services.
+
+For native `go run`, change the database host from `postgres` to `localhost`.
+
+See [the operations runbook](docs/OPERATIONS.md) for backup, restore, upgrade, rollback, and release gates.
 
 ## How to Run
 
