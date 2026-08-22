@@ -29,7 +29,7 @@ flight migrate version
 ## Release gates
 
 - `go test ./...`, `go vet ./...`, and `go build ./...` pass in Linux CI.
-- PostgreSQL migration up/down/up, integration, race, and browser E2E jobs pass.
+- PostgreSQL migration up/down/up, integration, race, dashboard smoke, and Docker jobs pass.
 - A backup/restore drill is recorded for the target PostgreSQL version.
 - TLS terminates before Flight; bootstrap keys are supplied only by a secret manager.
 - Replay allowlists and agent file permissions are reviewed.
@@ -59,10 +59,21 @@ Watch `flight_ingestion_queue_depth`, `flight_ingestion_inflight_bytes`,
 OTLP `unavailable` outcomes. A queue that stays near capacity means PostgreSQL
 is not committing at the incoming rate.
 
+Run the PostgreSQL store benchmark against a migrated disposable database:
+
+```sh
+FLIGHT_DATABASE_URL=postgres://... make bench-postgres
+```
+
 Increase `ingestion.batch_size` first, then `ingestion.workers`; keep
 `database.max_connections` at least two above the worker count. Stop increasing
 workers when batch latency or PostgreSQL lock/I/O wait rises, since more workers
 then add contention instead of throughput.
+
+Log content search requires explicit `from` and `to` timestamps and accepts at
+most a 24-hour range. This lets PostgreSQL narrow by its time index before
+evaluating content. Add a specialized text index only after production query
+plans show that the bounded scan is still too slow.
 
 ## Retention
 

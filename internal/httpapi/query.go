@@ -16,9 +16,10 @@ import (
 )
 
 const (
-	apiKeyHeader    = "X-API-Key"
-	defaultPageSize = 50
-	maxPageSize     = 100
+	apiKeyHeader      = "X-API-Key"
+	defaultPageSize   = 50
+	maxPageSize       = 100
+	maxLogSearchRange = 24 * time.Hour
 )
 
 type pageCursor struct {
@@ -138,6 +139,10 @@ func (server *Server) listServices(responseWriter http.ResponseWriter, request *
 	to, toError := parseTime(request.URL.Query().Get("to"))
 	if fromError != nil || toError != nil {
 		writeAPIError(responseWriter, http.StatusBadRequest, "INVALID_QUERY", "time filters must use RFC3339")
+		return
+	}
+	if rangeError := validateTimeRange(from, to); rangeError != nil {
+		writeAPIError(responseWriter, http.StatusBadRequest, "INVALID_QUERY", rangeError.Error())
 		return
 	}
 	services, queryError := server.database.ListServices(request.Context(), principal.ProjectID, from, to)
@@ -297,6 +302,9 @@ func parseTraceFilter(request *http.Request) (postgres.TraceFilter, pageCursor, 
 	if parseError != nil {
 		return postgres.TraceFilter{}, pageCursor{}, parseError
 	}
+	if rangeError := validateTimeRange(from, to); rangeError != nil {
+		return postgres.TraceFilter{}, pageCursor{}, rangeError
+	}
 	cursor, parseError := decodeCursor(query.Get("cursor"))
 	if parseError != nil {
 		return postgres.TraceFilter{}, pageCursor{}, parseError
@@ -318,11 +326,28 @@ func parseLogFilter(request *http.Request) (postgres.LogFilter, pageCursor, erro
 	if parseError != nil {
 		return postgres.LogFilter{}, pageCursor{}, parseError
 	}
+	if rangeError := validateTimeRange(from, to); rangeError != nil {
+		return postgres.LogFilter{}, pageCursor{}, rangeError
+	}
+	search := strings.TrimSpace(query.Get("search"))
+	if search != "" && (from.IsZero() || to.IsZero()) {
+		return postgres.LogFilter{}, pageCursor{}, errors.New("log content search requires from and to")
+	}
+	if search != "" && to.Sub(from) > maxLogSearchRange {
+		return postgres.LogFilter{}, pageCursor{}, errors.New("log content search range must not exceed 24 hours")
+	}
 	cursor, parseError := decodeCursor(query.Get("cursor"))
 	if parseError != nil {
 		return postgres.LogFilter{}, pageCursor{}, parseError
 	}
-	return postgres.LogFilter{Service: query.Get("service"), Severity: query.Get("severity"), TraceID: query.Get("traceId"), SpanID: query.Get("spanId"), Search: query.Get("search"), From: from, To: to, Limit: limit}, cursor, nil
+	return postgres.LogFilter{Service: query.Get("service"), Severity: query.Get("severity"), TraceID: query.Get("traceId"), SpanID: query.Get("spanId"), Search: search, From: from, To: to, Limit: limit}, cursor, nil
+}
+
+func validateTimeRange(from, to time.Time) error {
+	if !from.IsZero() && !to.IsZero() && from.After(to) {
+		return errors.New("from must not be after to")
+	}
+	return nil
 }
 
 func parsePageSize(value string) (int, error) {

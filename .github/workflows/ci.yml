@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
   pull_request:
   workflow_call:
 
@@ -59,8 +59,11 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: ./.github/actions/setup-go
-      - name: Migrate PostgreSQL
-        run: go run ./cmd/flight migrate up
+      - name: Verify PostgreSQL migrations
+        run: |
+          go run ./cmd/flight migrate up
+          go run ./cmd/flight migrate down 1
+          go run ./cmd/flight migrate up
       - name: Test
         env:
           FLIGHT_INTEGRATION_TEST: "1"

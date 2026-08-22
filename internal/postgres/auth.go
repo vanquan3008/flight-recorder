@@ -27,7 +27,7 @@ func (database *Database) EnsureBootstrapAPIKey(ctx context.Context, projectID, 
 	keyID := telemetry.DeterministicID(time.Unix(0, 0), projectID, string(digest[:]))
 	if _, executeError := database.pool.Exec(ctx, `
 		INSERT INTO api_keys (id, project_id, name, key_hash, scopes)
-		VALUES ($1, $2, 'bootstrap', $3, ARRAY['read', 'ingest', 'replay', 'alert'])
+		VALUES ($1, $2, 'bootstrap', $3, ARRAY['read', 'ingest', 'replay'])
 		ON CONFLICT (project_id, name) DO UPDATE
 		SET key_hash = EXCLUDED.key_hash, scopes = EXCLUDED.scopes, revoked_at = NULL`, keyID, projectID, digest[:]); executeError != nil {
 		return fmt.Errorf("ensure bootstrap API key: %w", executeError)

@@ -1,4 +1,4 @@
-.PHONY: build build-all test test-race vet staticcheck vulncheck fmt-check ci run dev migrate migrate-version clean
+.PHONY: build build-all test test-race bench-postgres vet staticcheck vulncheck fmt-check ci run dev migrate migrate-version clean
 
 build:
 	go build -o bin/flight ./cmd/flight
@@ -14,6 +14,9 @@ test:
 
 test-race:
 	go test -race ./...
+
+bench-postgres:
+	FLIGHT_INTEGRATION_TEST=1 go test -run '^$$' -bench '^BenchmarkStoreEventsIntegration$$' -benchtime=5s ./internal/postgres
 
 vet:
 	go vet ./...

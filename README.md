@@ -1,6 +1,6 @@
 # Flight
 
-Flight is an early-stage, self-hosted OpenTelemetry trace and log service. It receives OTLP data, redacts configured sensitive attributes, applies bounded batch persistence, and stores canonical events plus first-class spans/logs in PostgreSQL.
+Flight is a release-candidate, self-hosted OpenTelemetry trace and log service. It receives OTLP data, redacts configured sensitive attributes, applies bounded batch persistence, and stores canonical events plus first-class spans/logs in PostgreSQL.
 
 With a bootstrap API key configured, it provides project-scoped trace/log search, service and incident views, and a minimal browser UI. Optional replay is disabled by default; it forwards only redacted JSON bodies and an allowlisted set of non-secret headers to explicit allowlisted hosts, then records every attempt. A file log agent is included for shipping local log files.
 
