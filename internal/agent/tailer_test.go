@@ -26,7 +26,7 @@ func TestReadLinesResumesAndHandlesTruncate(t *testing.T) {
 	if writeError := os.WriteFile(path, []byte("new\n"), 0o600); writeError != nil {
 		t.Fatal(writeError)
 	}
-	lines, checkpoint, readError = ReadLines(path, checkpoint, 1024, 4096, 100)
+	lines, _, readError = ReadLines(path, checkpoint, 1024, 4096, 100)
 	if readError != nil || len(lines) != 1 || lines[0] != "new" {
 		t.Fatalf("lines=%v error=%v", lines, readError)
 	}
