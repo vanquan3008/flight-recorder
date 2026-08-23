@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"slices"
 	"strconv"
@@ -52,16 +53,7 @@ func TestStoreEventsIdempotentIntegration(t *testing.T) {
 	if slices.Contains(principal.Scopes, "alert") {
 		t.Fatal("bootstrap key contains removed alert scope")
 	}
-	t.Cleanup(func() {
-		defer database.Close()
-		if _, deleteError := database.pool.Exec(context.Background(), "DELETE FROM events WHERE project_id = $1", ingestion.ProjectID); deleteError != nil {
-			t.Errorf("delete integration events: %v", deleteError)
-			return
-		}
-		if _, deleteError := database.pool.Exec(context.Background(), "DELETE FROM projects WHERE id = $1", ingestion.ProjectID); deleteError != nil {
-			t.Errorf("delete integration project: %v", deleteError)
-		}
-	})
+	t.Cleanup(func() { cleanupIntegrationScope(t, database, ingestion.ProjectID) })
 	timestamp := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
 	event := telemetry.Event{
 		ID:                 telemetry.DeterministicID(timestamp, "integration", "event"),
@@ -97,7 +89,11 @@ func TestStoreEventsIdempotentIntegration(t *testing.T) {
 	if queryError := database.pool.QueryRow(context.Background(), "SELECT severity_number, body FROM logs WHERE project_id = $1 AND event_id = $2", ingestion.ProjectID, event.ID).Scan(&severityNumber, &body); queryError != nil {
 		t.Fatal(queryError)
 	}
-	if severityNumber != 9 || string(body) != `{"message":"same event"}` {
+	var storedBody map[string]string
+	if decodeError := json.Unmarshal(body, &storedBody); decodeError != nil {
+		t.Fatal(decodeError)
+	}
+	if severityNumber != 9 || storedBody["message"] != "same event" {
 		t.Fatalf("stored log = severity=%d body=%s", severityNumber, body)
 	}
 }
@@ -129,12 +125,7 @@ func TestStoreEventsRecoversAfterRolledBackBatchIntegration(t *testing.T) {
 		EnvironmentName: "test",
 	}
 	ensureIntegrationScope(t, database, ingestion)
-	t.Cleanup(func() {
-		defer database.Close()
-		if _, deleteError := database.pool.Exec(context.Background(), "DELETE FROM projects WHERE id = $1", ingestion.ProjectID); deleteError != nil {
-			t.Errorf("delete integration project: %v", deleteError)
-		}
-	})
+	t.Cleanup(func() { cleanupIntegrationScope(t, database, ingestion.ProjectID) })
 	timestamp := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
 	badEvent := telemetry.Event{
 		ID:          telemetry.DeterministicID(timestamp, "rollback", "bad"),
@@ -191,12 +182,7 @@ func TestStoreEventsDeduplicatesIncidentsIntegration(t *testing.T) {
 		EnvironmentName: "test",
 	}
 	ensureIntegrationScope(t, database, ingestion)
-	t.Cleanup(func() {
-		defer database.Close()
-		if _, deleteError := database.pool.Exec(context.Background(), "DELETE FROM projects WHERE id = $1", ingestion.ProjectID); deleteError != nil {
-			t.Errorf("delete integration project: %v", deleteError)
-		}
-	})
+	t.Cleanup(func() { cleanupIntegrationScope(t, database, ingestion.ProjectID) })
 	timestamp := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
 	first := telemetry.Event{
 		ID:           telemetry.DeterministicID(timestamp, "incident", "first"),
@@ -261,12 +247,7 @@ func BenchmarkStoreEventsIntegration(b *testing.B) {
 	if scopeError := database.EnsureIngestionScope(context.Background(), ingestion); scopeError != nil {
 		b.Fatal(scopeError)
 	}
-	b.Cleanup(func() {
-		if _, deleteError := database.pool.Exec(context.Background(), "DELETE FROM projects WHERE id = $1", ingestion.ProjectID); deleteError != nil {
-			b.Errorf("delete benchmark project: %v", deleteError)
-		}
-		database.Close()
-	})
+	b.Cleanup(func() { cleanupIntegrationScope(b, database, ingestion.ProjectID) })
 
 	const batchSize = 256
 	message := strings.Repeat("representative log payload ", 16)
@@ -304,5 +285,21 @@ func ensureIntegrationScope(t *testing.T, database *Database, ingestion config.I
 	t.Helper()
 	if scopeError := database.EnsureIngestionScope(context.Background(), ingestion); scopeError != nil {
 		t.Fatal(scopeError)
+	}
+}
+
+func cleanupIntegrationScope(t testing.TB, database *Database, projectID string) {
+	t.Helper()
+	defer database.Close()
+	if _, deleteError := database.pool.Exec(context.Background(), "DELETE FROM incidents WHERE project_id = $1", projectID); deleteError != nil {
+		t.Errorf("delete integration incidents: %v", deleteError)
+		return
+	}
+	if _, deleteError := database.pool.Exec(context.Background(), "DELETE FROM events WHERE project_id = $1", projectID); deleteError != nil {
+		t.Errorf("delete integration events: %v", deleteError)
+		return
+	}
+	if _, deleteError := database.pool.Exec(context.Background(), "DELETE FROM projects WHERE id = $1", projectID); deleteError != nil {
+		t.Errorf("delete integration project: %v", deleteError)
 	}
 }
