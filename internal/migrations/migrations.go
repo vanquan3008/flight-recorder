@@ -79,7 +79,7 @@ func open(databaseURL, migrationsPath string) (*migrate.Migrate, error) {
 
 	migrationRunner, migrationError := migrate.New(sourceURL, parsedDatabaseURL.String())
 	if migrationError != nil {
-		return nil, errors.New("initialize migration runner")
+		return nil, fmt.Errorf("initialize migration runner: %w", migrationError)
 	}
 	return migrationRunner, nil
 }
