@@ -32,6 +32,17 @@ var estimateEncoders = sync.Pool{New: func() any {
 
 type StoreFunc func(context.Context, []telemetry.Event) error
 
+// Config contains the bounded-queue and batching settings for a Pipeline.
+type Config struct {
+	QueueSize      int
+	QueueMaxBytes  int64
+	BatchSize      int
+	Workers        int
+	EnqueueTimeout time.Duration
+	BatchTimeout   time.Duration
+	FlushInterval  time.Duration
+}
+
 type item struct {
 	event telemetry.Event
 	ack   chan error
@@ -59,16 +70,16 @@ type Pipeline struct {
 	shutdownOnce   sync.Once
 }
 
-func New(queueSize int, queueMaxBytes int64, batchSize, workers int, enqueueTimeout, batchTimeout, flushInterval time.Duration, store StoreFunc, metricRegistry *flightmetrics.Registry) *Pipeline {
+func New(configuration Config, store StoreFunc, metricRegistry *flightmetrics.Registry) *Pipeline {
 	return &Pipeline{
-		queue:          make(chan item, queueSize),
-		byteBudget:     semaphore.NewWeighted(queueMaxBytes),
-		maxBytes:       queueMaxBytes,
-		enqueueTimeout: enqueueTimeout,
-		batchSize:      batchSize,
-		batchTimeout:   batchTimeout,
-		flushInterval:  flushInterval,
-		workers:        workers,
+		queue:          make(chan item, configuration.QueueSize),
+		byteBudget:     semaphore.NewWeighted(configuration.QueueMaxBytes),
+		maxBytes:       configuration.QueueMaxBytes,
+		enqueueTimeout: configuration.EnqueueTimeout,
+		batchSize:      configuration.BatchSize,
+		batchTimeout:   configuration.BatchTimeout,
+		flushInterval:  configuration.FlushInterval,
+		workers:        configuration.Workers,
 		store:          store,
 		metrics:        metricRegistry,
 	}

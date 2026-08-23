@@ -13,7 +13,7 @@ import (
 func TestSubmitAcknowledgesOnlyAfterStoreCompletes(t *testing.T) {
 	storeStarted := make(chan struct{})
 	releaseStore := make(chan struct{})
-	ingestionPipeline := New(4, 1<<20, 1, 1, time.Second, time.Second, time.Millisecond, func(context.Context, []telemetry.Event) error {
+	ingestionPipeline := New(Config{QueueSize: 4, QueueMaxBytes: 1 << 20, BatchSize: 1, Workers: 1, EnqueueTimeout: time.Second, BatchTimeout: time.Second, FlushInterval: time.Millisecond}, func(context.Context, []telemetry.Event) error {
 		close(storeStarted)
 		<-releaseStore
 		return nil
@@ -59,7 +59,7 @@ func TestSubmitAcknowledgesOnlyAfterStoreCompletes(t *testing.T) {
 func TestSubmitRejectsWhenQueueStaysFull(t *testing.T) {
 	storeStarted := make(chan struct{}, 1)
 	releaseStore := make(chan struct{})
-	ingestionPipeline := New(1, 1<<20, 1, 1, 20*time.Millisecond, time.Second, time.Millisecond, func(context.Context, []telemetry.Event) error {
+	ingestionPipeline := New(Config{QueueSize: 1, QueueMaxBytes: 1 << 20, BatchSize: 1, Workers: 1, EnqueueTimeout: 20 * time.Millisecond, BatchTimeout: time.Second, FlushInterval: time.Millisecond}, func(context.Context, []telemetry.Event) error {
 		storeStarted <- struct{}{}
 		<-releaseStore
 		return nil
@@ -108,7 +108,7 @@ func BenchmarkSubmitBatch(b *testing.B) {
 	for index := range events {
 		events[index] = telemetry.Event{ID: "event", ServiceName: "benchmark", Attributes: map[string]any{"index": index}}
 	}
-	ingestionPipeline := New(4096, 64<<20, 256, 4, time.Second, time.Second, time.Millisecond, func(context.Context, []telemetry.Event) error {
+	ingestionPipeline := New(Config{QueueSize: 4096, QueueMaxBytes: 64 << 20, BatchSize: 256, Workers: 4, EnqueueTimeout: time.Second, BatchTimeout: time.Second, FlushInterval: time.Millisecond}, func(context.Context, []telemetry.Event) error {
 		return nil
 	}, flightmetrics.New("benchmark", "benchmark", "benchmark"))
 	ingestionPipeline.Start()

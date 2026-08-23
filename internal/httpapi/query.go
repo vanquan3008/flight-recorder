@@ -272,20 +272,11 @@ func (server *Server) authenticateScope(responseWriter http.ResponseWriter, requ
 		writeAPIError(responseWriter, http.StatusInternalServerError, "INTERNAL_ERROR", "internal server error")
 		return postgres.Principal{}, false
 	}
-	if !hasScope(principal.Scopes, scope) {
+	if !principal.HasScope(scope) {
 		writeAPIError(responseWriter, http.StatusUnauthorized, "UNAUTHORIZED", "authentication required")
 		return postgres.Principal{}, false
 	}
 	return principal, true
-}
-
-func hasScope(scopes []string, wanted string) bool {
-	for _, scope := range scopes {
-		if scope == wanted {
-			return true
-		}
-	}
-	return false
 }
 
 func parseTraceFilter(request *http.Request) (postgres.TraceFilter, pageCursor, error) {

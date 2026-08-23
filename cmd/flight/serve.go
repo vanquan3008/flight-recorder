@@ -74,14 +74,15 @@ func runServer(arguments []string) int {
 	}
 
 	selfMetrics := flightmetrics.New(version, commit, buildTime)
-	ingestionPipeline := pipeline.New(
-		configuration.Ingestion.QueueSize,
-		configuration.Ingestion.QueueMaxBytes,
-		configuration.Ingestion.BatchSize,
-		configuration.Ingestion.Workers,
-		configuration.Ingestion.EnqueueTimeout,
-		configuration.Ingestion.BatchTimeout,
-		configuration.Ingestion.FlushInterval,
+	ingestionPipeline := pipeline.New(pipeline.Config{
+		QueueSize:      configuration.Ingestion.QueueSize,
+		QueueMaxBytes:  configuration.Ingestion.QueueMaxBytes,
+		BatchSize:      configuration.Ingestion.BatchSize,
+		Workers:        configuration.Ingestion.Workers,
+		EnqueueTimeout: configuration.Ingestion.EnqueueTimeout,
+		BatchTimeout:   configuration.Ingestion.BatchTimeout,
+		FlushInterval:  configuration.Ingestion.FlushInterval,
+	},
 		func(storeContext context.Context, events []telemetry.Event) error {
 			return database.StoreEvents(storeContext, configuration.Ingestion, events)
 		},

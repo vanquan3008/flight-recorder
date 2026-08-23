@@ -7,10 +7,28 @@ import (
 	"strings"
 )
 
+var projectSlugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
+
 func (configuration Config) Validate() error {
 	if configuration.Version != CurrentVersion {
 		return fmt.Errorf("configuration version must be %d", CurrentVersion)
 	}
+	if validationError := configuration.validateHTTP(); validationError != nil {
+		return validationError
+	}
+	if validationError := configuration.validateIngestion(); validationError != nil {
+		return validationError
+	}
+	if validationError := configuration.validateDatabase(); validationError != nil {
+		return validationError
+	}
+	if validationError := configuration.validateRuntime(); validationError != nil {
+		return validationError
+	}
+	return nil
+}
+
+func (configuration Config) validateHTTP() error {
 	if strings.TrimSpace(configuration.HTTP.Address) == "" {
 		return errors.New("http.address must not be empty")
 	}
@@ -20,6 +38,10 @@ func (configuration Config) Validate() error {
 	if configuration.HTTP.MaxHeaderBytes <= 0 || configuration.HTTP.ManagementMaxBodyBytes <= 0 {
 		return errors.New("HTTP byte limits must be positive")
 	}
+	return nil
+}
+
+func (configuration Config) validateIngestion() error {
 	if strings.TrimSpace(configuration.Ingestion.GRPCAddress) == "" || strings.TrimSpace(configuration.Ingestion.HTTPAddress) == "" {
 		return errors.New("ingestion addresses must not be empty")
 	}
@@ -29,7 +51,7 @@ func (configuration Config) Validate() error {
 	if !validUUID(configuration.Ingestion.ProjectID) || !validUUID(configuration.Ingestion.EnvironmentID) {
 		return errors.New("ingestion project_id and environment_id must be UUIDs")
 	}
-	if !regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`).MatchString(configuration.Ingestion.ProjectSlug) {
+	if !projectSlugPattern.MatchString(configuration.Ingestion.ProjectSlug) {
 		return errors.New("ingestion project_slug has an invalid format")
 	}
 	if strings.TrimSpace(configuration.Ingestion.ProjectName) == "" || strings.TrimSpace(configuration.Ingestion.EnvironmentName) == "" {
@@ -41,6 +63,10 @@ func (configuration Config) Validate() error {
 	if configuration.Ingestion.QueueSize < configuration.Ingestion.BatchSize || configuration.Ingestion.QueueSize > maxIngestionQueueSize || configuration.Ingestion.QueueMaxBytes < configuration.Ingestion.MaxRequestBytes || configuration.Ingestion.QueueMaxBytes > maxIngestionQueueBytes || configuration.Ingestion.BatchSize <= 0 || configuration.Ingestion.BatchSize > maxIngestionBatchSize || configuration.Ingestion.Workers <= 0 || configuration.Ingestion.Workers > maxIngestionWorkers || configuration.Ingestion.EnqueueTimeout <= 0 || configuration.Ingestion.BatchTimeout <= 0 || configuration.Ingestion.FlushInterval <= 0 {
 		return errors.New("ingestion queue, batch, worker, and timeout bounds are invalid")
 	}
+	return nil
+}
+
+func (configuration Config) validateDatabase() error {
 	if strings.TrimSpace(configuration.Database.URL) == "" {
 		return errors.New("database.url or FLIGHT_DATABASE_URL is required")
 	}
@@ -56,6 +82,10 @@ func (configuration Config) Validate() error {
 	if strings.TrimSpace(configuration.Database.MigrationsPath) == "" {
 		return errors.New("database.migrations_path must not be empty")
 	}
+	return nil
+}
+
+func (configuration Config) validateRuntime() error {
 	if configuration.Auth.BootstrapAPIKey != "" && len(configuration.Auth.BootstrapAPIKey) < 32 {
 		return errors.New("auth.bootstrap_api_key must contain at least 32 characters")
 	}

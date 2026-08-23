@@ -31,7 +31,7 @@ import (
 func TestOTLPHTTPLogsPersistBeforeSuccess(t *testing.T) {
 	stored := make(chan telemetry.Event, 1)
 	metricRegistry := flightmetrics.New("test", "test", "test")
-	ingestionPipeline := pipeline.New(4, 1<<20, 1, 1, time.Second, time.Second, time.Millisecond, func(_ context.Context, events []telemetry.Event) error {
+	ingestionPipeline := pipeline.New(pipeline.Config{QueueSize: 4, QueueMaxBytes: 1 << 20, BatchSize: 1, Workers: 1, EnqueueTimeout: time.Second, BatchTimeout: time.Second, FlushInterval: time.Millisecond}, func(_ context.Context, events []telemetry.Event) error {
 		stored <- events[0]
 		return nil
 	}, metricRegistry)
@@ -77,7 +77,7 @@ func TestOTLPHTTPLogsPersistBeforeSuccess(t *testing.T) {
 func TestOTLPGRPCTracesPersistBeforeSuccess(t *testing.T) {
 	stored := make(chan telemetry.Event, 1)
 	metricRegistry := flightmetrics.New("test", "test", "test")
-	ingestionPipeline := pipeline.New(4, 1<<20, 1, 1, time.Second, time.Second, time.Millisecond, func(_ context.Context, events []telemetry.Event) error {
+	ingestionPipeline := pipeline.New(pipeline.Config{QueueSize: 4, QueueMaxBytes: 1 << 20, BatchSize: 1, Workers: 1, EnqueueTimeout: time.Second, BatchTimeout: time.Second, FlushInterval: time.Millisecond}, func(_ context.Context, events []telemetry.Event) error {
 		stored <- events[0]
 		return nil
 	}, metricRegistry)
@@ -168,7 +168,7 @@ func TestOTLPHTTPJSONErrorsUseJSONStatus(t *testing.T) {
 
 func TestOTLPHTTPStorageFailureIsRetryable(t *testing.T) {
 	metricRegistry := flightmetrics.New("test", "test", "test")
-	ingestionPipeline := pipeline.New(4, 1<<20, 1, 1, time.Second, 10*time.Millisecond, time.Millisecond, func(context.Context, []telemetry.Event) error {
+	ingestionPipeline := pipeline.New(pipeline.Config{QueueSize: 4, QueueMaxBytes: 1 << 20, BatchSize: 1, Workers: 1, EnqueueTimeout: time.Second, BatchTimeout: 10 * time.Millisecond, FlushInterval: time.Millisecond}, func(context.Context, []telemetry.Event) error {
 		return errors.New("database unavailable")
 	}, metricRegistry)
 	ingestionPipeline.Start()

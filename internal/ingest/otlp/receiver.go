@@ -31,7 +31,7 @@ func (receiver *Receiver) authorize(ctx context.Context, rawKey string) error {
 		return nil
 	}
 	principal, authError := receiver.authenticate(ctx, rawKey)
-	if authError != nil || principal.ProjectID != receiver.normalizer.configuration.ProjectID || !hasScope(principal.Scopes, "ingest") {
+	if authError != nil || principal.ProjectID != receiver.normalizer.configuration.ProjectID || !principal.HasScope("ingest") {
 		return errors.New("OTLP authentication failed")
 	}
 	return nil
@@ -130,13 +130,4 @@ func (service *logsService) Export(ctx context.Context, request *collectorlogspb
 		return nil, status.Error(codes.Unavailable, exportError.Error())
 	}
 	return response, nil
-}
-
-func hasScope(scopes []string, wanted string) bool {
-	for _, scope := range scopes {
-		if scope == wanted {
-			return true
-		}
-	}
-	return false
 }

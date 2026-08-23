@@ -19,6 +19,15 @@ type Principal struct {
 	Scopes    []string
 }
 
+func (principal Principal) HasScope(wanted string) bool {
+	for _, scope := range principal.Scopes {
+		if scope == wanted {
+			return true
+		}
+	}
+	return false
+}
+
 func (database *Database) EnsureBootstrapAPIKey(ctx context.Context, projectID, rawKey string) error {
 	if rawKey == "" {
 		return nil
