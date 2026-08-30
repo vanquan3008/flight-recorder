@@ -35,6 +35,9 @@ func (server *Server) getIncident(responseWriter http.ResponseWriter, request *h
 	if !ok {
 		return
 	}
+	if !requireUUID(responseWriter, request.PathValue("incidentID")) {
+		return
+	}
 	incident, queryError := server.database.GetIncident(request.Context(), principal.ProjectID, server.environmentID, request.PathValue("incidentID"))
 	if queryError != nil {
 		server.logger.Error("get incident", "error", queryError)
@@ -196,11 +199,18 @@ func (server *Server) updateIncident(responseWriter http.ResponseWriter, request
 	if !ok {
 		return
 	}
+	if !requireUUID(responseWriter, request.PathValue("incidentID")) {
+		return
+	}
 	var payload struct {
 		Status string `json:"status"`
 	}
 	if decodeError := decodeJSONBody(request, &payload); decodeError != nil {
 		writeAPIError(responseWriter, http.StatusBadRequest, "INVALID_REQUEST", "request body must contain a status")
+		return
+	}
+	if _, valid := postgres.NormalizeIncidentStatus(payload.Status); !valid {
+		writeAPIError(responseWriter, http.StatusBadRequest, "INVALID_REQUEST", "incident status is invalid")
 		return
 	}
 	incident, updateError := server.database.UpdateIncidentStatus(request.Context(), principal.ProjectID, server.environmentID, request.PathValue("incidentID"), payload.Status, principal.KeyID)

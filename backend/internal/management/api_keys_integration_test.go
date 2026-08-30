@@ -99,6 +99,14 @@ func TestAPIKeyLifecycleIntegration(t *testing.T) {
 	if listError != nil || len(keys) != 2 {
 		t.Fatalf("list API keys=%#v error=%v", keys, listError)
 	}
+	bootstrapPrincipal, authError := database.AuthenticateAPIKey(context.Background(), bootstrapKey)
+	if authError != nil {
+		t.Fatal(authError)
+	}
+	response = serveAPIKeyRequest(server, http.MethodDelete, "/api/v1/api-keys/"+bootstrapPrincipal.KeyID, bootstrapKey, "")
+	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "LAST_ADMIN_KEY") {
+		t.Fatalf("last admin revoke status=%d body=%s", response.Code, response.Body.String())
+	}
 
 	outsideProjectID := telemetry.DeterministicID(time.Now().UTC(), "api-key-lifecycle-outside-project", runID)
 	outsideIngestion := config.IngestionConfig{

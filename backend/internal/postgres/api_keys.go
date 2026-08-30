@@ -21,6 +21,7 @@ var (
 	ErrAPIKeyNotFound     = errors.New("API key not found")
 	ErrAPIKeyNameExists   = errors.New("API key name already exists")
 	ErrInvalidAPIKeyInput = errors.New("invalid API key input")
+	ErrLastAdminAPIKey    = errors.New("cannot revoke the last admin API key")
 )
 
 var apiKeyNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$`)
@@ -215,6 +216,34 @@ func (database *Database) RevokeAPIKey(ctx context.Context, projectID, keyID, ac
 		return false, fmt.Errorf("begin API key revoke: %w", beginError)
 	}
 	defer func() { _ = transaction.Rollback(ctx) }()
+	// Lock active admin keys in a stable order before checking the count. This
+	// prevents two concurrent revocations from removing the last admin key.
+	adminRows, adminQueryError := transaction.Query(ctx, `
+		SELECT id FROM api_keys
+		WHERE project_id = $1 AND revoked_at IS NULL AND 'admin' = ANY(scopes)
+		ORDER BY id
+		FOR UPDATE`, projectID)
+	if adminQueryError != nil {
+		return false, fmt.Errorf("lock admin API keys: %w", adminQueryError)
+	}
+	adminKeyIDs := make(map[string]struct{})
+	for adminRows.Next() {
+		var adminKeyID string
+		if scanError := adminRows.Scan(&adminKeyID); scanError != nil {
+			adminRows.Close()
+			return false, fmt.Errorf("scan admin API key: %w", scanError)
+		}
+		adminKeyIDs[adminKeyID] = struct{}{}
+	}
+	if rowsError := adminRows.Err(); rowsError != nil {
+		adminRows.Close()
+		return false, fmt.Errorf("iterate admin API keys: %w", rowsError)
+	}
+	adminRows.Close()
+
+	if _, isAdmin := adminKeyIDs[keyID]; isAdmin && len(adminKeyIDs) <= 1 {
+		return false, ErrLastAdminAPIKey
+	}
 	var revokedID string
 	queryError := transaction.QueryRow(ctx, `
 		UPDATE api_keys SET revoked_at = $3

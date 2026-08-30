@@ -2,6 +2,7 @@ package management
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"log/slog"
 	"net"
@@ -19,6 +20,7 @@ type Server struct {
 	httpServer            *http.Server
 	logger                *slog.Logger
 	metrics               *metrics.Registry
+	metricsHandler        http.Handler
 	readinessCheck        func(context.Context) error
 	readinessTimeout      time.Duration
 	environmentID         string
@@ -29,12 +31,16 @@ type Server struct {
 	replay                *replay.Executor
 	replayMaxRequestBytes int64
 	allowedOrigins        map[string]struct{}
+	metricsRequireAuth    bool
+	certificateFile       string
+	privateKeyFile        string
 }
 
 func New(configuration config.Config, logger *slog.Logger, readinessCheck func(context.Context) error, metricRegistry *metrics.Registry, database *postgres.Database, replayExecutor *replay.Executor) *Server {
 	server := &Server{
 		logger:                logger,
 		metrics:               metricRegistry,
+		metricsHandler:        metricRegistry.Handler(),
 		readinessCheck:        readinessCheck,
 		readinessTimeout:      configuration.Database.ReadinessTimeout,
 		environmentID:         configuration.Ingestion.EnvironmentID,
@@ -44,6 +50,9 @@ func New(configuration config.Config, logger *slog.Logger, readinessCheck func(c
 		replay:                replayExecutor,
 		replayMaxRequestBytes: configuration.Replay.MaxRequestBytes,
 		allowedOrigins:        make(map[string]struct{}, len(configuration.HTTP.AllowedOrigins)),
+		metricsRequireAuth:    configuration.Production,
+		certificateFile:       configuration.TLS.CertificateFile,
+		privateKeyFile:        configuration.TLS.PrivateKeyFile,
 	}
 	for _, origin := range configuration.HTTP.AllowedOrigins {
 		server.allowedOrigins[origin] = struct{}{}
@@ -51,7 +60,7 @@ func New(configuration config.Config, logger *slog.Logger, readinessCheck func(c
 	router := http.NewServeMux()
 	router.HandleFunc("GET /health/live", server.live)
 	router.HandleFunc("GET /health/ready", server.readiness)
-	router.Handle("GET /metrics", metricRegistry.Handler())
+	router.HandleFunc("GET /metrics", server.metricsEndpoint)
 	// Keep the query routes available whenever the database is available. When
 	// authentication has not been configured they return an explicit 401 instead
 	// of falling through to the dashboard and looking like a missing route.
@@ -96,6 +105,9 @@ func New(configuration config.Config, logger *slog.Logger, readinessCheck func(c
 		IdleTimeout:       configuration.HTTP.IdleTimeout,
 		MaxHeaderBytes:    configuration.HTTP.MaxHeaderBytes,
 	}
+	if server.certificateFile != "" {
+		server.httpServer.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+	}
 	return server
 }
 
@@ -108,6 +120,10 @@ func (server *Server) Run(applicationContext context.Context) error {
 
 	serveResult := make(chan error, 1)
 	go func() {
+		if server.certificateFile != "" {
+			serveResult <- server.httpServer.ServeTLS(listener, server.certificateFile, server.privateKeyFile)
+			return
+		}
 		serveResult <- server.httpServer.Serve(listener)
 	}()
 
@@ -128,6 +144,21 @@ func (server *Server) Run(applicationContext context.Context) error {
 		}
 		return nil
 	}
+}
+
+func (server *Server) metricsEndpoint(responseWriter http.ResponseWriter, request *http.Request) {
+	if !server.metricsRequireAuth {
+		server.metricsHandler.ServeHTTP(responseWriter, request)
+		return
+	}
+	if server.database == nil {
+		writeAPIError(responseWriter, http.StatusServiceUnavailable, "UNAVAILABLE", "metrics authentication is unavailable")
+		return
+	}
+	if _, ok := server.authenticateScope(responseWriter, request, "read"); !ok {
+		return
+	}
+	server.metricsHandler.ServeHTTP(responseWriter, request)
 }
 
 func (server *Server) live(responseWriter http.ResponseWriter, _ *http.Request) {

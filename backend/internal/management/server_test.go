@@ -2,6 +2,7 @@ package management
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"io"
 	"log/slog"
@@ -80,6 +81,37 @@ func TestMetricsAreExposed(t *testing.T) {
 
 	if responseRecorder.Code != http.StatusOK {
 		t.Fatalf("status = %d", responseRecorder.Code)
+	}
+}
+
+func TestProductionMetricsRequireDatabaseAuthentication(t *testing.T) {
+	configuration := config.Config{
+		Production:      true,
+		HTTP:            config.HTTPConfig{ManagementMaxBodyBytes: 1024},
+		Database:        config.DatabaseConfig{ReadinessTimeout: time.Second},
+		ShutdownTimeout: time.Second,
+	}
+	server := New(configuration, slog.New(slog.NewTextHandler(io.Discard, nil)), func(context.Context) error { return nil }, metrics.New("test", "test", "test"), nil, nil)
+	responseRecorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+
+	server.httpServer.Handler.ServeHTTP(responseRecorder, request)
+
+	if responseRecorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d", responseRecorder.Code, http.StatusServiceUnavailable)
+	}
+}
+
+func TestManagementTLSConfigurationUsesModernMinimum(t *testing.T) {
+	server := New(config.Config{
+		HTTP:            config.HTTPConfig{ManagementMaxBodyBytes: 1024},
+		Database:        config.DatabaseConfig{ReadinessTimeout: time.Second},
+		TLS:             config.TLSConfig{CertificateFile: "server.crt", PrivateKeyFile: "server.key"},
+		ShutdownTimeout: time.Second,
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)), func(context.Context) error { return nil }, metrics.New("test", "test", "test"), nil, nil)
+
+	if server.httpServer.TLSConfig == nil || server.httpServer.TLSConfig.MinVersion != tls.VersionTLS12 {
+		t.Fatalf("management TLS config = %#v", server.httpServer.TLSConfig)
 	}
 }
 

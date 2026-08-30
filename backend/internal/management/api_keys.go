@@ -117,6 +117,8 @@ func writeAPIKeyError(responseWriter http.ResponseWriter, operationError error) 
 		writeAPIError(responseWriter, http.StatusConflict, "KEY_NAME_EXISTS", "an API key with this name already exists")
 	case errors.Is(operationError, postgres.ErrAPIKeyNotFound):
 		writeAPIError(responseWriter, http.StatusNotFound, "NOT_FOUND", "API key not found")
+	case errors.Is(operationError, postgres.ErrLastAdminAPIKey):
+		writeAPIError(responseWriter, http.StatusConflict, "LAST_ADMIN_KEY", "cannot revoke the last admin API key")
 	default:
 		writeAPIError(responseWriter, http.StatusInternalServerError, "INTERNAL_ERROR", "internal server error")
 	}

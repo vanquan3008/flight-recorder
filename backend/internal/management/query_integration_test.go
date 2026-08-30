@@ -118,6 +118,21 @@ func TestAuthenticatedLogQueryIntegration(t *testing.T) {
 		t.Fatal(executorError)
 	}
 	server := New(configuration, slog.New(slog.NewTextHandler(io.Discard, nil)), func(context.Context) error { return nil }, metrics.New("test", "test", "test"), database, executor)
+	secureConfiguration := configuration
+	secureConfiguration.Production = true
+	secureServer := New(secureConfiguration, slog.New(slog.NewTextHandler(io.Discard, nil)), func(context.Context) error { return nil }, metrics.New("test", "test", "test"), database, executor)
+	secureMetrics := httptest.NewRecorder()
+	secureServer.httpServer.Handler.ServeHTTP(secureMetrics, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if secureMetrics.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated production metrics status = %d", secureMetrics.Code)
+	}
+	secureMetrics = httptest.NewRecorder()
+	secureMetricsRequest := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	secureMetricsRequest.Header.Set(apiKeyHeader, bootstrapKey)
+	secureServer.httpServer.Handler.ServeHTTP(secureMetrics, secureMetricsRequest)
+	if secureMetrics.Code != http.StatusOK || !strings.Contains(secureMetrics.Body.String(), "tracepilot_build_info") {
+		t.Fatalf("authenticated production metrics status = %d body=%s", secureMetrics.Code, secureMetrics.Body.String())
+	}
 
 	unauthorized := httptest.NewRecorder()
 	server.httpServer.Handler.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, "/api/v1/logs", nil))
@@ -140,6 +155,24 @@ func TestAuthenticatedLogQueryIntegration(t *testing.T) {
 		t.Fatalf("incidents = %#v, error = %v", incidents, incidentError)
 	}
 	incidentID := incidents[0].ID
+	for _, testCase := range []struct {
+		method string
+		path   string
+		body   string
+	}{
+		{method: http.MethodGet, path: "/api/v1/incidents/not-a-uuid"},
+		{method: http.MethodPatch, path: "/api/v1/incidents/not-a-uuid", body: `{"status":"OPEN"}`},
+		{method: http.MethodPatch, path: "/api/v1/incidents/" + incidentID, body: `{"status":"CLOSED"}`},
+	} {
+		request = httptest.NewRequest(testCase.method, testCase.path, strings.NewReader(testCase.body))
+		request.Header.Set(apiKeyHeader, bootstrapKey)
+		request.Header.Set("Content-Type", "application/json")
+		response = httptest.NewRecorder()
+		server.httpServer.Handler.ServeHTTP(response, request)
+		if response.Code != http.StatusBadRequest {
+			t.Fatalf("invalid incident request %s %s status=%d body=%s", testCase.method, testCase.path, response.Code, response.Body.String())
+		}
+	}
 	for _, path := range []string{
 		"/api/v1/incidents/" + incidentID + "/occurrences?limit=1",
 		"/api/v1/incidents/" + incidentID + "/events?limit=1",
