@@ -1,42 +1,42 @@
-.PHONY: build build-all test test-race bench-postgres vet staticcheck vulncheck fmt-check ci run dev migrate migrate-version clean
+.PHONY: build build-all test test-race bench-postgres vet staticcheck vulncheck fmt-check ci run dev migrate migrate-version smoke clean
 
 build:
-	go build -o bin/flight ./cmd/flight
+	go -C backend build -o bin/tracepilot ./cmd/tracepilot
 
 build-all:
-	go build -o bin/flight ./cmd/flight
-	go build -o bin/flight-agent ./cmd/flight-agent
+	go -C backend build -o bin/tracepilot ./cmd/tracepilot
+	go -C backend build -o bin/tracepilot-agent ./cmd/tracepilot-agent
 
 ci: fmt-check vet staticcheck vulncheck test-race build-all
 
 test:
-	go test ./...
+	go -C backend test ./...
 
 test-race:
-	go test -race ./...
+	go -C backend test -race ./...
 
 bench-postgres:
-	FLIGHT_INTEGRATION_TEST=1 go test -run '^$$' -bench '^BenchmarkStoreEventsIntegration$$' -benchtime=5s ./internal/postgres
+	cd backend && TRACEPILOT_INTEGRATION_TEST=1 go test -run '^$$' -bench '^BenchmarkStoreEventsIntegration$$' -benchtime=5s ./internal/postgres
 
 vet:
-	go vet ./...
+	go -C backend vet ./...
 
 staticcheck:
-	staticcheck ./...
+	cd backend && staticcheck ./...
 
 vulncheck:
-	govulncheck ./...
+	cd backend && govulncheck ./...
 
 fmt-check:
-	@test -z "$$(gofmt -l .)" || (gofmt -l . && exit 1)
+	@files="$$(find backend -name '*.go' -type f)"; test -z "$$(gofmt -l $$files)" || (gofmt -l $$files && exit 1)
 
 run:
-	go run ./cmd/flight serve
+	go -C backend run ./cmd/tracepilot serve
 
 dev:
 	docker compose up --build -d postgres
 	docker compose run --build --rm migrate
-	docker compose up -d flight
+	docker compose up --build -d tracepilot
 
 migrate:
 	docker compose run --rm migrate
@@ -44,6 +44,9 @@ migrate:
 migrate-version:
 	docker compose run --rm migrate migrate version
 
+smoke:
+	bash scripts/compose-smoke.sh
+
 clean:
-	go clean
-	rm -rf bin
+	go -C backend clean
+	rm -rf backend/bin

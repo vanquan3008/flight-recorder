@@ -1,20 +1,16 @@
-# Contributing to Flight
+# Contributing to TracePilot
 
-Flight is early-stage. Discuss large changes in an issue before writing code; small fixes may go directly to a pull request.
+TracePilot is early-stage. Discuss large changes in an issue before writing code; small fixes may go directly to a pull request.
 
 ## Development checks
 
 ```bash
-gofmt -w .
-go vet ./...
-go test -race ./...
-go build ./...
-staticcheck ./...
-govulncheck ./...
+make ci
 ```
 
-PostgreSQL changes must also pass `flight migrate up`, `flight migrate down 1`, and a second `flight migrate up` against a clean PostgreSQL instance.
+PostgreSQL changes must also pass `tracepilot migrate up`, `tracepilot migrate down 1`, and a second `tracepilot migrate up` against a clean PostgreSQL instance.
 
-Keep changes scoped and add the smallest test that protects new behavior. Do not add a new infrastructure dependency without a measured need.
+Keep changes scoped and add the smallest test that protects new behavior. Do not
+add a new infrastructure dependency without a measured need.
 
 Never commit credentials or real captured production telemetry. Use synthetic fixtures only.

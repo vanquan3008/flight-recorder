@@ -1,0 +1,12 @@
+.git
+.github
+bin
+data
+.env
+*.local.yaml
+coverage.out
+*.log
+.idea
+.vscode
+.DS_Store
+Thumbs.db

@@ -1,6 +1,10 @@
+name: tracepilot
+
 services:
   postgres:
     image: postgres:17-alpine
+    # Keep the legacy database/user/volume identifiers during the product
+    # rename so an existing local volume is not silently replaced.
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-flight}
       POSTGRES_USER: ${POSTGRES_USER:-flight}
@@ -16,20 +20,20 @@ services:
       - flight-postgres:/var/lib/postgresql/data
 
   migrate:
-    build: .
-    image: flight:dev
+    build: ./backend
+    image: tracepilot:dev
     profiles: ["tools"]
     depends_on:
       postgres:
         condition: service_healthy
     environment:
-      FLIGHT_DATABASE_URL: ${FLIGHT_DATABASE_URL:-postgres://${POSTGRES_USER:-flight}:${POSTGRES_PASSWORD:-flight-dev-only}@postgres:5432/${POSTGRES_DB:-flight}?sslmode=disable}
+      TRACEPILOT_DATABASE_URL: ${TRACEPILOT_DATABASE_URL:-postgres://${POSTGRES_USER:-flight}:${POSTGRES_PASSWORD:-flight-dev-only}@postgres:5432/${POSTGRES_DB:-flight}?sslmode=disable}
     command: ["migrate", "up"]
 
-  flight:
-    build: .
-    image: flight:dev
-    # Compose uses .env for interpolation only; env_file also passes Flight's
+  tracepilot:
+    build: ./backend
+    image: tracepilot:dev
+    # Compose uses .env for interpolation only; env_file also passes TracePilot's
     # runtime settings, including authentication, into the container.
     env_file:
       - path: .env
@@ -38,9 +42,12 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      FLIGHT_HTTP_ADDRESS: ${FLIGHT_HTTP_ADDRESS:-:8080}
-      FLIGHT_LOG_LEVEL: ${FLIGHT_LOG_LEVEL:-info}
-      FLIGHT_DATABASE_URL: ${FLIGHT_DATABASE_URL:-postgres://${POSTGRES_USER:-flight}:${POSTGRES_PASSWORD:-flight-dev-only}@postgres:5432/${POSTGRES_DB:-flight}?sslmode=disable}
+      TRACEPILOT_HTTP_ADDRESS: ${TRACEPILOT_HTTP_ADDRESS:-:8080}
+      TRACEPILOT_HTTP_ALLOWED_ORIGINS: ${TRACEPILOT_HTTP_ALLOWED_ORIGINS:-}
+      TRACEPILOT_LOG_LEVEL: ${TRACEPILOT_LOG_LEVEL:-info}
+      TRACEPILOT_PRODUCTION: ${TRACEPILOT_PRODUCTION:-false}
+      TRACEPILOT_AUTH_BOOTSTRAP_API_KEY: ${TRACEPILOT_AUTH_BOOTSTRAP_API_KEY:-}
+      TRACEPILOT_DATABASE_URL: ${TRACEPILOT_DATABASE_URL:-postgres://${POSTGRES_USER:-flight}:${POSTGRES_PASSWORD:-flight-dev-only}@postgres:5432/${POSTGRES_DB:-flight}?sslmode=disable}
     init: true
     read_only: true
     tmpfs:
@@ -50,10 +57,14 @@ services:
       - "4317:4317"
       - "4318:4318"
     healthcheck:
-      test: ["CMD", "/flight", "healthcheck"]
+      test: ["CMD", "/tracepilot", "healthcheck"]
       interval: 10s
       timeout: 3s
       retries: 3
 
 volumes:
   flight-postgres:
+    # Explicit name keeps the pre-rename volume stable when the checkout
+    # directory or Compose project name changes. Override this for an existing
+    # volume created under a different Compose project name.
+    name: ${TRACEPILOT_POSTGRES_VOLUME_NAME:-flight_flight-postgres}
