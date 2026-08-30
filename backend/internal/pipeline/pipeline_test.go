@@ -122,7 +122,7 @@ func TestStartAfterShutdownDoesNotReopenPipeline(t *testing.T) {
 	}
 }
 
-func TestSubmitRetriesTransientStoreFailure(t *testing.T) {
+func TestSubmitRecoversAfterTemporaryStoreOutage(t *testing.T) {
 	attempts := 0
 	ingestionPipeline := New(Config{QueueSize: 1, QueueMaxBytes: 1 << 20, BatchSize: 1, Workers: 1, EnqueueTimeout: time.Second, BatchTimeout: time.Second, FlushInterval: time.Millisecond}, func(context.Context, []telemetry.Event) error {
 		attempts++
@@ -145,6 +145,57 @@ func TestSubmitRetriesTransientStoreFailure(t *testing.T) {
 	defer cancelShutdown()
 	if shutdownError := ingestionPipeline.Shutdown(shutdownContext); shutdownError != nil {
 		t.Fatal(shutdownError)
+	}
+}
+
+func TestShutdownDrainsQueuedWork(t *testing.T) {
+	storeStarted := make(chan struct{}, 1)
+	releaseStore := make(chan struct{})
+	storeCalls := 0
+	ingestionPipeline := New(Config{QueueSize: 2, QueueMaxBytes: 1 << 20, BatchSize: 1, Workers: 1, EnqueueTimeout: time.Second, BatchTimeout: time.Second, FlushInterval: time.Millisecond}, func(context.Context, []telemetry.Event) error {
+		storeCalls++
+		if storeCalls == 1 {
+			storeStarted <- struct{}{}
+			<-releaseStore
+		}
+		return nil
+	}, metrics.New("test", "test", "test"))
+	ingestionPipeline.Start()
+
+	first := make(chan error, 1)
+	second := make(chan error, 1)
+	go func() {
+		_, err := ingestionPipeline.Submit(context.Background(), []telemetry.Event{{ID: "first"}})
+		first <- err
+	}()
+	<-storeStarted
+	go func() {
+		_, err := ingestionPipeline.Submit(context.Background(), []telemetry.Event{{ID: "second"}})
+		second <- err
+	}()
+	deadline := time.Now().Add(time.Second)
+	for len(ingestionPipeline.queue) != 1 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if len(ingestionPipeline.queue) != 1 {
+		t.Fatal("second event was not queued")
+	}
+
+	shutdown := make(chan error, 1)
+	go func() { shutdown <- ingestionPipeline.Shutdown(context.Background()) }()
+	select {
+	case err := <-shutdown:
+		t.Fatalf("shutdown returned before queued work drained: %v", err)
+	default:
+	}
+	close(releaseStore)
+	for _, result := range []<-chan error{first, second, shutdown} {
+		if err := <-result; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if storeCalls != 2 {
+		t.Fatalf("store calls = %d, want 2", storeCalls)
 	}
 }
 
