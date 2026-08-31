@@ -58,6 +58,7 @@ func New(configuration config.Config, logger *slog.Logger, readinessCheck func(c
 		server.allowedOrigins[origin] = struct{}{}
 	}
 	router := http.NewServeMux()
+	router.HandleFunc("GET /openapi.json", server.openAPI)
 	router.HandleFunc("GET /health/live", server.live)
 	router.HandleFunc("GET /health/ready", server.readiness)
 	router.HandleFunc("GET /metrics", server.metricsEndpoint)
@@ -81,6 +82,7 @@ func New(configuration config.Config, logger *slog.Logger, readinessCheck func(c
 		router.HandleFunc("GET /api/v1/incidents/{incidentID}/executions/{executionID}", server.getAllowedRequestExecution)
 		router.HandleFunc("PATCH /api/v1/incidents/{incidentID}", server.updateIncident)
 		router.HandleFunc("GET /api/v1/api-keys", server.listAPIKeys)
+		router.HandleFunc("GET /api/v1/api-key-events", server.listAPIKeyEvents)
 		router.HandleFunc("POST /api/v1/api-keys", server.createAPIKey)
 		router.HandleFunc("POST /api/v1/api-keys/{keyID}/rotate", server.rotateAPIKey)
 		router.HandleFunc("DELETE /api/v1/api-keys/{keyID}", server.revokeAPIKey)

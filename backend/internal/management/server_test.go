@@ -125,6 +125,19 @@ func TestBackendDoesNotServeDashboard(t *testing.T) {
 	}
 }
 
+func TestServerExposesOpenAPIContract(t *testing.T) {
+	httpServer := newTestServer(func(context.Context) error { return nil })
+	responseRecorder := httptest.NewRecorder()
+	httpRequest := httptest.NewRequest(http.MethodGet, "/openapi.json", nil)
+	httpServer.httpServer.Handler.ServeHTTP(responseRecorder, httpRequest)
+	if responseRecorder.Code != http.StatusOK {
+		t.Fatalf("status = %d", responseRecorder.Code)
+	}
+	if !strings.Contains(responseRecorder.Body.String(), `"openapi":"3.1.0"`) || !strings.Contains(responseRecorder.Body.String(), `"/api/v1/api-key-events"`) {
+		t.Fatalf("unexpected OpenAPI response: %s", responseRecorder.Body.String())
+	}
+}
+
 func TestCORSPreflightAllowsConfiguredOrigin(t *testing.T) {
 	tests := []struct {
 		path   string

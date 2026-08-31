@@ -94,6 +94,13 @@ func TestAPIKeyLifecycleIntegration(t *testing.T) {
 	if response = serveAPIKeyRequest(server, http.MethodGet, "/api/v1/logs", rotated.Key, ""); response.Code != http.StatusUnauthorized {
 		t.Fatalf("revoked key status=%d body=%s", response.Code, response.Body.String())
 	}
+	response = serveAPIKeyRequest(server, http.MethodGet, "/api/v1/api-key-events", bootstrapKey, "")
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "REVOKED") {
+		t.Fatalf("API key audit events status=%d body=%s", response.Code, response.Body.String())
+	}
+	if response = serveAPIKeyRequest(server, http.MethodGet, "/api/v1/api-key-events", created.Key, ""); response.Code != http.StatusUnauthorized {
+		t.Fatalf("revoked key audit read status=%d body=%s", response.Code, response.Body.String())
+	}
 
 	keys, listError := database.ListAPIKeys(context.Background(), projectID, postgres.APIKeyFilter{Limit: 10})
 	if listError != nil || len(keys) != 2 {

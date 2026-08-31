@@ -66,6 +66,38 @@ func (server *Server) createAPIKey(responseWriter http.ResponseWriter, request *
 	writeIssuedAPIKey(responseWriter, http.StatusCreated, issued)
 }
 
+func (server *Server) listAPIKeyEvents(responseWriter http.ResponseWriter, request *http.Request) {
+	principal, ok := server.authenticateScope(responseWriter, request, "admin")
+	if !ok {
+		return
+	}
+	limit, parseError := parsePageSize(request.URL.Query().Get("limit"))
+	if parseError != nil {
+		writeAPIError(responseWriter, http.StatusBadRequest, "INVALID_QUERY", parseError.Error())
+		return
+	}
+	cursor, parseError := decodeCursor(request.URL.Query().Get("cursor"))
+	if parseError != nil {
+		writeAPIError(responseWriter, http.StatusBadRequest, "INVALID_QUERY", parseError.Error())
+		return
+	}
+	if parseError := validateCursorID(cursor, validUUID); parseError != nil {
+		writeAPIError(responseWriter, http.StatusBadRequest, "INVALID_QUERY", parseError.Error())
+		return
+	}
+	events, queryError := server.database.ListAPIKeyEvents(request.Context(), principal.ProjectID, postgres.APIKeyEventFilter{
+		Before: cursor.At, CursorID: cursor.ID, Limit: limit,
+	})
+	if queryError != nil {
+		server.logger.Error("list API key events", "error", queryError)
+		writeAPIError(responseWriter, http.StatusInternalServerError, "INTERNAL_ERROR", "internal server error")
+		return
+	}
+	writeJSONValue(responseWriter, http.StatusOK, pageResponse(events, limit, func(event postgres.APIKeyEvent) pageCursor {
+		return pageCursor{At: event.CreatedAt, ID: event.ID}
+	}))
+}
+
 func (server *Server) rotateAPIKey(responseWriter http.ResponseWriter, request *http.Request) {
 	principal, ok := server.authenticateScope(responseWriter, request, "admin")
 	if !ok {

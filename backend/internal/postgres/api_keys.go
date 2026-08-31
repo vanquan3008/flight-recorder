@@ -60,6 +60,20 @@ type APIKeyFilter struct {
 	Limit    int
 }
 
+type APIKeyEvent struct {
+	ID         string    `json:"id"`
+	APIKeyID   string    `json:"api_key_id"`
+	ActorKeyID string    `json:"actor_key_id"`
+	Action     string    `json:"action"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+type APIKeyEventFilter struct {
+	Before   time.Time
+	CursorID string
+	Limit    int
+}
+
 func NormalizeAPIKeyScopes(scopes []string) ([]string, error) {
 	if len(scopes) == 0 {
 		return nil, fmt.Errorf("%w: at least one scope is required", ErrInvalidAPIKeyInput)
@@ -166,6 +180,32 @@ func (database *Database) ListAPIKeys(ctx context.Context, projectID string, fil
 		return nil, fmt.Errorf("iterate API keys: %w", rowsError)
 	}
 	return keys, nil
+}
+
+func (database *Database) ListAPIKeyEvents(ctx context.Context, projectID string, filter APIKeyEventFilter) ([]APIKeyEvent, error) {
+	rows, queryError := database.pool.Query(ctx, `
+		SELECT id, api_key_id, actor_key_id, action, created_at
+		FROM api_key_events
+		WHERE project_id = $1
+			AND ($2::timestamptz IS NULL OR created_at < $2 OR (created_at = $2 AND id < $3::uuid))
+		ORDER BY created_at DESC, id DESC
+		LIMIT $4`, projectID, nullableTime(filter.Before), nullableString(filter.CursorID), filter.Limit+1)
+	if queryError != nil {
+		return nil, fmt.Errorf("list API key events: %w", queryError)
+	}
+	defer rows.Close()
+	events := make([]APIKeyEvent, 0, filter.Limit+1)
+	for rows.Next() {
+		var event APIKeyEvent
+		if scanError := rows.Scan(&event.ID, &event.APIKeyID, &event.ActorKeyID, &event.Action, &event.CreatedAt); scanError != nil {
+			return nil, fmt.Errorf("scan API key event: %w", scanError)
+		}
+		events = append(events, event)
+	}
+	if rowsError := rows.Err(); rowsError != nil {
+		return nil, fmt.Errorf("iterate API key events: %w", rowsError)
+	}
+	return events, nil
 }
 
 func (database *Database) RotateAPIKey(ctx context.Context, projectID, keyID, actorKeyID string) (IssuedAPIKey, error) {

@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -95,6 +96,68 @@ func TestStoreEventsIdempotentIntegration(t *testing.T) {
 	}
 	if severityNumber != 9 || storedBody["message"] != "same event" {
 		t.Fatalf("stored log = severity=%d body=%s", severityNumber, body)
+	}
+}
+
+func TestStoreEventsDeduplicatesConcurrentIncidentCandidatesIntegration(t *testing.T) {
+	if os.Getenv("TRACEPILOT_INTEGRATION_TEST") != "1" {
+		t.Skip("set TRACEPILOT_INTEGRATION_TEST=1 against a migrated disposable PostgreSQL database")
+	}
+	databaseURL := os.Getenv("TRACEPILOT_DATABASE_URL")
+	if databaseURL == "" {
+		t.Fatal("TRACEPILOT_DATABASE_URL is required")
+	}
+	database, openError := Open(context.Background(), config.DatabaseConfig{
+		URL: databaseURL, MaxConnections: 4, MaxConnectionLifetime: time.Minute, MaxConnectionIdleTime: time.Minute, HealthCheckPeriod: time.Minute,
+	})
+	if openError != nil {
+		t.Fatal(openError)
+	}
+	t.Cleanup(database.Close)
+
+	runID := time.Now().UTC().Format(time.RFC3339Nano)
+	projectID := telemetry.DeterministicID(time.Now().UTC(), "concurrent-incident-project", runID)
+	ingestion := config.IngestionConfig{
+		ProjectID:       projectID,
+		ProjectSlug:     "concurrent-incident-" + projectID[24:32],
+		ProjectName:     "Concurrent Incident Integration",
+		EnvironmentID:   telemetry.DeterministicID(time.Now().UTC(), "concurrent-incident-environment", runID),
+		EnvironmentName: "test",
+	}
+	ensureIntegrationScope(t, database, ingestion)
+	t.Cleanup(func() { cleanupIntegrationScope(t, database, ingestion.ProjectID) })
+
+	timestamp := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
+	events := []telemetry.Event{
+		{ID: telemetry.DeterministicID(timestamp, "concurrent-incident", "one"), ProjectID: ingestion.ProjectID, Environment: ingestion.EnvironmentName, ServiceName: "checkout", Type: telemetry.EventException, Timestamp: timestamp, Severity: "ERROR", ErrorType: "timeout", ErrorMessage: "upstream timed out", Signal: telemetry.SignalLog, Attributes: map[string]any{}, ResourceAttributes: map[string]any{}, ScopeAttributes: map[string]any{}, RecordAttributes: map[string]any{}},
+		{ID: telemetry.DeterministicID(timestamp, "concurrent-incident", "two"), ProjectID: ingestion.ProjectID, Environment: ingestion.EnvironmentName, ServiceName: "checkout", Type: telemetry.EventException, Timestamp: timestamp.Add(time.Second), Severity: "ERROR", ErrorType: "timeout", ErrorMessage: "upstream timed out", Signal: telemetry.SignalLog, Attributes: map[string]any{}, ResourceAttributes: map[string]any{}, ScopeAttributes: map[string]any{}, RecordAttributes: map[string]any{}},
+	}
+	var group sync.WaitGroup
+	errors := make(chan error, len(events))
+	for _, event := range events {
+		group.Add(1)
+		go func(event telemetry.Event) {
+			defer group.Done()
+			errors <- database.StoreEvents(context.Background(), ingestion, []telemetry.Event{event})
+		}(event)
+	}
+	group.Wait()
+	close(errors)
+	for storeError := range errors {
+		if storeError != nil {
+			t.Fatal(storeError)
+		}
+	}
+
+	var incidents, occurrences int
+	if queryError := database.pool.QueryRow(context.Background(), "SELECT count(*) FROM incidents WHERE project_id = $1", ingestion.ProjectID).Scan(&incidents); queryError != nil {
+		t.Fatal(queryError)
+	}
+	if queryError := database.pool.QueryRow(context.Background(), "SELECT count(*) FROM incident_occurrences WHERE project_id = $1", ingestion.ProjectID).Scan(&occurrences); queryError != nil {
+		t.Fatal(queryError)
+	}
+	if incidents != 1 || occurrences != 2 {
+		t.Fatalf("incidents=%d occurrences=%d, want 1 and 2", incidents, occurrences)
 	}
 }
 

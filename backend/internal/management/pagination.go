@@ -48,7 +48,11 @@ func parseTraceFilter(request *http.Request) (postgres.TraceFilter, pageCursor, 
 	if parseError := validateCursorID(cursor, validTraceID); parseError != nil {
 		return postgres.TraceFilter{}, pageCursor{}, parseError
 	}
-	return postgres.TraceFilter{Service: query.Get("service"), Operation: query.Get("operation"), Status: query.Get("status"), TraceID: query.Get("traceId"), From: from, To: to, Limit: limit}, cursor, nil
+	traceID := strings.TrimSpace(query.Get("traceId"))
+	if traceID != "" && !validTraceID(traceID) {
+		return postgres.TraceFilter{}, pageCursor{}, errors.New("traceId must be 16 bytes of hexadecimal")
+	}
+	return postgres.TraceFilter{Service: query.Get("service"), Operation: query.Get("operation"), Status: query.Get("status"), TraceID: traceID, From: from, To: to, Limit: limit}, cursor, nil
 }
 
 func parseLogFilter(request *http.Request) (postgres.LogFilter, pageCursor, error) {
@@ -82,7 +86,15 @@ func parseLogFilter(request *http.Request) (postgres.LogFilter, pageCursor, erro
 	if parseError := validateCursorID(cursor, validUUID); parseError != nil {
 		return postgres.LogFilter{}, pageCursor{}, parseError
 	}
-	return postgres.LogFilter{Service: query.Get("service"), Severity: query.Get("severity"), TraceID: query.Get("traceId"), SpanID: query.Get("spanId"), Search: search, From: from, To: to, Limit: limit}, cursor, nil
+	traceID := strings.TrimSpace(query.Get("traceId"))
+	if traceID != "" && !validTraceID(traceID) {
+		return postgres.LogFilter{}, pageCursor{}, errors.New("traceId must be 16 bytes of hexadecimal")
+	}
+	spanID := strings.TrimSpace(query.Get("spanId"))
+	if spanID != "" && !validSpanID(spanID) {
+		return postgres.LogFilter{}, pageCursor{}, errors.New("spanId must be 8 bytes of hexadecimal")
+	}
+	return postgres.LogFilter{Service: query.Get("service"), Severity: query.Get("severity"), TraceID: traceID, SpanID: spanID, Search: search, From: from, To: to, Limit: limit}, cursor, nil
 }
 
 func parseIncidentFilter(request *http.Request) (postgres.IncidentFilter, pageCursor, error) {
@@ -199,6 +211,14 @@ func validUUID(value string) bool {
 
 func validTraceID(value string) bool {
 	if len(value) != 32 {
+		return false
+	}
+	_, decodeError := hex.DecodeString(value)
+	return decodeError == nil
+}
+
+func validSpanID(value string) bool {
+	if len(value) != 16 {
 		return false
 	}
 	_, decodeError := hex.DecodeString(value)

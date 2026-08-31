@@ -113,4 +113,29 @@ func TestPathIdentifierValidation(t *testing.T) {
 	if validTraceID("0123456789abcdef") {
 		t.Fatal("accepted short trace ID")
 	}
+	if !validSpanID("0123456789abcdef") {
+		t.Fatal("expected valid span ID")
+	}
+	if validSpanID("0123456789abcdef0") {
+		t.Fatal("accepted oversized span ID")
+	}
+}
+
+func TestParseFiltersRejectInvalidTraceAndSpanIDs(t *testing.T) {
+	for _, path := range []string{
+		"/api/v1/traces?traceId=not-hex",
+		"/api/v1/logs?traceId=not-hex",
+		"/api/v1/logs?spanId=not-hex",
+	} {
+		request := httptest.NewRequest(http.MethodGet, path, nil)
+		if path[:14] == "/api/v1/traces" {
+			if _, _, parseError := parseTraceFilter(request); parseError == nil {
+				t.Fatalf("expected invalid filter to fail: %s", path)
+			}
+			continue
+		}
+		if _, _, parseError := parseLogFilter(request); parseError == nil {
+			t.Fatalf("expected invalid filter to fail: %s", path)
+		}
+	}
 }

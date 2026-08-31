@@ -17,6 +17,7 @@ import (
 	ingestotlp "github.com/vanquan3008/tracepilot/internal/ingest/otlp"
 	"github.com/vanquan3008/tracepilot/internal/management"
 	"github.com/vanquan3008/tracepilot/internal/metrics"
+	"github.com/vanquan3008/tracepilot/internal/migrations"
 	"github.com/vanquan3008/tracepilot/internal/pipeline"
 	"github.com/vanquan3008/tracepilot/internal/postgres"
 	"github.com/vanquan3008/tracepilot/internal/replay"
@@ -44,6 +45,10 @@ func runServer(arguments []string) int {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: configuration.LogLevel}))
 	applicationContext, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stopSignals()
+	if migrationError := migrations.EnsureCurrent(configuration.Database.URL, configuration.Database.MigrationsPath); migrationError != nil {
+		logger.Error("database schema check failed", "error", migrationError)
+		return 1
+	}
 
 	database, databaseError := postgres.Open(applicationContext, configuration.Database)
 	if databaseError != nil {
