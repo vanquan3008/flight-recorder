@@ -1,4 +1,4 @@
-FROM golang:1.25.13-alpine AS build
+﻿FROM golang:1.25.13-alpine AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
@@ -15,8 +15,8 @@ RUN CGO_ENABLED=0 go build -trimpath \
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /out/tracepilot /tracepilot
 COPY --from=build /out/tracepilot-agent /tracepilot-agent
-COPY migrations /migrations
-ENV TRACEPILOT_MIGRATIONS_PATH=/migrations
+COPY db/migrations /db/migrations
+ENV TRACEPILOT_MIGRATIONS_PATH=/db/migrations
 EXPOSE 8080 4317 4318
 USER nonroot:nonroot
 HEALTHCHECK --interval=10s --timeout=3s --retries=3 CMD ["/tracepilot", "healthcheck"]

@@ -48,13 +48,13 @@ jobs:
           mkdir -p dist
           for target in linux/amd64 linux/arm64; do
             suffix="${target//\//-}"
-            GOOS=${target%/*} GOARCH=${target#*/} CGO_ENABLED=0 go build -trimpath \
+            GOOS=${target%/*} GOARCH=${target#*/} CGO_ENABLED=0 go -C backend build -trimpath \
               -ldflags="-s -w -X main.version=${tag} -X main.commit=${commit} -X main.buildTime=${build_time}" \
-              -o "dist/flight-${suffix}" ./cmd/flight
-            GOOS=${target%/*} GOARCH=${target#*/} CGO_ENABLED=0 go build -trimpath \
-              -ldflags="-s -w" -o "dist/flight-agent-${suffix}" ./cmd/flight-agent
+              -o "../dist/tracepilot-${suffix}" ./cmd/tracepilot
+            GOOS=${target%/*} GOARCH=${target#*/} CGO_ENABLED=0 go -C backend build -trimpath \
+              -ldflags="-s -w" -o "../dist/tracepilot-agent-${suffix}" ./cmd/tracepilot-agent
           done
-          (cd dist && sha256sum flight-* > SHA256SUMS)
+          (cd dist && sha256sum tracepilot-* > SHA256SUMS)
 
       - name: Log in to GHCR
         uses: docker/login-action@9780b0c442788bb1491be57a9eaabd0f3bfaa5de # v3.3.0
@@ -77,7 +77,7 @@ jobs:
       - name: Build and push image
         uses: docker/build-push-action@14487c7820662c4b682a9a2c082f975cb161722 # v6.7.0
         with:
-          context: .
+          context: backend
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -91,8 +91,8 @@ jobs:
         with:
           generate_release_notes: true
           files: |
-            dist/flight-linux-amd64
-            dist/flight-linux-arm64
-            dist/flight-agent-linux-amd64
-            dist/flight-agent-linux-arm64
+            dist/tracepilot-linux-amd64
+            dist/tracepilot-linux-arm64
+            dist/tracepilot-agent-linux-amd64
+            dist/tracepilot-agent-linux-arm64
             dist/SHA256SUMS

@@ -12,9 +12,10 @@ import (
 )
 
 const (
-	defaultHealthcheckURL = "http://127.0.0.1:8080/health/ready"
-	maxHealthcheckBody    = 4096
-	healthcheckCAFileEnv  = "TRACEPILOT_HEALTHCHECK_CA_FILE"
+	defaultHealthcheckURL    = "http://127.0.0.1:8080/health/ready"
+	maxHealthcheckBody       = 4096
+	healthcheckCAFileEnv     = "TRACEPILOT_HEALTHCHECK_CA_FILE"
+	healthcheckServerNameEnv = "TRACEPILOT_HEALTHCHECK_SERVER_NAME"
 )
 
 func healthcheck() int {
@@ -56,6 +57,9 @@ func newHealthcheckClient(healthcheckURL string) (http.Client, error) {
 	}
 
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12}
+	if serverName := os.Getenv(healthcheckServerNameEnv); serverName != "" {
+		tlsConfig.ServerName = serverName
+	}
 	if caFile := os.Getenv(healthcheckCAFileEnv); caFile != "" {
 		certificatePEM, err := os.ReadFile(caFile)
 		if err != nil {

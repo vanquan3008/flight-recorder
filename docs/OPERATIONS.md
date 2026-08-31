@@ -1,68 +1,73 @@
 # Operations runbook
 
-Flight requires PostgreSQL backups; telemetry durability is bounded by the last successful database backup.
+TracePilot requires PostgreSQL backups; telemetry durability is bounded by the last successful database backup.
 
 ## Backup and restore
 
 Run a logical backup against the production database and retain it outside the deployment host:
 
 ```sh
-pg_dump --format=custom --file=flight-$(date +%F).dump "$FLIGHT_DATABASE_URL"
+pg_dump --format=custom --file=tracepilot-$(date +%F).dump "$TRACEPILOT_DATABASE_URL"
 ```
 
 Test restore in an empty disposable database before accepting a release:
 
 ```sh
-createdb flight_restore_test
-pg_restore --clean --if-exists --dbname=flight_restore_test flight-YYYY-MM-DD.dump
-flight migrate version
+createdb tracepilot_restore_test
+pg_restore --clean --if-exists --dbname=tracepilot_restore_test tracepilot-YYYY-MM-DD.dump
+tracepilot migrate version
 ```
 
 ## Upgrade and rollback
 
 1. Back up the database and verify the restore procedure.
 2. Deploy the new image without changing configuration version.
-3. Run `flight migrate up`; wait for `/health/ready`.
+3. Run `tracepilot migrate up`; wait for `/health/ready`.
 4. Verify ingestion, a trace query, and database migration version.
 5. Roll back the image only if no irreversible migration has run. Otherwise restore the tested backup into a new database, validate it, then switch traffic.
 
+For HTTPS healthchecks, set `TRACEPILOT_HEALTHCHECK_URL` to the probe URL and
+use `TRACEPILOT_HEALTHCHECK_SERVER_NAME` when the certificate SAN is a DNS name
+different from the listener address (for example, probe `127.0.0.1` with SAN
+`tracepilot.internal`).
+
 ## Release gates
 
-- `go test ./...`, `go vet ./...`, and `go build ./...` pass in Linux CI.
+- `go -C backend test ./...`, `go -C backend vet ./...`, and `go -C backend build ./...` pass in Linux CI.
 - PostgreSQL migration up/down/up, integration, race, dashboard smoke, and Docker jobs pass.
 - A backup/restore drill is recorded for the target PostgreSQL version.
-- TLS terminates before Flight; bootstrap keys are supplied only by a secret manager.
+- TLS terminates before TracePilot; bootstrap keys are supplied only by a secret manager.
 - Replay allowlists and agent file permissions are reviewed.
 
 ## File agent
 
 Run the agent with a persistent checkpoint and a bounded spool on the same
-filesystem as the log source. Keep the export batch smaller than Flight's OTLP
+filesystem as the log source. Keep the export batch smaller than TracePilot's OTLP
 request limit:
 
 ```sh
-flight-agent --source /var/log/app.log --checkpoint /var/lib/flight/checkpoint.json \
-  --disk-buffer /var/lib/flight/spool --disk-buffer-bytes 67108864 \
-  --batch-bytes 3145728 --batch-lines 1000 --endpoint flight.example:4317 --tls
+tracepilot-agent --source /var/log/app.log --checkpoint /var/lib/tracepilot/checkpoint.json \
+  --disk-buffer /var/lib/tracepilot/spool --disk-buffer-bytes 67108864 \
+  --batch-bytes 3145728 --batch-lines 1000 --endpoint tracepilot.example:4317 --tls
 ```
 
 The agent exposes Prometheus counters only when `--metrics-address` is set.
 Corrupt spool payloads are logged and discarded to let subsequent payloads
 progress. A full spool retains the source checkpoint, so preserve the source
-file until Flight recovers.
+file until TracePilot recovers.
 
 ## High-volume ingestion
 
 Load-test with representative attribute and body sizes before raising limits.
-Watch `flight_ingestion_queue_depth`, `flight_ingestion_inflight_bytes`,
-`flight_event_batch_duration_seconds`, `flight_event_storage_errors_total`, and
+Watch `tracepilot_ingestion_queue_depth`, `tracepilot_ingestion_inflight_bytes`,
+`tracepilot_event_batch_duration_seconds`, `tracepilot_event_storage_errors_total`, and
 OTLP `unavailable` outcomes. A queue that stays near capacity means PostgreSQL
 is not committing at the incoming rate.
 
 Run the PostgreSQL store benchmark against a migrated disposable database:
 
 ```sh
-FLIGHT_DATABASE_URL=postgres://... make bench-postgres
+TRACEPILOT_DATABASE_URL=postgres://... make bench-postgres
 ```
 
 Increase `ingestion.batch_size` first, then `ingestion.workers`; keep

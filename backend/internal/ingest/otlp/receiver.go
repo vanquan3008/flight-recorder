@@ -5,9 +5,9 @@ import (
 	"errors"
 
 	"github.com/vanquan3008/tracepilot/internal/config"
-	"github.com/vanquan3008/tracepilot/internal/metrics"
-	"github.com/vanquan3008/tracepilot/internal/pipeline"
-	"github.com/vanquan3008/tracepilot/internal/postgres"
+	"github.com/vanquan3008/tracepilot/internal/ingest/pipeline"
+	"github.com/vanquan3008/tracepilot/internal/observability/metrics"
+	"github.com/vanquan3008/tracepilot/internal/storage/postgres"
 	collectorlogspb "go.opentelemetry.io/proto/otlp/collector/logs/v1"
 	collectortracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	"google.golang.org/grpc/codes"

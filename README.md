@@ -1,8 +1,15 @@
-# Flight
+# TracePilot
 
-Flight is a release-candidate, self-hosted OpenTelemetry trace and log service. It receives OTLP data, redacts configured sensitive attributes, applies bounded batch persistence, and stores canonical events plus first-class spans/logs in PostgreSQL.
+TracePilot is a self-hosted OpenTelemetry trace and log service. It receives
+OTLP data, redacts configured sensitive attributes, applies bounded batch
+persistence, and stores canonical events plus first-class spans/logs in
+PostgreSQL.
 
-With a bootstrap API key configured, it provides project-scoped trace/log search, service and incident views, and a minimal browser UI. Optional replay is disabled by default; it forwards only redacted JSON bodies and an allowlisted set of non-secret headers to explicit allowlisted hosts, then records every attempt. A file log agent is included for shipping local log files.
+With a bootstrap API key configured, it provides project-scoped trace/log
+search, service and incident views. Optional replay is disabled by default;
+it forwards only redacted JSON bodies and an allowlisted set of non-secret
+headers to explicit allowlisted hosts, then records every attempt. A file log
+agent is included for shipping local log files.
 
 ## Architecture Overview
 
@@ -21,29 +28,30 @@ flowchart LR
 ## Repository Structure
 
 ```text
-cmd/          binaries
+backend/      Go module, binaries, application packages and database assets
+deploy/       local Compose deployment configuration and example environment
 docs/         operations documentation
-internal/     application packages
-migrations/   PostgreSQL migrations
 ```
 
 ## Configuration
 
-Flight uses compiled defaults, then an optional versioned YAML file, then environment overrides. Create `.env` only when overriding defaults:
+TracePilot uses compiled defaults, then an optional versioned YAML file, then
+environment overrides. Copy `deploy/.env.example` to `deploy/.env` when
+overriding defaults:
 
 ```env
-POSTGRES_PASSWORD=replace-with-a-local-password
-FLIGHT_DATABASE_URL=postgres://flight:replace-with-a-local-password@postgres:5432/flight?sslmode=disable
-FLIGHT_AUTH_BOOTSTRAP_API_KEY=replace-with-a-secret-at-least-32-characters
+POSTGRES_PASSWORD=tracepilot-dev-only
+TRACEPILOT_DATABASE_URL=postgres://tracepilot:tracepilot-dev-only@postgres:5432/tracepilot?sslmode=disable
+# TRACEPILOT_AUTH_BOOTSTRAP_API_KEY=replace-with-a-secret-at-least-32-characters
 ```
 
-For native `go run`, change the database host from `postgres` to `localhost`.
+For native commands, change the database host from `postgres` to `localhost`.
 
 See [the operations runbook](docs/OPERATIONS.md) for backup, restore, upgrade, rollback, and release gates.
 
 ## How to Run
 
-Flight provides a `Makefile` with shortcuts to run the project effortlessly. You can choose to run it entirely in Docker or natively with Go.
+TracePilot provides a `Makefile` with shortcuts for Docker and native Go.
 
 ### Option 1: Docker Compose (Recommended)
 This is the fastest way to get everything running, including the database and migrations.
@@ -52,9 +60,9 @@ This is the fastest way to get everything running, including the database and mi
 make dev
 ```
 > **What this does:**
-> 1. Starts a PostgreSQL database (`docker compose up --build -d postgres`).
-> 2. Runs the database migrations (`docker compose run --rm migrate`).
-> 3. Starts the Flight server on port `8080` (`docker compose up -d flight`).
+> 1. Starts a PostgreSQL database.
+> 2. Runs database migrations.
+> 3. Starts TracePilot on port `8080`.
 
 To verify it's running, open: `http://localhost:8080/health/ready`
 
@@ -63,7 +71,7 @@ If you prefer running the Go code locally for easier debugging:
 
 1. **Start the database:**
 ```bash
-docker compose up -d postgres
+docker compose -f deploy/compose.dev.yaml up -d postgres
 ```
 
 2. **Run migrations:**
@@ -71,14 +79,22 @@ docker compose up -d postgres
 make migrate
 ```
 
-3. **Start the server:**
+3. **Seed local mock data (optional):**
+```bash
+make mockdata
+```
+The seed is deterministic and safe to run repeatedly. It creates checkout,
+payment and catalog traces, logs, and sample incidents in the configured
+ingestion project/environment.
+
+4. **Start the server:**
 ```bash
 make run
 ```
-> This will execute `go run ./cmd/flight serve`.
+> This executes `go -C backend run ./cmd/tracepilot serve`.
 
 > **Note**: For detailed setup instructions, deployment guides, and API documentation, please refer to the `docs/` folder.
 
 ## License
 
-Flight is licensed under the Apache License 2.0.
+TracePilot is licensed under the Apache License 2.0.

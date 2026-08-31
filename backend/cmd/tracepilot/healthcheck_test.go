@@ -51,6 +51,32 @@ func TestResolveHealthcheckURLUsesExplicitHTTPSURL(t *testing.T) {
 	}
 }
 
+func TestHealthcheckSupportsExplicitTLSServerName(t *testing.T) {
+	certificate, certificatePEM := newHealthcheckCertificate(t)
+	caFile := filepath.Join(t.TempDir(), "healthcheck-ca.pem")
+	if err := os.WriteFile(caFile, certificatePEM, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(responseWriter http.ResponseWriter, _ *http.Request) {
+		responseWriter.WriteHeader(http.StatusOK)
+	}))
+	server.TLS = &tls.Config{Certificates: []tls.Certificate{certificate}}
+	server.StartTLS()
+	defer server.Close()
+
+	t.Setenv("TRACEPILOT_HEALTHCHECK_URL", "https://127.0.0.1:8080/health/ready")
+	t.Setenv(healthcheckCAFileEnv, caFile)
+	t.Setenv(healthcheckServerNameEnv, "localhost")
+	client, clientError := newHealthcheckClient("https://127.0.0.1:8080/health/ready")
+	if clientError != nil {
+		t.Fatal(clientError)
+	}
+	transport, ok := client.Transport.(*http.Transport)
+	if !ok || transport.TLSClientConfig == nil || transport.TLSClientConfig.ServerName != "localhost" {
+		t.Fatalf("TLS server name = %#v", transport.TLSClientConfig)
+	}
+}
+
 func newHealthcheckCertificate(t *testing.T) (tls.Certificate, []byte) {
 	t.Helper()
 	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)

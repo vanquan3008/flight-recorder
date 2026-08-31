@@ -14,14 +14,14 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/vanquan3008/tracepilot/internal/config"
+	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
 	ingestotlp "github.com/vanquan3008/tracepilot/internal/ingest/otlp"
-	"github.com/vanquan3008/tracepilot/internal/management"
-	"github.com/vanquan3008/tracepilot/internal/metrics"
-	"github.com/vanquan3008/tracepilot/internal/migrations"
-	"github.com/vanquan3008/tracepilot/internal/pipeline"
-	"github.com/vanquan3008/tracepilot/internal/postgres"
+	"github.com/vanquan3008/tracepilot/internal/ingest/pipeline"
+	"github.com/vanquan3008/tracepilot/internal/observability/metrics"
 	"github.com/vanquan3008/tracepilot/internal/replay"
-	"github.com/vanquan3008/tracepilot/internal/telemetry"
+	"github.com/vanquan3008/tracepilot/internal/storage/migrations"
+	"github.com/vanquan3008/tracepilot/internal/storage/postgres"
+	"github.com/vanquan3008/tracepilot/internal/transport/httpapi"
 )
 
 func runServer(arguments []string) int {
@@ -118,7 +118,7 @@ func runServer(arguments []string) int {
 	}
 	otlpReceiver := ingestotlp.NewReceiver(configuration.Ingestion, ingestionPipeline, selfMetrics, authenticateOTLP)
 	otlpServer := ingestotlp.NewServer(configuration, otlpReceiver)
-	managementServer := management.New(configuration, logger, func(readinessContext context.Context) error {
+	managementServer := httpapi.New(configuration, logger, func(readinessContext context.Context) error {
 		if !ingestionPipeline.Ready() || !otlpServer.Ready() {
 			return errors.New("ingestion runtime is not ready")
 		}

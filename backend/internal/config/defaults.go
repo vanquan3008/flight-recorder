@@ -45,7 +45,7 @@ func defaultConfig() Config {
 			MaxConnectionIdleTime: 30 * time.Minute,
 			HealthCheckPeriod:     time.Minute,
 			ReadinessTimeout:      2 * time.Second,
-			MigrationsPath:        "./migrations",
+			MigrationsPath:        "./db/migrations",
 		},
 		Replay: ReplayConfig{
 			Timeout:          5 * time.Second,

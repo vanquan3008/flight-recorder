@@ -1,49 +1,63 @@
-.PHONY: build build-all test test-race bench-postgres vet staticcheck vulncheck fmt-check ci run dev migrate migrate-version clean
+COMPOSE := docker compose -f deploy/compose.dev.yaml
+SQLC_IMAGE := sqlc/sqlc:1.31.1
+
+.PHONY: build build-all test test-race bench-postgres vet staticcheck vulncheck fmt-check sqlc-generate sqlc-check ci run dev migrate migrate-version mockdata clean
 
 build:
-	go build -o bin/flight ./cmd/flight
+	mkdir -p bin
+	go -C backend build -o ../bin/tracepilot ./cmd/tracepilot
 
 build-all:
-	go build -o bin/flight ./cmd/flight
-	go build -o bin/flight-agent ./cmd/flight-agent
+	mkdir -p bin
+	go -C backend build -o ../bin/tracepilot ./cmd/tracepilot
+	go -C backend build -o ../bin/tracepilot-agent ./cmd/tracepilot-agent
 
-ci: fmt-check vet staticcheck vulncheck test-race build-all
+ci: sqlc-check fmt-check vet staticcheck vulncheck test-race build-all
+
+sqlc-generate:
+	docker run --rm -v "$$(pwd)/backend:/src" -w /src $(SQLC_IMAGE) generate
+
+sqlc-check: sqlc-generate
+	git diff --exit-code -- backend/internal/storage/postgres/sqlc
 
 test:
-	go test ./...
+	go -C backend test ./...
 
 test-race:
-	go test -race ./...
+	go -C backend test -race ./...
 
 bench-postgres:
-	FLIGHT_INTEGRATION_TEST=1 go test -run '^$$' -bench '^BenchmarkStoreEventsIntegration$$' -benchtime=5s ./internal/postgres
+	TRACEPILOT_INTEGRATION_TEST=1 go -C backend test -run '^$$' -bench '^BenchmarkStoreEventsIntegration$$' -benchtime=5s ./internal/storage/postgres
 
 vet:
-	go vet ./...
+	go -C backend vet ./...
 
 staticcheck:
-	staticcheck ./...
+	cd backend && staticcheck ./...
 
 vulncheck:
-	govulncheck ./...
+	cd backend && govulncheck ./...
 
 fmt-check:
-	@test -z "$$(gofmt -l .)" || (gofmt -l . && exit 1)
+	@test -z "$$(find backend -type f -name '*.go' -exec gofmt -l {} +)" || (find backend -type f -name '*.go' -exec gofmt -l {} + && exit 1)
 
 run:
-	go run ./cmd/flight serve
+	go -C backend run ./cmd/tracepilot serve
 
 dev:
-	docker compose up --build -d postgres
-	docker compose run --build --rm migrate
-	docker compose up -d flight
+	$(COMPOSE) up --build -d postgres
+	$(COMPOSE) run --build --rm migrate
+	$(COMPOSE) up -d tracepilot
 
 migrate:
-	docker compose run --rm migrate
+	$(COMPOSE) run --rm migrate
 
 migrate-version:
-	docker compose run --rm migrate migrate version
+	$(COMPOSE) run --rm migrate migrate version
+
+mockdata:
+	$(COMPOSE) run --build --rm tracepilot mockdata
 
 clean:
-	go clean
+	go -C backend clean
 	rm -rf bin

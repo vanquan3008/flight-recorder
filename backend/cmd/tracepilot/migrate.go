@@ -7,7 +7,7 @@ import (
 	"strconv"
 
 	"github.com/vanquan3008/tracepilot/internal/config"
-	"github.com/vanquan3008/tracepilot/internal/migrations"
+	"github.com/vanquan3008/tracepilot/internal/storage/migrations"
 )
 
 func runMigrations(arguments []string) int {
