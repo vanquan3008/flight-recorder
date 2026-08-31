@@ -17,7 +17,7 @@ func (server *Server) listServices(responseWriter http.ResponseWriter, request *
 		writeAPIError(responseWriter, http.StatusBadRequest, "INVALID_QUERY", rangeError.Error())
 		return
 	}
-	services, queryError := server.database.ListServices(request.Context(), principal.ProjectID, server.environmentID, from, to)
+	services, queryError := server.backend.ListServices(request.Context(), principal.ProjectID, server.environmentID, from, to)
 	if queryError != nil {
 		server.logger.Error("list services", "error", queryError)
 		writeAPIError(responseWriter, http.StatusInternalServerError, "INTERNAL_ERROR", "internal server error")
@@ -31,7 +31,7 @@ func (server *Server) listServiceDependencies(responseWriter http.ResponseWriter
 	if !ok {
 		return
 	}
-	dependencies, queryError := server.database.ListServiceDependencies(request.Context(), principal.ProjectID, server.environmentID, request.PathValue("service"))
+	dependencies, queryError := server.backend.ListServiceDependencies(request.Context(), principal.ProjectID, server.environmentID, request.PathValue("service"))
 	if queryError != nil {
 		server.logger.Error("list service dependencies", "error", queryError)
 		writeAPIError(responseWriter, http.StatusInternalServerError, "INTERNAL_ERROR", "internal server error")

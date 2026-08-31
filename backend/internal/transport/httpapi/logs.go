@@ -3,7 +3,7 @@ package httpapi
 import (
 	"net/http"
 
-	"github.com/vanquan3008/tracepilot/internal/storage/postgres"
+	"github.com/vanquan3008/tracepilot/internal/query"
 )
 
 func (server *Server) listLogs(responseWriter http.ResponseWriter, request *http.Request) {
@@ -18,13 +18,13 @@ func (server *Server) listLogs(responseWriter http.ResponseWriter, request *http
 	}
 	filter.Before, filter.CursorID = cursor.At, cursor.ID
 	filter.EnvironmentID = server.environmentID
-	logs, queryError := server.database.ListLogs(request.Context(), principal.ProjectID, filter)
+	logs, queryError := server.backend.ListLogs(request.Context(), principal.ProjectID, filter)
 	if queryError != nil {
 		server.logger.Error("list logs", "error", queryError)
 		writeAPIError(responseWriter, http.StatusInternalServerError, "INTERNAL_ERROR", "internal server error")
 		return
 	}
-	writeJSONValue(responseWriter, http.StatusOK, pageResponse(logs, filter.Limit, func(record postgres.LogRecord) pageCursor {
+	writeJSONValue(responseWriter, http.StatusOK, pageResponse(logs, filter.Limit, func(record query.LogRecord) pageCursor {
 		return pageCursor{At: record.OccurredAt, ID: record.EventID}
 	}))
 }
@@ -37,7 +37,7 @@ func (server *Server) getLog(responseWriter http.ResponseWriter, request *http.R
 	if !requireUUID(responseWriter, request.PathValue("eventID")) {
 		return
 	}
-	record, queryError := server.database.GetLog(request.Context(), principal.ProjectID, server.environmentID, request.PathValue("eventID"))
+	record, queryError := server.backend.GetLog(request.Context(), principal.ProjectID, server.environmentID, request.PathValue("eventID"))
 	if queryError != nil {
 		server.logger.Error("get log", "error", queryError)
 		writeAPIError(responseWriter, http.StatusInternalServerError, "INTERNAL_ERROR", "internal server error")

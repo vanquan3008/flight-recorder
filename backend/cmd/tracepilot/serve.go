@@ -13,12 +13,14 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
+	"github.com/vanquan3008/tracepilot/internal/auth"
 	"github.com/vanquan3008/tracepilot/internal/config"
 	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
 	ingestotlp "github.com/vanquan3008/tracepilot/internal/ingest/otlp"
 	"github.com/vanquan3008/tracepilot/internal/ingest/pipeline"
 	"github.com/vanquan3008/tracepilot/internal/observability/metrics"
 	"github.com/vanquan3008/tracepilot/internal/replay"
+	"github.com/vanquan3008/tracepilot/internal/retention"
 	"github.com/vanquan3008/tracepilot/internal/storage/migrations"
 	"github.com/vanquan3008/tracepilot/internal/storage/postgres"
 	"github.com/vanquan3008/tracepilot/internal/transport/httpapi"
@@ -112,18 +114,22 @@ func runServer(arguments []string) int {
 	if configuration.Auth.BootstrapAPIKey == "" {
 		logger.Warn("OTLP ingest authentication is disabled")
 	}
-	var authenticateOTLP func(context.Context, string) (postgres.Principal, error)
+	var authenticateOTLP func(context.Context, string) (auth.Principal, error)
 	if configuration.Auth.BootstrapAPIKey != "" {
 		authenticateOTLP = database.AuthenticateAPIKey
 	}
 	otlpReceiver := ingestotlp.NewReceiver(configuration.Ingestion, ingestionPipeline, selfMetrics, authenticateOTLP)
 	otlpServer := ingestotlp.NewServer(configuration, otlpReceiver)
+	var replayService *replay.Service
+	if replayExecutor != nil {
+		replayService = replay.NewService(database, replayExecutor)
+	}
 	managementServer := httpapi.New(configuration, logger, func(readinessContext context.Context) error {
 		if !ingestionPipeline.Ready() || !otlpServer.Ready() {
 			return errors.New("ingestion runtime is not ready")
 		}
 		return database.Ready(readinessContext)
-	}, selfMetrics, database, replayExecutor)
+	}, selfMetrics, database, replayService)
 
 	group, runtimeContext := errgroup.WithContext(applicationContext)
 
@@ -135,7 +141,7 @@ func runServer(arguments []string) int {
 	})
 	if configuration.Retention.MaxAge > 0 {
 		group.Go(func() error {
-			return runRetention(runtimeContext, logger, database, selfMetrics, configuration.Retention.MaxAge, configuration.Retention.CheckInterval, configuration.Retention.BatchSize)
+			return retention.Run(runtimeContext, logger, database, selfMetrics, configuration.Retention.MaxAge, configuration.Retention.CheckInterval, configuration.Retention.BatchSize)
 		})
 	}
 
@@ -152,63 +158,4 @@ func runServer(arguments []string) int {
 
 	logger.Info("server stopped")
 	return 0
-}
-
-func runRetention(ctx context.Context, logger *slog.Logger, database *postgres.Database, selfMetrics *metrics.Registry, maxAge, interval time.Duration, batchSize int) error {
-	prune := func() {
-		startedAt := time.Now()
-		pruneContext, cancelPrune := context.WithTimeout(ctx, 30*time.Second)
-		before := time.Now().UTC().Add(-maxAge)
-		var deleted int64
-		var pruneError error
-		deleted, pruneError = pruneExpiredEvents(pruneContext, before, batchSize, database.DeleteEventsBefore)
-		if pruneError == nil {
-			if backlog, backlogError := database.CountEventsBefore(pruneContext, before); backlogError != nil {
-				logger.Warn("retention backlog metric failed", "error", backlogError)
-			} else {
-				selfMetrics.SetRetentionBacklog(backlog)
-			}
-		}
-		cancelPrune()
-		selfMetrics.ObserveRetention(time.Since(startedAt), deleted, pruneError != nil)
-		if pruneError != nil {
-			logger.Error("retention cleanup failed", "error", pruneError)
-			return
-		}
-		if deleted > 0 {
-			logger.Info("retention cleanup completed", "deleted_events", deleted)
-		}
-	}
-
-	prune()
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-ticker.C:
-			prune()
-		}
-	}
-}
-
-func pruneExpiredEvents(ctx context.Context, before time.Time, batchSize int, deleteBatch func(context.Context, time.Time, int) (int64, error)) (int64, error) {
-	if batchSize <= 0 {
-		return 0, errors.New("retention batch size must be positive")
-	}
-	var deleted int64
-	for {
-		if ctx.Err() != nil {
-			return deleted, ctx.Err()
-		}
-		batchDeleted, deleteError := deleteBatch(ctx, before, batchSize)
-		deleted += batchDeleted
-		if deleteError != nil {
-			return deleted, deleteError
-		}
-		if batchDeleted < int64(batchSize) {
-			return deleted, nil
-		}
-	}
 }

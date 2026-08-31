@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/vanquan3008/tracepilot/internal/config"
+	"github.com/vanquan3008/tracepilot/internal/domain/incident"
+	replaydomain "github.com/vanquan3008/tracepilot/internal/domain/replay"
 	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
 	"github.com/vanquan3008/tracepilot/internal/observability/metrics"
 	"github.com/vanquan3008/tracepilot/internal/replay"
@@ -117,10 +119,11 @@ func TestAuthenticatedLogQueryIntegration(t *testing.T) {
 	if executorError != nil {
 		t.Fatal(executorError)
 	}
-	server := New(configuration, slog.New(slog.NewTextHandler(io.Discard, nil)), func(context.Context) error { return nil }, metrics.New("test", "test", "test"), database, executor)
+	replayService := replay.NewService(database, executor)
+	server := New(configuration, slog.New(slog.NewTextHandler(io.Discard, nil)), func(context.Context) error { return nil }, metrics.New("test", "test", "test"), database, replayService)
 	secureConfiguration := configuration
 	secureConfiguration.Production = true
-	secureServer := New(secureConfiguration, slog.New(slog.NewTextHandler(io.Discard, nil)), func(context.Context) error { return nil }, metrics.New("test", "test", "test"), database, executor)
+	secureServer := New(secureConfiguration, slog.New(slog.NewTextHandler(io.Discard, nil)), func(context.Context) error { return nil }, metrics.New("test", "test", "test"), database, replayService)
 	secureMetrics := httptest.NewRecorder()
 	secureServer.httpServer.Handler.ServeHTTP(secureMetrics, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 	if secureMetrics.Code != http.StatusUnauthorized {
@@ -150,7 +153,7 @@ func TestAuthenticatedLogQueryIntegration(t *testing.T) {
 		t.Fatalf("query status = %d, body = %s", response.Code, response.Body.String())
 	}
 
-	incidents, incidentError := database.ListIncidents(context.Background(), ingestion.ProjectID, postgres.IncidentFilter{EnvironmentID: ingestion.EnvironmentID, Limit: 1})
+	incidents, incidentError := database.ListIncidents(context.Background(), ingestion.ProjectID, incident.Filter{EnvironmentID: ingestion.EnvironmentID, Limit: 1})
 	if incidentError != nil || len(incidents) != 1 {
 		t.Fatalf("incidents = %#v, error = %v", incidents, incidentError)
 	}
@@ -219,7 +222,7 @@ func TestAuthenticatedLogQueryIntegration(t *testing.T) {
 	if response.Code != http.StatusCreated {
 		t.Fatalf("allowed request execution status = %d, body = %s", response.Code, response.Body.String())
 	}
-	executions, executionError := database.ListReplayExecutions(context.Background(), ingestion.ProjectID, ingestion.EnvironmentID, incidentID, postgres.ReplayExecutionFilter{Limit: 1})
+	executions, executionError := database.ListReplayExecutions(context.Background(), ingestion.ProjectID, ingestion.EnvironmentID, incidentID, replaydomain.ExecutionFilter{Limit: 1})
 	if executionError != nil || len(executions) != 1 || executions[0].Status != "succeeded" || strings.Contains(executions[0].Target, "?") {
 		t.Fatalf("allowed request execution = %#v, error = %v", executions, executionError)
 	}
@@ -268,7 +271,7 @@ func TestAuthenticatedLogQueryIntegration(t *testing.T) {
 	if response.Code != http.StatusCreated {
 		t.Fatalf("cancelled replay status = %d, body = %s", response.Code, response.Body.String())
 	}
-	executions, executionError = database.ListReplayExecutions(context.Background(), ingestion.ProjectID, ingestion.EnvironmentID, incidentID, postgres.ReplayExecutionFilter{Limit: 10})
+	executions, executionError = database.ListReplayExecutions(context.Background(), ingestion.ProjectID, ingestion.EnvironmentID, incidentID, replaydomain.ExecutionFilter{Limit: 10})
 	if executionError != nil {
 		t.Fatal(executionError)
 	}

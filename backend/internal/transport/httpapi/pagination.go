@@ -10,7 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/vanquan3008/tracepilot/internal/storage/postgres"
+	"github.com/vanquan3008/tracepilot/internal/domain/incident"
+	"github.com/vanquan3008/tracepilot/internal/query"
 )
 
 const (
@@ -24,111 +25,111 @@ type pageCursor struct {
 	ID string    `json:"id"`
 }
 
-func parseTraceFilter(request *http.Request) (postgres.TraceFilter, pageCursor, error) {
-	query := request.URL.Query()
-	limit, parseError := parsePageSize(query.Get("limit"))
+func parseTraceFilter(request *http.Request) (query.TraceFilter, pageCursor, error) {
+	values := request.URL.Query()
+	limit, parseError := parsePageSize(values.Get("limit"))
 	if parseError != nil {
-		return postgres.TraceFilter{}, pageCursor{}, parseError
+		return query.TraceFilter{}, pageCursor{}, parseError
 	}
-	from, parseError := parseTime(query.Get("from"))
+	from, parseError := parseTime(values.Get("from"))
 	if parseError != nil {
-		return postgres.TraceFilter{}, pageCursor{}, parseError
+		return query.TraceFilter{}, pageCursor{}, parseError
 	}
-	to, parseError := parseTime(query.Get("to"))
+	to, parseError := parseTime(values.Get("to"))
 	if parseError != nil {
-		return postgres.TraceFilter{}, pageCursor{}, parseError
+		return query.TraceFilter{}, pageCursor{}, parseError
 	}
 	if rangeError := validateTimeRange(from, to); rangeError != nil {
-		return postgres.TraceFilter{}, pageCursor{}, rangeError
+		return query.TraceFilter{}, pageCursor{}, rangeError
 	}
-	cursor, parseError := decodeCursor(query.Get("cursor"))
+	cursor, parseError := decodeCursor(values.Get("cursor"))
 	if parseError != nil {
-		return postgres.TraceFilter{}, pageCursor{}, parseError
+		return query.TraceFilter{}, pageCursor{}, parseError
 	}
 	if parseError := validateCursorID(cursor, validTraceID); parseError != nil {
-		return postgres.TraceFilter{}, pageCursor{}, parseError
+		return query.TraceFilter{}, pageCursor{}, parseError
 	}
-	traceID := strings.TrimSpace(query.Get("traceId"))
+	traceID := strings.TrimSpace(values.Get("traceId"))
 	if traceID != "" && !validTraceID(traceID) {
-		return postgres.TraceFilter{}, pageCursor{}, errors.New("traceId must be 16 bytes of hexadecimal")
+		return query.TraceFilter{}, pageCursor{}, errors.New("traceId must be 16 bytes of hexadecimal")
 	}
-	return postgres.TraceFilter{Service: query.Get("service"), Operation: query.Get("operation"), Status: query.Get("status"), TraceID: traceID, From: from, To: to, Limit: limit}, cursor, nil
+	return query.TraceFilter{Service: values.Get("service"), Operation: values.Get("operation"), Status: values.Get("status"), TraceID: traceID, From: from, To: to, Limit: limit}, cursor, nil
 }
 
-func parseLogFilter(request *http.Request) (postgres.LogFilter, pageCursor, error) {
-	query := request.URL.Query()
-	limit, parseError := parsePageSize(query.Get("limit"))
+func parseLogFilter(request *http.Request) (query.LogFilter, pageCursor, error) {
+	values := request.URL.Query()
+	limit, parseError := parsePageSize(values.Get("limit"))
 	if parseError != nil {
-		return postgres.LogFilter{}, pageCursor{}, parseError
+		return query.LogFilter{}, pageCursor{}, parseError
 	}
-	from, parseError := parseTime(query.Get("from"))
+	from, parseError := parseTime(values.Get("from"))
 	if parseError != nil {
-		return postgres.LogFilter{}, pageCursor{}, parseError
+		return query.LogFilter{}, pageCursor{}, parseError
 	}
-	to, parseError := parseTime(query.Get("to"))
+	to, parseError := parseTime(values.Get("to"))
 	if parseError != nil {
-		return postgres.LogFilter{}, pageCursor{}, parseError
+		return query.LogFilter{}, pageCursor{}, parseError
 	}
 	if rangeError := validateTimeRange(from, to); rangeError != nil {
-		return postgres.LogFilter{}, pageCursor{}, rangeError
+		return query.LogFilter{}, pageCursor{}, rangeError
 	}
-	search := strings.TrimSpace(query.Get("search"))
+	search := strings.TrimSpace(values.Get("search"))
 	if search != "" && (from.IsZero() || to.IsZero()) {
-		return postgres.LogFilter{}, pageCursor{}, errors.New("log content search requires from and to")
+		return query.LogFilter{}, pageCursor{}, errors.New("log content search requires from and to")
 	}
 	if search != "" && to.Sub(from) > maxLogSearchRange {
-		return postgres.LogFilter{}, pageCursor{}, errors.New("log content search range must not exceed 24 hours")
+		return query.LogFilter{}, pageCursor{}, errors.New("log content search range must not exceed 24 hours")
 	}
-	cursor, parseError := decodeCursor(query.Get("cursor"))
+	cursor, parseError := decodeCursor(values.Get("cursor"))
 	if parseError != nil {
-		return postgres.LogFilter{}, pageCursor{}, parseError
+		return query.LogFilter{}, pageCursor{}, parseError
 	}
 	if parseError := validateCursorID(cursor, validUUID); parseError != nil {
-		return postgres.LogFilter{}, pageCursor{}, parseError
+		return query.LogFilter{}, pageCursor{}, parseError
 	}
-	traceID := strings.TrimSpace(query.Get("traceId"))
+	traceID := strings.TrimSpace(values.Get("traceId"))
 	if traceID != "" && !validTraceID(traceID) {
-		return postgres.LogFilter{}, pageCursor{}, errors.New("traceId must be 16 bytes of hexadecimal")
+		return query.LogFilter{}, pageCursor{}, errors.New("traceId must be 16 bytes of hexadecimal")
 	}
-	spanID := strings.TrimSpace(query.Get("spanId"))
+	spanID := strings.TrimSpace(values.Get("spanId"))
 	if spanID != "" && !validSpanID(spanID) {
-		return postgres.LogFilter{}, pageCursor{}, errors.New("spanId must be 8 bytes of hexadecimal")
+		return query.LogFilter{}, pageCursor{}, errors.New("spanId must be 8 bytes of hexadecimal")
 	}
-	return postgres.LogFilter{Service: query.Get("service"), Severity: query.Get("severity"), TraceID: traceID, SpanID: spanID, Search: search, From: from, To: to, Limit: limit}, cursor, nil
+	return query.LogFilter{Service: values.Get("service"), Severity: values.Get("severity"), TraceID: traceID, SpanID: spanID, Search: search, From: from, To: to, Limit: limit}, cursor, nil
 }
 
-func parseIncidentFilter(request *http.Request) (postgres.IncidentFilter, pageCursor, error) {
-	query := request.URL.Query()
-	limit, parseError := parsePageSize(query.Get("limit"))
+func parseIncidentFilter(request *http.Request) (incident.Filter, pageCursor, error) {
+	values := request.URL.Query()
+	limit, parseError := parsePageSize(values.Get("limit"))
 	if parseError != nil {
-		return postgres.IncidentFilter{}, pageCursor{}, parseError
+		return incident.Filter{}, pageCursor{}, parseError
 	}
-	from, parseError := parseTime(query.Get("from"))
+	from, parseError := parseTime(values.Get("from"))
 	if parseError != nil {
-		return postgres.IncidentFilter{}, pageCursor{}, parseError
+		return incident.Filter{}, pageCursor{}, parseError
 	}
-	to, parseError := parseTime(query.Get("to"))
+	to, parseError := parseTime(values.Get("to"))
 	if parseError != nil {
-		return postgres.IncidentFilter{}, pageCursor{}, parseError
+		return incident.Filter{}, pageCursor{}, parseError
 	}
 	if rangeError := validateTimeRange(from, to); rangeError != nil {
-		return postgres.IncidentFilter{}, pageCursor{}, rangeError
+		return incident.Filter{}, pageCursor{}, rangeError
 	}
-	status := strings.ToUpper(strings.TrimSpace(query.Get("status")))
+	status := strings.ToUpper(strings.TrimSpace(values.Get("status")))
 	if status != "" {
-		if _, valid := postgres.NormalizeIncidentStatus(status); !valid {
-			return postgres.IncidentFilter{}, pageCursor{}, errors.New("incident status is invalid")
+		if _, valid := incident.NormalizeStatus(status); !valid {
+			return incident.Filter{}, pageCursor{}, errors.New("incident status is invalid")
 		}
 	}
-	cursor, parseError := decodeCursor(query.Get("cursor"))
+	cursor, parseError := decodeCursor(values.Get("cursor"))
 	if parseError != nil {
-		return postgres.IncidentFilter{}, pageCursor{}, parseError
+		return incident.Filter{}, pageCursor{}, parseError
 	}
 	if parseError := validateCursorID(cursor, validUUID); parseError != nil {
-		return postgres.IncidentFilter{}, pageCursor{}, parseError
+		return incident.Filter{}, pageCursor{}, parseError
 	}
-	return postgres.IncidentFilter{
-		Service: strings.TrimSpace(query.Get("service")), Severity: strings.ToUpper(strings.TrimSpace(query.Get("severity"))),
+	return incident.Filter{
+		Service: strings.TrimSpace(values.Get("service")), Severity: strings.ToUpper(strings.TrimSpace(values.Get("severity"))),
 		Status: status, From: from, To: to, Limit: limit,
 	}, cursor, nil
 }

@@ -7,9 +7,10 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/vanquan3008/tracepilot/internal/domain/incident"
 )
 
-func (database *Database) ListIncidents(ctx context.Context, projectID string, filter IncidentFilter) ([]Incident, error) {
+func (database *Database) ListIncidents(ctx context.Context, projectID string, filter incident.Filter) ([]incident.Incident, error) {
 	rows, queryError := database.pool.Query(ctx, `
 		SELECT id, primary_service, COALESCE(trace_id, ''), COALESCE(request_id, ''), fingerprint,
 			title, COALESCE(error_type, ''), COALESCE(error_message, ''), http_status, severity, status,
@@ -26,13 +27,13 @@ func (database *Database) ListIncidents(ctx context.Context, projectID string, f
 		return nil, fmt.Errorf("list incidents: %w", queryError)
 	}
 	defer rows.Close()
-	incidents := make([]Incident, 0, filter.Limit+1)
+	incidents := make([]incident.Incident, 0, filter.Limit+1)
 	for rows.Next() {
-		var incident Incident
-		if scanError := rows.Scan(&incident.ID, &incident.PrimaryService, &incident.TraceID, &incident.RequestID, &incident.Fingerprint, &incident.Title, &incident.ErrorType, &incident.ErrorMessage, &incident.HTTPStatus, &incident.Severity, &incident.Status, &incident.FirstSeenAt, &incident.LastSeenAt, &incident.OccurrenceCount); scanError != nil {
+		var record incident.Incident
+		if scanError := rows.Scan(&record.ID, &record.PrimaryService, &record.TraceID, &record.RequestID, &record.Fingerprint, &record.Title, &record.ErrorType, &record.ErrorMessage, &record.HTTPStatus, &record.Severity, &record.Status, &record.FirstSeenAt, &record.LastSeenAt, &record.OccurrenceCount); scanError != nil {
 			return nil, fmt.Errorf("scan incident: %w", scanError)
 		}
-		incidents = append(incidents, incident)
+		incidents = append(incidents, record)
 	}
 	if rowsError := rows.Err(); rowsError != nil {
 		return nil, fmt.Errorf("iterate incidents: %w", rowsError)
@@ -40,26 +41,26 @@ func (database *Database) ListIncidents(ctx context.Context, projectID string, f
 	return incidents, nil
 }
 
-func (database *Database) GetIncident(ctx context.Context, projectID, environmentID, incidentID string) (Incident, error) {
-	var incident Incident
+func (database *Database) GetIncident(ctx context.Context, projectID, environmentID, incidentID string) (incident.Incident, error) {
+	var record incident.Incident
 	queryError := database.pool.QueryRow(ctx, `
 		SELECT id, primary_service, COALESCE(trace_id, ''), COALESCE(request_id, ''), fingerprint,
 			title, COALESCE(error_type, ''), COALESCE(error_message, ''), http_status, severity, status,
 			first_seen_at, last_seen_at, occurrence_count
 		FROM incidents WHERE project_id = $1 AND environment_id = $2 AND id = $3`, projectID, environmentID, incidentID).Scan(
-		&incident.ID, &incident.PrimaryService, &incident.TraceID, &incident.RequestID, &incident.Fingerprint,
-		&incident.Title, &incident.ErrorType, &incident.ErrorMessage, &incident.HTTPStatus, &incident.Severity, &incident.Status,
-		&incident.FirstSeenAt, &incident.LastSeenAt, &incident.OccurrenceCount)
+		&record.ID, &record.PrimaryService, &record.TraceID, &record.RequestID, &record.Fingerprint,
+		&record.Title, &record.ErrorType, &record.ErrorMessage, &record.HTTPStatus, &record.Severity, &record.Status,
+		&record.FirstSeenAt, &record.LastSeenAt, &record.OccurrenceCount)
 	if errors.Is(queryError, pgx.ErrNoRows) {
-		return Incident{}, nil
+		return incident.Incident{}, nil
 	}
 	if queryError != nil {
-		return Incident{}, fmt.Errorf("get incident: %w", queryError)
+		return incident.Incident{}, fmt.Errorf("get incident: %w", queryError)
 	}
-	return incident, nil
+	return record, nil
 }
 
-func (database *Database) ListIncidentOccurrences(ctx context.Context, projectID, environmentID, incidentID string, limit int, before time.Time, beforeID string) ([]IncidentOccurrence, error) {
+func (database *Database) ListIncidentOccurrences(ctx context.Context, projectID, environmentID, incidentID string, limit int, before time.Time, beforeID string) ([]incident.Occurrence, error) {
 	rows, queryError := database.pool.Query(ctx, `
 		SELECT occurrence.id, occurrence.event_id, occurrence.occurred_at, event.service_name, COALESCE(event.trace_id, ''),
 			event.event_type, COALESCE(event.operation, ''), COALESCE(event.error_type, ''), COALESCE(event.error_message, ''), event.http_status
@@ -74,9 +75,9 @@ func (database *Database) ListIncidentOccurrences(ctx context.Context, projectID
 		return nil, fmt.Errorf("list incident occurrences: %w", queryError)
 	}
 	defer rows.Close()
-	occurrences := make([]IncidentOccurrence, 0)
+	occurrences := make([]incident.Occurrence, 0)
 	for rows.Next() {
-		var occurrence IncidentOccurrence
+		var occurrence incident.Occurrence
 		if scanError := rows.Scan(&occurrence.ID, &occurrence.EventID, &occurrence.OccurredAt, &occurrence.ServiceName, &occurrence.TraceID, &occurrence.EventType, &occurrence.Operation, &occurrence.ErrorType, &occurrence.ErrorMessage, &occurrence.HTTPStatus); scanError != nil {
 			return nil, fmt.Errorf("scan incident occurrence: %w", scanError)
 		}
@@ -88,7 +89,7 @@ func (database *Database) ListIncidentOccurrences(ctx context.Context, projectID
 	return occurrences, nil
 }
 
-func (database *Database) ListIncidentEvents(ctx context.Context, projectID, environmentID, incidentID string, limit int, after time.Time, afterID string) ([]IncidentEvent, error) {
+func (database *Database) ListIncidentEvents(ctx context.Context, projectID, environmentID, incidentID string, limit int, after time.Time, afterID string) ([]incident.Event, error) {
 	rows, queryError := database.pool.Query(ctx, `
 		SELECT event.id, event.occurred_at, event.service_name, COALESCE(event.trace_id, ''), event.event_type,
 			COALESCE(event.operation, ''), COALESCE(event.error_type, ''), COALESCE(event.error_message, ''), event.http_status
@@ -103,9 +104,9 @@ func (database *Database) ListIncidentEvents(ctx context.Context, projectID, env
 		return nil, fmt.Errorf("list incident events: %w", queryError)
 	}
 	defer rows.Close()
-	events := make([]IncidentEvent, 0)
+	events := make([]incident.Event, 0)
 	for rows.Next() {
-		var event IncidentEvent
+		var event incident.Event
 		if scanError := rows.Scan(&event.EventID, &event.OccurredAt, &event.ServiceName, &event.TraceID, &event.EventType, &event.Operation, &event.ErrorType, &event.ErrorMessage, &event.HTTPStatus); scanError != nil {
 			return nil, fmt.Errorf("scan incident event: %w", scanError)
 		}
@@ -117,7 +118,7 @@ func (database *Database) ListIncidentEvents(ctx context.Context, projectID, env
 	return events, nil
 }
 
-func (database *Database) ListIncidentStatusChanges(ctx context.Context, projectID, environmentID, incidentID string, limit int, before time.Time, beforeID string) ([]IncidentStatusChange, error) {
+func (database *Database) ListIncidentStatusChanges(ctx context.Context, projectID, environmentID, incidentID string, limit int, before time.Time, beforeID string) ([]incident.StatusChange, error) {
 	rows, queryError := database.pool.Query(ctx, `
 		SELECT id, previous_status, status, actor_key_id, changed_at FROM incident_status_changes
 		WHERE incident_status_changes.project_id = $1 AND incident_status_changes.incident_id = $2
@@ -128,9 +129,9 @@ func (database *Database) ListIncidentStatusChanges(ctx context.Context, project
 		return nil, fmt.Errorf("list incident status changes: %w", queryError)
 	}
 	defer rows.Close()
-	changes := make([]IncidentStatusChange, 0, limit+1)
+	changes := make([]incident.StatusChange, 0, limit+1)
 	for rows.Next() {
-		var change IncidentStatusChange
+		var change incident.StatusChange
 		if scanError := rows.Scan(&change.ID, &change.PreviousStatus, &change.Status, &change.ActorKeyID, &change.ChangedAt); scanError != nil {
 			return nil, fmt.Errorf("scan incident status change: %w", scanError)
 		}

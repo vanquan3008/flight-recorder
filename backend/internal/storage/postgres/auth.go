@@ -8,25 +8,9 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/vanquan3008/tracepilot/internal/auth"
 	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
 )
-
-var ErrUnauthorized = errors.New("unauthorized")
-
-type Principal struct {
-	KeyID     string
-	ProjectID string
-	Scopes    []string
-}
-
-func (principal Principal) HasScope(wanted string) bool {
-	for _, scope := range principal.Scopes {
-		if scope == wanted {
-			return true
-		}
-	}
-	return false
-}
 
 func (database *Database) EnsureBootstrapAPIKey(ctx context.Context, projectID, rawKey string) error {
 	if rawKey == "" {
@@ -44,21 +28,21 @@ func (database *Database) EnsureBootstrapAPIKey(ctx context.Context, projectID, 
 	return nil
 }
 
-func (database *Database) AuthenticateAPIKey(ctx context.Context, rawKey string) (Principal, error) {
+func (database *Database) AuthenticateAPIKey(ctx context.Context, rawKey string) (auth.Principal, error) {
 	if rawKey == "" {
-		return Principal{}, ErrUnauthorized
+		return auth.Principal{}, auth.ErrUnauthorized
 	}
 	digest := sha256.Sum256([]byte(rawKey))
-	var principal Principal
+	var principal auth.Principal
 	queryError := database.pool.QueryRow(ctx, `
 		SELECT id, project_id, scopes
 		FROM api_keys
 		WHERE key_hash = $1 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > now())`, digest[:]).Scan(&principal.KeyID, &principal.ProjectID, &principal.Scopes)
 	if errors.Is(queryError, pgx.ErrNoRows) {
-		return Principal{}, ErrUnauthorized
+		return auth.Principal{}, auth.ErrUnauthorized
 	}
 	if queryError != nil {
-		return Principal{}, fmt.Errorf("authenticate API key: %w", queryError)
+		return auth.Principal{}, fmt.Errorf("authenticate API key: %w", queryError)
 	}
 	return principal, nil
 }

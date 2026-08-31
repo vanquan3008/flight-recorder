@@ -12,8 +12,6 @@ import (
 
 	"github.com/vanquan3008/tracepilot/internal/config"
 	"github.com/vanquan3008/tracepilot/internal/observability/metrics"
-	"github.com/vanquan3008/tracepilot/internal/replay"
-	"github.com/vanquan3008/tracepilot/internal/storage/postgres"
 )
 
 type Server struct {
@@ -27,8 +25,8 @@ type Server struct {
 	maxBodyBytes          int64
 	ready                 atomic.Bool
 	shutdownTimeout       time.Duration
-	database              *postgres.Database
-	replay                *replay.Executor
+	backend               Backend
+	replay                ReplayRunner
 	replayMaxRequestBytes int64
 	allowedOrigins        map[string]struct{}
 	metricsRequireAuth    bool
@@ -36,7 +34,7 @@ type Server struct {
 	privateKeyFile        string
 }
 
-func New(configuration config.Config, logger *slog.Logger, readinessCheck func(context.Context) error, metricRegistry *metrics.Registry, database *postgres.Database, replayExecutor *replay.Executor) *Server {
+func New(configuration config.Config, logger *slog.Logger, readinessCheck func(context.Context) error, metricRegistry *metrics.Registry, backend Backend, replayRunner ReplayRunner) *Server {
 	server := &Server{
 		logger:                logger,
 		metrics:               metricRegistry,
@@ -46,8 +44,8 @@ func New(configuration config.Config, logger *slog.Logger, readinessCheck func(c
 		environmentID:         configuration.Ingestion.EnvironmentID,
 		maxBodyBytes:          configuration.HTTP.ManagementMaxBodyBytes,
 		shutdownTimeout:       configuration.ShutdownTimeout,
-		database:              database,
-		replay:                replayExecutor,
+		backend:               backend,
+		replay:                replayRunner,
 		replayMaxRequestBytes: configuration.Replay.MaxRequestBytes,
 		allowedOrigins:        make(map[string]struct{}, len(configuration.HTTP.AllowedOrigins)),
 		metricsRequireAuth:    configuration.Production,
@@ -65,7 +63,7 @@ func New(configuration config.Config, logger *slog.Logger, readinessCheck func(c
 	// Keep the query routes available whenever the database is available. When
 	// authentication has not been configured they return an explicit 401 instead
 	// of falling through to the dashboard and looking like a missing route.
-	if database != nil {
+	if backend != nil {
 		router.HandleFunc("GET /api/v1/traces", server.listTraces)
 		router.HandleFunc("GET /api/v1/traces/{traceID}", server.getTrace)
 		router.HandleFunc("GET /api/v1/traces/{traceID}/logs", server.listTraceLogs)
@@ -86,7 +84,7 @@ func New(configuration config.Config, logger *slog.Logger, readinessCheck func(c
 		router.HandleFunc("POST /api/v1/api-keys", server.createAPIKey)
 		router.HandleFunc("POST /api/v1/api-keys/{keyID}/rotate", server.rotateAPIKey)
 		router.HandleFunc("DELETE /api/v1/api-keys/{keyID}", server.revokeAPIKey)
-		if replayExecutor != nil {
+		if replayRunner != nil {
 			router.HandleFunc("POST /api/v1/incidents/{incidentID}/replays", server.replayIncident)
 		}
 	}
@@ -153,7 +151,7 @@ func (server *Server) metricsEndpoint(responseWriter http.ResponseWriter, reques
 		server.metricsHandler.ServeHTTP(responseWriter, request)
 		return
 	}
-	if server.database == nil {
+	if server.backend == nil {
 		writeAPIError(responseWriter, http.StatusServiceUnavailable, "UNAVAILABLE", "metrics authentication is unavailable")
 		return
 	}

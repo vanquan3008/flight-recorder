@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"time"
 
+	replaydomain "github.com/vanquan3008/tracepilot/internal/domain/replay"
 	"github.com/vanquan3008/tracepilot/internal/replay/capture"
 )
 
@@ -19,17 +20,6 @@ type Executor struct {
 	slots            chan struct{}
 }
 
-type Result struct {
-	Target        string        `json:"target"`
-	Status        string        `json:"status"`
-	Reason        string        `json:"reason,omitempty"`
-	HTTPStatus    int           `json:"http_status,omitempty"`
-	Duration      time.Duration `json:"duration"`
-	ContentType   string        `json:"content_type,omitempty"`
-	ResponseBytes int64         `json:"response_bytes"`
-	BodyTruncated bool          `json:"body_truncated"`
-}
-
 func NewExecutor(policy *Policy, timeout time.Duration, maxResponseBytes int64, maxConcurrent int) (*Executor, error) {
 	if policy == nil || timeout <= 0 || maxResponseBytes <= 0 || maxConcurrent <= 0 {
 		return nil, errors.New("replay executor configuration is invalid")
@@ -37,9 +27,9 @@ func NewExecutor(policy *Policy, timeout time.Duration, maxResponseBytes int64, 
 	return &Executor{policy: policy, client: policy.HTTPClient(timeout), maxResponseBytes: maxResponseBytes, slots: make(chan struct{}, maxConcurrent)}, nil
 }
 
-func (executor *Executor) Execute(ctx context.Context, captured capture.Request) Result {
+func (executor *Executor) Execute(ctx context.Context, captured capture.Request) replaydomain.Result {
 	startedAt := time.Now()
-	result := Result{Target: AuditTarget(captured.Target)}
+	result := replaydomain.Result{Target: AuditTarget(captured.Target)}
 	target, validateError := executor.policy.Validate(ctx, captured.Target)
 	if validateError != nil {
 		result.Status, result.Reason, result.Duration = "blocked", validateError.Error(), time.Since(startedAt)

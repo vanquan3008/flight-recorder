@@ -3,26 +3,30 @@ package otlp
 import (
 	"context"
 	"errors"
+	"time"
 
+	"github.com/vanquan3008/tracepilot/internal/auth"
 	"github.com/vanquan3008/tracepilot/internal/config"
-	"github.com/vanquan3008/tracepilot/internal/ingest/pipeline"
+	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
 	"github.com/vanquan3008/tracepilot/internal/observability/metrics"
-	"github.com/vanquan3008/tracepilot/internal/storage/postgres"
 	collectorlogspb "go.opentelemetry.io/proto/otlp/collector/logs/v1"
 	collectortracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"time"
 )
+
+type Submitter interface {
+	Submit(context.Context, []telemetry.Event) (int, error)
+}
 
 type Receiver struct {
 	normalizer   *normalizer
-	pipeline     *pipeline.Pipeline
+	pipeline     Submitter
 	metrics      *metrics.Registry
-	authenticate func(context.Context, string) (postgres.Principal, error)
+	authenticate func(context.Context, string) (auth.Principal, error)
 }
 
-func NewReceiver(configuration config.IngestionConfig, ingestionPipeline *pipeline.Pipeline, metricRegistry *metrics.Registry, authenticate func(context.Context, string) (postgres.Principal, error)) *Receiver {
+func NewReceiver(configuration config.IngestionConfig, ingestionPipeline Submitter, metricRegistry *metrics.Registry, authenticate func(context.Context, string) (auth.Principal, error)) *Receiver {
 	return &Receiver{normalizer: newNormalizer(configuration), pipeline: ingestionPipeline, metrics: metricRegistry, authenticate: authenticate}
 }
 

@@ -6,9 +6,10 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/vanquan3008/tracepilot/internal/query"
 )
 
-func (database *Database) ListLogs(ctx context.Context, projectID string, filter LogFilter) ([]LogRecord, error) {
+func (database *Database) ListLogs(ctx context.Context, projectID string, filter query.LogFilter) ([]query.LogRecord, error) {
 	rows, queryError := database.pool.Query(ctx, `
 		SELECT event_id, occurred_at, observed_at, COALESCE(trace_id, ''), COALESCE(span_id, ''),
 			trace_flags, severity_number, severity_text, body, event_name, service_name,
@@ -27,9 +28,9 @@ func (database *Database) ListLogs(ctx context.Context, projectID string, filter
 		return nil, fmt.Errorf("list logs: %w", queryError)
 	}
 	defer rows.Close()
-	logs := make([]LogRecord, 0, filter.Limit+1)
+	logs := make([]query.LogRecord, 0, filter.Limit+1)
 	for rows.Next() {
-		var record LogRecord
+		var record query.LogRecord
 		if scanError := rows.Scan(&record.EventID, &record.OccurredAt, &record.ObservedAt, &record.TraceID, &record.SpanID, &record.TraceFlags, &record.SeverityNumber, &record.SeverityText, &record.Body, &record.EventName, &record.ServiceName, &record.ServiceVersion, &record.ResourceAttributes, &record.ScopeName, &record.ScopeVersion, &record.ScopeAttributes, &record.Attributes); scanError != nil {
 			return nil, fmt.Errorf("scan log: %w", scanError)
 		}
@@ -41,8 +42,8 @@ func (database *Database) ListLogs(ctx context.Context, projectID string, filter
 	return logs, nil
 }
 
-func (database *Database) GetLog(ctx context.Context, projectID, environmentID, eventID string) (LogRecord, error) {
-	var record LogRecord
+func (database *Database) GetLog(ctx context.Context, projectID, environmentID, eventID string) (query.LogRecord, error) {
+	var record query.LogRecord
 	queryError := database.pool.QueryRow(ctx, `
 		SELECT event_id, occurred_at, observed_at, COALESCE(trace_id, ''), COALESCE(span_id, ''),
 			trace_flags, severity_number, severity_text, body, event_name, service_name,
@@ -53,10 +54,10 @@ func (database *Database) GetLog(ctx context.Context, projectID, environmentID, 
 		&record.TraceFlags, &record.SeverityNumber, &record.SeverityText, &record.Body, &record.EventName, &record.ServiceName,
 		&record.ServiceVersion, &record.ResourceAttributes, &record.ScopeName, &record.ScopeVersion, &record.ScopeAttributes, &record.Attributes)
 	if errors.Is(queryError, pgx.ErrNoRows) {
-		return LogRecord{}, nil
+		return query.LogRecord{}, nil
 	}
 	if queryError != nil {
-		return LogRecord{}, fmt.Errorf("get log: %w", queryError)
+		return query.LogRecord{}, fmt.Errorf("get log: %w", queryError)
 	}
 	return record, nil
 }

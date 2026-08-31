@@ -2,51 +2,21 @@ package postgres
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/vanquan3008/tracepilot/internal/config"
+	"github.com/vanquan3008/tracepilot/internal/domain/incident"
 	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
 )
 
 const incidentDeduplicationWindow = time.Hour
 
-var (
-	ErrIncidentNotFound          = errors.New("incident not found")
-	ErrInvalidIncidentTransition = errors.New("invalid incident status transition")
-)
-
-func NormalizeIncidentStatus(value string) (string, bool) {
-	status := strings.ToUpper(strings.TrimSpace(value))
-	switch status {
-	case "OPEN", "INVESTIGATING", "RESOLVED", "IGNORED":
-		return status, true
-	default:
-		return "", false
-	}
-}
-
-func canTransitionIncidentStatus(previous, next string) bool {
-	switch previous {
-	case "OPEN":
-		return next == "INVESTIGATING" || next == "RESOLVED" || next == "IGNORED"
-	case "INVESTIGATING":
-		return next == "RESOLVED" || next == "IGNORED"
-	case "RESOLVED", "IGNORED":
-		return next == "OPEN"
-	default:
-		return false
-	}
-}
-
 func storeIncidents(ctx context.Context, transaction pgx.Tx, ingestion config.IngestionConfig, events []telemetry.Event) error {
 	for _, event := range events {
-		if !incidentCandidate(event) {
+		if !incident.Candidate(event) {
 			continue
 		}
 		if incidentError := storeIncident(ctx, transaction, ingestion, event); incidentError != nil {
@@ -56,16 +26,8 @@ func storeIncidents(ctx context.Context, transaction pgx.Tx, ingestion config.In
 	return nil
 }
 
-func incidentCandidate(event telemetry.Event) bool {
-	if event.HTTPStatus >= 500 || event.Type == telemetry.EventException {
-		return true
-	}
-	severity := strings.ToUpper(event.Severity)
-	return strings.Contains(severity, "ERROR") || strings.Contains(severity, "FATAL")
-}
-
 func storeIncident(ctx context.Context, transaction pgx.Tx, ingestion config.IngestionConfig, event telemetry.Event) error {
-	fingerprint := incidentFingerprint(event)
+	fingerprint := incident.Fingerprint(event)
 	if _, lockError := transaction.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtext($1))", ingestion.ProjectID+":"+ingestion.EnvironmentID+":"+fingerprint); lockError != nil {
 		return fmt.Errorf("lock incident fingerprint: %w", lockError)
 	}
@@ -100,7 +62,7 @@ func storeIncident(ctx context.Context, transaction pgx.Tx, ingestion config.Ing
 				$8, $9, $10, $11, $12, 'OPEN', $13, $13
 			)`,
 			incidentID, ingestion.ProjectID, ingestion.EnvironmentID, event.ServiceName, nullableString(event.TraceID), nullableString(event.RequestID), fingerprint,
-			incidentTitle(event), nullableString(event.ErrorType), nullableString(event.ErrorMessage), nullableInt(event.HTTPStatus), incidentSeverity(event), event.Timestamp); insertError != nil {
+			incident.Title(event), nullableString(event.ErrorType), nullableString(event.ErrorMessage), nullableInt(event.HTTPStatus), incident.Severity(event), event.Timestamp); insertError != nil {
 			return fmt.Errorf("insert incident: %w", insertError)
 		}
 	} else if queryError != nil {
@@ -130,20 +92,20 @@ func storeIncident(ctx context.Context, transaction pgx.Tx, ingestion config.Ing
 			http_status = COALESCE($8, http_status), severity = $9, updated_at = now()
 		WHERE project_id = $1 AND id = $2`,
 		ingestion.ProjectID, incidentID, event.Timestamp, nullableString(event.TraceID), nullableString(event.RequestID),
-		nullableString(event.ErrorType), nullableString(event.ErrorMessage), nullableInt(event.HTTPStatus), incidentSeverity(event)); updateError != nil {
+		nullableString(event.ErrorType), nullableString(event.ErrorMessage), nullableInt(event.HTTPStatus), incident.Severity(event)); updateError != nil {
 		return fmt.Errorf("update incident: %w", updateError)
 	}
 	return nil
 }
 
-func (database *Database) UpdateIncidentStatus(ctx context.Context, projectID, environmentID, incidentID, requestedStatus, actorKeyID string) (Incident, error) {
-	status, valid := NormalizeIncidentStatus(requestedStatus)
+func (database *Database) UpdateIncidentStatus(ctx context.Context, projectID, environmentID, incidentID, requestedStatus, actorKeyID string) (incident.Incident, error) {
+	status, valid := incident.NormalizeStatus(requestedStatus)
 	if !valid || actorKeyID == "" {
-		return Incident{}, ErrInvalidIncidentTransition
+		return incident.Incident{}, incident.ErrInvalidTransition
 	}
 	transaction, beginError := database.pool.Begin(ctx)
 	if beginError != nil {
-		return Incident{}, fmt.Errorf("begin incident status update: %w", beginError)
+		return incident.Incident{}, fmt.Errorf("begin incident status update: %w", beginError)
 	}
 	defer func() { _ = transaction.Rollback(ctx) }()
 
@@ -153,13 +115,13 @@ func (database *Database) UpdateIncidentStatus(ctx context.Context, projectID, e
 		WHERE project_id = $1 AND environment_id = $2 AND id = $3
 		FOR UPDATE`, projectID, environmentID, incidentID).Scan(&previous)
 	if errors.Is(queryError, pgx.ErrNoRows) {
-		return Incident{}, ErrIncidentNotFound
+		return incident.Incident{}, incident.ErrNotFound
 	}
 	if queryError != nil {
-		return Incident{}, fmt.Errorf("load incident status: %w", queryError)
+		return incident.Incident{}, fmt.Errorf("load incident status: %w", queryError)
 	}
-	if !canTransitionIncidentStatus(previous, status) {
-		return Incident{}, ErrInvalidIncidentTransition
+	if !incident.CanTransition(previous, status) {
+		return incident.Incident{}, incident.ErrInvalidTransition
 	}
 
 	changedAt := time.Now().UTC()
@@ -167,43 +129,20 @@ func (database *Database) UpdateIncidentStatus(ctx context.Context, projectID, e
 		UPDATE incidents
 		SET status = $4, updated_at = $5
 		WHERE project_id = $1 AND environment_id = $2 AND id = $3`, projectID, environmentID, incidentID, status, changedAt); updateError != nil {
-		return Incident{}, fmt.Errorf("update incident status: %w", updateError)
+		return incident.Incident{}, fmt.Errorf("update incident status: %w", updateError)
 	}
 	changeID := telemetry.DeterministicID(changedAt, "incident-status", projectID, incidentID, previous, status, actorKeyID)
 	if _, insertError := transaction.Exec(ctx, `
 		INSERT INTO incident_status_changes (id, project_id, incident_id, previous_status, status, actor_key_id, changed_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)`, changeID, projectID, incidentID, previous, status, actorKeyID, changedAt); insertError != nil {
-		return Incident{}, fmt.Errorf("record incident status change: %w", insertError)
+		return incident.Incident{}, fmt.Errorf("record incident status change: %w", insertError)
 	}
 	if commitError := transaction.Commit(ctx); commitError != nil {
-		return Incident{}, fmt.Errorf("commit incident status update: %w", commitError)
+		return incident.Incident{}, fmt.Errorf("commit incident status update: %w", commitError)
 	}
-	incident, incidentError := database.GetIncident(ctx, projectID, environmentID, incidentID)
+	record, incidentError := database.GetIncident(ctx, projectID, environmentID, incidentID)
 	if incidentError != nil {
-		return Incident{}, incidentError
+		return incident.Incident{}, incidentError
 	}
-	return incident, nil
-}
-
-func incidentFingerprint(event telemetry.Event) string {
-	identity := strings.Join([]string{event.ServiceName, event.Operation, event.ErrorType, event.ErrorMessage, fmt.Sprintf("%d", event.HTTPStatus)}, "\x00")
-	digest := sha256.Sum256([]byte(identity))
-	return hex.EncodeToString(digest[:])
-}
-
-func incidentTitle(event telemetry.Event) string {
-	if event.Operation != "" {
-		return event.ServiceName + " " + event.Operation + " failed"
-	}
-	if event.ErrorType != "" {
-		return event.ServiceName + " " + event.ErrorType
-	}
-	return event.ServiceName + " failure"
-}
-
-func incidentSeverity(event telemetry.Event) string {
-	if strings.Contains(strings.ToUpper(event.Severity), "FATAL") {
-		return "CRITICAL"
-	}
-	return "ERROR"
+	return record, nil
 }

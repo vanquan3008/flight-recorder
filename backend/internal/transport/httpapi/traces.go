@@ -3,7 +3,7 @@ package httpapi
 import (
 	"net/http"
 
-	"github.com/vanquan3008/tracepilot/internal/storage/postgres"
+	"github.com/vanquan3008/tracepilot/internal/query"
 )
 
 func (server *Server) listTraces(responseWriter http.ResponseWriter, request *http.Request) {
@@ -17,13 +17,13 @@ func (server *Server) listTraces(responseWriter http.ResponseWriter, request *ht
 		return
 	}
 	filter.Before, filter.CursorID = cursor.At, cursor.ID
-	traces, queryError := server.database.ListTraces(request.Context(), principal.ProjectID, filter)
+	traces, queryError := server.backend.ListTraces(request.Context(), principal.ProjectID, filter)
 	if queryError != nil {
 		server.logger.Error("list traces", "error", queryError)
 		writeAPIError(responseWriter, http.StatusInternalServerError, "INTERNAL_ERROR", "internal server error")
 		return
 	}
-	writeJSONValue(responseWriter, http.StatusOK, pageResponse(traces, filter.Limit, func(trace postgres.TraceSummary) pageCursor {
+	writeJSONValue(responseWriter, http.StatusOK, pageResponse(traces, filter.Limit, func(trace query.TraceSummary) pageCursor {
 		return pageCursor{At: trace.CursorAt, ID: trace.TraceID}
 	}))
 }
@@ -36,7 +36,7 @@ func (server *Server) getTrace(responseWriter http.ResponseWriter, request *http
 	if !requireTraceID(responseWriter, request.PathValue("traceID")) {
 		return
 	}
-	spans, queryError := server.database.GetTrace(request.Context(), principal.ProjectID, server.environmentID, request.PathValue("traceID"))
+	spans, queryError := server.backend.GetTrace(request.Context(), principal.ProjectID, server.environmentID, request.PathValue("traceID"))
 	if queryError != nil {
 		server.logger.Error("get trace", "error", queryError)
 		writeAPIError(responseWriter, http.StatusInternalServerError, "INTERNAL_ERROR", "internal server error")
@@ -65,13 +65,13 @@ func (server *Server) listTraceLogs(responseWriter http.ResponseWriter, request 
 	filter.TraceID = request.PathValue("traceID")
 	filter.EnvironmentID = server.environmentID
 	filter.Before, filter.CursorID = cursor.At, cursor.ID
-	logs, queryError := server.database.ListLogs(request.Context(), principal.ProjectID, filter)
+	logs, queryError := server.backend.ListLogs(request.Context(), principal.ProjectID, filter)
 	if queryError != nil {
 		server.logger.Error("list trace logs", "error", queryError)
 		writeAPIError(responseWriter, http.StatusInternalServerError, "INTERNAL_ERROR", "internal server error")
 		return
 	}
-	writeJSONValue(responseWriter, http.StatusOK, pageResponse(logs, filter.Limit, func(record postgres.LogRecord) pageCursor {
+	writeJSONValue(responseWriter, http.StatusOK, pageResponse(logs, filter.Limit, func(record query.LogRecord) pageCursor {
 		return pageCursor{At: record.OccurredAt, ID: record.EventID}
 	}))
 }

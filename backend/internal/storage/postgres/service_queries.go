@@ -5,10 +5,11 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/vanquan3008/tracepilot/internal/query"
 	sqlcstore "github.com/vanquan3008/tracepilot/internal/storage/postgres/sqlc"
 )
 
-func (database *Database) ListServices(ctx context.Context, projectID, environmentID string, from, to time.Time) ([]ServiceSummary, error) {
+func (database *Database) ListServices(ctx context.Context, projectID, environmentID string, from, to time.Time) ([]query.ServiceSummary, error) {
 	project, environment, scopeError := sqlcScope(projectID, environmentID)
 	if scopeError != nil {
 		return nil, fmt.Errorf("list services: %w", scopeError)
@@ -24,9 +25,9 @@ func (database *Database) ListServices(ctx context.Context, projectID, environme
 	if queryError != nil {
 		return nil, fmt.Errorf("list services: %w", queryError)
 	}
-	services := make([]ServiceSummary, 0)
+	services := make([]query.ServiceSummary, 0)
 	for _, row := range rows {
-		services = append(services, ServiceSummary{
+		services = append(services, query.ServiceSummary{
 			Name:           row.Name,
 			TraceCount:     row.TraceCount,
 			RequestCount:   row.RequestCount,
@@ -38,7 +39,7 @@ func (database *Database) ListServices(ctx context.Context, projectID, environme
 	return services, nil
 }
 
-func (database *Database) ListServiceDependencies(ctx context.Context, projectID, environmentID, serviceName string) ([]ServiceDependency, error) {
+func (database *Database) ListServiceDependencies(ctx context.Context, projectID, environmentID, serviceName string) ([]query.ServiceDependency, error) {
 	project, environment, scopeError := sqlcScope(projectID, environmentID)
 	if scopeError != nil {
 		return nil, fmt.Errorf("list service dependencies: %w", scopeError)
@@ -51,9 +52,9 @@ func (database *Database) ListServiceDependencies(ctx context.Context, projectID
 	if queryError != nil {
 		return nil, fmt.Errorf("list service dependencies: %w", queryError)
 	}
-	dependencies := make([]ServiceDependency, 0)
+	dependencies := make([]query.ServiceDependency, 0)
 	for _, row := range rows {
-		dependencies = append(dependencies, ServiceDependency{
+		dependencies = append(dependencies, query.ServiceDependency{
 			ServiceName: row.ServiceName,
 			CallCount:   row.CallCount,
 		})

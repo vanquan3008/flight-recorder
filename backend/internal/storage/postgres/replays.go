@@ -8,28 +8,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/vanquan3008/tracepilot/internal/replay"
+	replaydomain "github.com/vanquan3008/tracepilot/internal/domain/replay"
 )
-
-type ReplayExecution struct {
-	ID          string          `json:"id"`
-	IncidentID  string          `json:"incident_id"`
-	Target      string          `json:"target"`
-	Status      string          `json:"status"`
-	StartedAt   *time.Time      `json:"started_at,omitempty"`
-	CompletedAt *time.Time      `json:"completed_at,omitempty"`
-	DurationNS  *int64          `json:"duration_ns,omitempty"`
-	HTTPStatus  *int            `json:"http_status,omitempty"`
-	Comparison  json.RawMessage `json:"comparison,omitempty"`
-	CreatedBy   string          `json:"created_by"`
-	CreatedAt   time.Time       `json:"created_at"`
-}
-
-type ReplayExecutionFilter struct {
-	Before   time.Time
-	CursorID string
-	Limit    int
-}
 
 func (database *Database) FailStaleReplayExecutions(ctx context.Context, timeout time.Duration) (int64, error) {
 	if timeout <= 0 {
@@ -58,7 +38,7 @@ func (database *Database) StartReplayExecution(ctx context.Context, executionID,
 	return command.RowsAffected() == 1, nil
 }
 
-func (database *Database) CompleteReplayExecution(ctx context.Context, executionID, projectID string, result replay.Result) error {
+func (database *Database) CompleteReplayExecution(ctx context.Context, executionID, projectID string, result replaydomain.Result) error {
 	comparison, marshalError := json.Marshal(map[string]any{
 		"reason":         result.Reason,
 		"content_type":   result.ContentType,
@@ -83,7 +63,7 @@ func (database *Database) CompleteReplayExecution(ctx context.Context, execution
 	return nil
 }
 
-func (database *Database) ListReplayExecutions(ctx context.Context, projectID, environmentID, incidentID string, filter ReplayExecutionFilter) ([]ReplayExecution, error) {
+func (database *Database) ListReplayExecutions(ctx context.Context, projectID, environmentID, incidentID string, filter replaydomain.ExecutionFilter) ([]replaydomain.Execution, error) {
 	rows, queryError := database.pool.Query(ctx, `
 		SELECT id, incident_id, target, status, started_at, completed_at, duration_ns, http_status,
 			COALESCE(comparison, '{}'::jsonb), created_by, created_at
@@ -97,9 +77,9 @@ func (database *Database) ListReplayExecutions(ctx context.Context, projectID, e
 		return nil, fmt.Errorf("list allowed request executions: %w", queryError)
 	}
 	defer rows.Close()
-	executions := make([]ReplayExecution, 0, filter.Limit+1)
+	executions := make([]replaydomain.Execution, 0, filter.Limit+1)
 	for rows.Next() {
-		var execution ReplayExecution
+		var execution replaydomain.Execution
 		if scanError := rows.Scan(
 			&execution.ID, &execution.IncidentID, &execution.Target, &execution.Status,
 			&execution.StartedAt, &execution.CompletedAt, &execution.DurationNS, &execution.HTTPStatus,
@@ -115,8 +95,8 @@ func (database *Database) ListReplayExecutions(ctx context.Context, projectID, e
 	return executions, nil
 }
 
-func (database *Database) GetReplayExecution(ctx context.Context, projectID, environmentID, incidentID, executionID string) (ReplayExecution, error) {
-	var execution ReplayExecution
+func (database *Database) GetReplayExecution(ctx context.Context, projectID, environmentID, incidentID, executionID string) (replaydomain.Execution, error) {
+	var execution replaydomain.Execution
 	queryError := database.pool.QueryRow(ctx, `
 		SELECT id, incident_id, target, status, started_at, completed_at, duration_ns, http_status,
 			COALESCE(comparison, '{}'::jsonb), created_by, created_at
@@ -130,9 +110,9 @@ func (database *Database) GetReplayExecution(ctx context.Context, projectID, env
 		)
 	if queryError != nil {
 		if errors.Is(queryError, pgx.ErrNoRows) {
-			return ReplayExecution{}, nil
+			return replaydomain.Execution{}, nil
 		}
-		return ReplayExecution{}, fmt.Errorf("get allowed request execution: %w", queryError)
+		return replaydomain.Execution{}, fmt.Errorf("get allowed request execution: %w", queryError)
 	}
 	return execution, nil
 }

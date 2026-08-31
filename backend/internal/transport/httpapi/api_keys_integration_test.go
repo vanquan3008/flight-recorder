@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/vanquan3008/tracepilot/internal/auth"
 	"github.com/vanquan3008/tracepilot/internal/config"
 	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
 	"github.com/vanquan3008/tracepilot/internal/observability/metrics"
@@ -102,7 +103,7 @@ func TestAPIKeyLifecycleIntegration(t *testing.T) {
 		t.Fatalf("revoked key audit read status=%d body=%s", response.Code, response.Body.String())
 	}
 
-	keys, listError := database.ListAPIKeys(context.Background(), projectID, postgres.APIKeyFilter{Limit: 10})
+	keys, listError := database.ListAPIKeys(context.Background(), projectID, auth.APIKeyFilter{Limit: 10})
 	if listError != nil || len(keys) != 2 {
 		t.Fatalf("list API keys=%#v error=%v", keys, listError)
 	}
@@ -134,8 +135,8 @@ func TestAPIKeyLifecycleIntegration(t *testing.T) {
 }
 
 type apiKeyRequestResult struct {
-	APIKey postgres.APIKey `json:"api_key"`
-	Key    string          `json:"key"`
+	APIKey auth.APIKey `json:"api_key"`
+	Key    string      `json:"key"`
 }
 
 func serveAPIKeyRequest(server *Server, method, path, key, body string) *httptest.ResponseRecorder {

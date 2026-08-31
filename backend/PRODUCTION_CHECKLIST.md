@@ -32,13 +32,15 @@ flowchart LR
     CLI --> Pipeline[internal/ingest/pipeline]
     CLI --> OTLP[internal/ingest/otlp]
     CLI --> API[internal/transport/httpapi]
-    CLI --> Retention[retention worker]
+    CLI --> Retention[internal/retention]
     OTLP --> Normalize[internal/domain/telemetry]
     Normalize --> Pipeline
     Pipeline --> PGStore[internal/storage/postgres]
     PGStore --> DB
-    API --> PGStore
-    API --> Replay[internal/replay]
+    API --> Ports[HTTP backend ports]
+    Ports --> PGStore
+    API --> Replay[internal/replay service]
+    Replay --> PGStore
     API --> Metrics[internal/observability/metrics]
     Retention --> PGStore
     Signal[SIGTERM/SIGINT] --> Drain[Pipeline shutdown và drain]
@@ -69,19 +71,37 @@ backend/
 │   └── queries/              SQLC query source
 └── internal/
     ├── agent/                file log agent
+    ├── auth/                 principals and API-key policy/models
     ├── config/               runtime configuration
-    ├── domain/telemetry/     canonical trace/log event model
+    ├── domain/
+    │   ├── incident/         incident models and pure policy
+    │   ├── replay/           replay result/history models
+    │   └── telemetry/        canonical trace/log event model
     ├── ingest/
     │   ├── otlp/             OTLP HTTP/gRPC transport and normalization
     │   └── pipeline/         bounded ingest queue and persistence workers
     ├── observability/metrics/ Prometheus instrumentation
+    ├── query/                trace/log/service read models and filters
     ├── replay/               safe HTTP replay
+    ├── retention/            retention worker and batched deletion flow
     ├── storage/
     │   ├── migrations/       schema version and migration runner
     │   └── postgres/         PostgreSQL persistence and generated SQLC code
     └── transport/httpapi/    authenticated HTTP management API
 
 ```
+
+## Thứ tự đọc source đề xuất
+
+1. `cmd/tracepilot/serve.go`: xem composition root và toàn bộ component được nối với nhau thế nào.
+2. `internal/domain/telemetry/event.go`, `internal/auth/auth.go`, `internal/domain/incident/incident.go`: hiểu model và policy thuần trước khi đọc I/O.
+3. `internal/ingest/otlp/receiver.go` rồi `trace_normalizer.go`/`log_normalizer.go`: theo request OTLP thành canonical event.
+4. `internal/ingest/pipeline/pipeline.go`: theo admission → queue → batch → retry → commit acknowledgement.
+5. `internal/storage/postgres/pool.go` và `incidents.go`: xem transaction lưu event/signal và incident projection.
+6. `internal/transport/httpapi/backend.go`, `server.go`, rồi từng handler: xem inbound HTTP chỉ phụ thuộc port và domain/query models.
+7. `internal/replay/service.go` rồi `capture/request.go`, `policy.go`, `executor.go`: theo orchestration và security boundary của replay.
+8. `internal/retention/runner.go`: xem background flow độc lập khỏi composition root.
+9. Đọc test cạnh mỗi flow ngay sau production file tương ứng; integration test là điểm nối cuối cùng.
 
 ### Entrypoint
 
@@ -103,7 +123,12 @@ backend/
 | `internal/config/env.go` | Ánh xạ `TRACEPILOT_*` vào config và parse kiểu dữ liệu. |
 | `internal/config/validate.go` | Validate trust boundary: DB, queue, TLS, auth, replay, CORS và production mode. |
 | `internal/domain/telemetry/event.go` | Canonical event/span/log model, validation và deterministic event ID. |
+| `internal/auth/auth.go` | Principal, API-key models/errors và validation policy độc lập khỏi PostgreSQL. |
+| `internal/domain/incident/incident.go` | Incident models, candidate/fingerprint/title/severity và status transition policy. |
+| `internal/domain/replay/replay.go` | Replay result, execution history và pagination filter không phụ thuộc executor/storage. |
+| `internal/query/models.go` | Read models/filter cho trace, log và service queries. |
 | `internal/ingest/pipeline/pipeline.go` | Bounded in-memory queue, byte admission, batching, workers, retry, acknowledgement và shutdown drain. |
+| `internal/retention/runner.go` | Vòng retention, backlog metrics và xóa event hết hạn theo batch. |
 | `internal/observability/metrics/metrics.go` | Registry Prometheus cho ingest, queue, batch, retry, retention, HTTP và DB readiness. |
 | `internal/storage/migrations/migrations.go` | Mở migration source, chạy up/down và chặn startup khi schema dirty/sai version. |
 
@@ -125,6 +150,7 @@ backend/
 | File | Nhiệm vụ |
 |---|---|
 | `internal/transport/httpapi/server.go` | Khai báo routes, HTTP server/TLS, health, readiness và metrics endpoint. |
+| `internal/transport/httpapi/backend.go` | Port mà HTTP adapter sử dụng; ngăn transport phụ thuộc concrete PostgreSQL. |
 | `internal/transport/httpapi/middleware.go` | Access log, request ID, metrics, body limit, CORS và panic recovery. |
 | `internal/transport/httpapi/response.go` | Decode JSON nghiêm ngặt và chuẩn hóa JSON/error response. |
 | `internal/transport/httpapi/auth.go` | Authenticate API key và enforce scope cho handler. |
@@ -133,7 +159,7 @@ backend/
 | `internal/transport/httpapi/logs.go` | Endpoints list/get log. |
 | `internal/transport/httpapi/services.go` | Endpoints service summary và service dependency. |
 | `internal/transport/httpapi/incidents.go` | Incident list/detail/timeline/status và replay execution history. |
-| `internal/transport/httpapi/replays.go` | Validate quyền và thực hiện replay incident đã được capture. |
+| `internal/transport/httpapi/replays.go` | Decode/sanitize request, gọi replay use case và map kết quả sang HTTP. |
 | `internal/transport/httpapi/api_keys.go` | API key list/create/rotate/revoke và audit event endpoint. |
 | `internal/transport/httpapi/openapi.go` | Sinh OpenAPI document được expose bởi management server. |
 
@@ -142,11 +168,10 @@ backend/
 | File | Nhiệm vụ |
 |---|---|
 | `internal/storage/postgres/pool.go` | Tạo pgx pool, readiness, bootstrap scope và transaction lưu event/span/log/incident. |
-| `internal/storage/postgres/query_models.go` | Model/filter trả về cho trace, log, service và incident queries. |
 | `internal/storage/postgres/trace_queries.go` | List trace summaries qua pgx và lấy span của một trace qua SQLC. |
 | `internal/storage/postgres/log_queries.go` | Tìm kiếm/list/get log trong project/environment. |
 | `internal/storage/postgres/service_queries.go` | Service summaries và dependency graph queries. |
-| `internal/storage/postgres/incidents.go` | Tạo/deduplicate incident, fingerprint và kiểm soát status transition. |
+| `internal/storage/postgres/incidents.go` | Transaction tạo/deduplicate incident và cập nhật status theo domain policy. |
 | `internal/storage/postgres/incident_queries.go` | Incident detail, occurrences, events và status history queries. |
 | `internal/storage/postgres/replays.go` | Ghi lifecycle và truy vấn replay executions; dọn execution bị stale. |
 | `internal/storage/postgres/api_keys.go` | Sinh/hash, create/list/rotate/revoke API key và ghi audit event. |
@@ -163,6 +188,7 @@ backend/
 | `internal/replay/capture/request.go` | Sanitize captured HTTP request, bỏ credential và redact JSON nhạy cảm. |
 | `internal/replay/policy.go` | Host allowlist, DNS/IP validation, chặn private address/redirect để bảo vệ SSRF. |
 | `internal/replay/executor.go` | Thực thi replay có timeout, concurrency/response limit và tạo audit-safe target. |
+| `internal/replay/service.go` | Orchestrate start → execute → complete và bảo đảm audit được hoàn tất khi request bị hủy. |
 
 ### File log agent
 
@@ -213,16 +239,20 @@ up tương ứng.
 
 | Nhóm file | Trách nhiệm kiểm thử |
 |---|---|
-| `cmd/tracepilot/*_test.go` | CLI healthcheck/TLS SAN và retention drain/cancellation/error. |
+| `cmd/tracepilot/*_test.go` | CLI healthcheck và TLS SAN. |
 | `cmd/tracepilot-agent/*_test.go` | Nguồn API key và chống cấu hình secret mơ hồ. |
 | `internal/config/*_test.go` | Thứ tự config, unknown field và validation production/security/resource. |
 | `internal/domain/telemetry/*_test.go` | Tính ổn định của deterministic event ID. |
+| `internal/auth/*_test.go` | Principal scopes và API-key input policy. |
+| `internal/domain/incident/*_test.go` | Incident candidate/fingerprint/severity và status transitions. |
+| `internal/architecture/*_test.go` | Chặn dependency ngược giữa transport/ingest/storage adapters. |
 | `internal/ingest/pipeline/*_test.go` | Ack-after-store, bounded queue, outage recovery, retry và shutdown drain. |
 | `internal/ingest/otlp/*_test.go` | Normalize/redact, HTTP/gRPC persistence, body limit, failure và readiness. |
 | `internal/transport/httpapi/*_test.go` | Router/middleware, CORS, metrics auth, pagination, isolation và API key lifecycle. |
-| `internal/storage/postgres/*_test.go` | Auth/API key/incident logic, idempotency, rollback recovery, cascade, SQLC query integration và benchmark. |
+| `internal/storage/postgres/*_test.go` | Idempotency, rollback recovery, cascade, SQLC query integration và benchmark. |
 | `internal/storage/migrations/*_test.go` | Chặn migration operation nguy hiểm và schema version validation. |
 | `internal/replay/*_test.go` | SSRF policy, redirect/timeout/response bounds và audit result. |
+| `internal/retention/*_test.go` | Retention drain, cancellation và delete errors. |
 | `internal/replay/capture/*_test.go` | Redact request body/header và loại credential. |
 | `internal/agent/*_test.go` | Tail/rotate/truncate, spool durability, corrupt record và checkpoint correctness. |
 
@@ -479,6 +509,10 @@ flowchart LR
 - [ ] Chạy toàn bộ CI trên branch và pull request thật.
 
 ## P7 — Product roadmap sau core go-live
+
+Roadmap machine-log/firewall analytics, detection và giao diện operator được
+theo dõi riêng tại `docs/SECURITY_ANALYTICS_PLAN.md` để không trộn feature scope
+với production gates của core observability.
 
 - [ ] UI quản lý project, environment và API key.
 - [ ] Trace waterfall và log correlation nâng cao.

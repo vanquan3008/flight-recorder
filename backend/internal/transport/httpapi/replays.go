@@ -1,12 +1,10 @@
 package httpapi
 
 import (
-	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
-	"time"
 
-	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
 	"github.com/vanquan3008/tracepilot/internal/replay"
 	"github.com/vanquan3008/tracepilot/internal/replay/capture"
 )
@@ -38,24 +36,18 @@ func (server *Server) replayIncident(responseWriter http.ResponseWriter, request
 		writeAPIError(responseWriter, http.StatusBadRequest, "INVALID_REQUEST", captureError.Error())
 		return
 	}
-	executionID := telemetry.DeterministicID(time.Now(), principal.KeyID, request.PathValue("incidentID"), request.Header.Get(requestIDHeader))
-	started, startError := server.database.StartReplayExecution(request.Context(), executionID, principal.ProjectID, server.environmentID, request.PathValue("incidentID"), replay.AuditTarget(payload.Target), principal.KeyID)
-	if startError != nil {
-		server.logger.Error("start replay", "error", startError)
-		writeAPIError(responseWriter, http.StatusInternalServerError, "INTERNAL_ERROR", "internal server error")
-		return
-	}
-	if !started {
+	outcome, runError := server.replay.Run(request.Context(), replay.Command{
+		ProjectID: principal.ProjectID, EnvironmentID: server.environmentID, IncidentID: request.PathValue("incidentID"),
+		ActorKeyID: principal.KeyID, RequestID: request.Header.Get(requestIDHeader), Request: captured,
+	})
+	if errors.Is(runError, replay.ErrIncidentNotFound) {
 		writeAPIError(responseWriter, http.StatusNotFound, "NOT_FOUND", "incident not found")
 		return
 	}
-	result := server.replay.Execute(request.Context(), captured)
-	completionContext, cancelCompletion := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancelCompletion()
-	if completeError := server.database.CompleteReplayExecution(completionContext, executionID, principal.ProjectID, result); completeError != nil {
-		server.logger.Error("complete replay", "error", completeError)
+	if runError != nil {
+		server.logger.Error("run replay", "error", runError)
 		writeAPIError(responseWriter, http.StatusInternalServerError, "INTERNAL_ERROR", "internal server error")
 		return
 	}
-	writeJSONValue(responseWriter, http.StatusCreated, map[string]any{"id": executionID, "result": result})
+	writeJSONValue(responseWriter, http.StatusCreated, outcome)
 }
