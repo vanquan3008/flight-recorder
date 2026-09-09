@@ -2,10 +2,12 @@ import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft, Search } from "lucide-react";
 import type { FormEvent } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
-import { api, pageItems, queryString, usePagedQuery } from "../api";
-import { useAuth } from "../auth";
-import type { Detection, LogRecord, Page, SecurityEvent, SecuritySource } from "../types";
-import { Badge, DataTable, ErrorState, LoadMore, Loading, PageHeader, Panel, formatTime, json } from "../ui";
+import { useAuth } from "../../app/auth";
+import { api, pageItems, queryString, usePagedQuery } from "../../shared/api";
+import { compactSearchParams } from "../../shared/search-params";
+import { PagedTable } from "../../shared/paged-table";
+import type { Detection, LogRecord, Page, SecurityEvent, SecuritySource } from "../../shared/types";
+import { Badge, DataTable, ErrorState, Loading, PageHeader, Panel, formatTime, json } from "../../shared/ui";
 
 export function SecurityEventsPage() {
   const { apiKey } = useAuth();
@@ -15,8 +17,7 @@ export function SecurityEventsPage() {
   const events = pageItems(query.data?.pages);
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    setParams(new URLSearchParams([...form.entries()].filter(([, value]) => String(value).trim()).map(([key, value]) => [key, String(value)])));
+    setParams(compactSearchParams(event.currentTarget));
   };
   return <>
     <PageHeader title="Security events">Normalized Syslog, CEF, LEEF and JSON records with raw evidence links.</PageHeader>
@@ -60,12 +61,4 @@ export function SourcesPage() {
   if (query.isError) return <ErrorState error={query.error} retry={() => void query.refetch()} />;
   const sources = query.data.data;
   return <><PageHeader title="Sources">Health and volume of security senders observed by TracePilot.</PageHeader><Panel title="Source inventory" meta={`${sources.length} sources`}><DataTable headers={["Name", "Type", "Format", "Last seen", "Accepted", "Errors"]} empty="No security source has been observed yet." rows={sources.map((source) => [source.name, source.type, source.format, formatTime(source.last_seen_at), source.accepted_count, source.error_count])} /></Panel></>;
-}
-
-type PagedQuery = { isPending: boolean; isError: boolean; error: unknown; refetch: () => Promise<unknown>; hasNextPage: boolean; isFetchingNextPage: boolean; fetchNextPage: () => Promise<unknown> };
-
-function PagedTable({ query, headers, rows, empty }: { query: PagedQuery; headers: string[]; rows: React.ReactNode[][]; empty: string }) {
-  if (query.isPending) return <Loading />;
-  if (query.isError) return <ErrorState error={query.error} retry={() => void query.refetch()} />;
-  return <><DataTable headers={headers} rows={rows} empty={empty} /><LoadMore hasMore={query.hasNextPage} loading={query.isFetchingNextPage} onClick={() => void query.fetchNextPage()} /></>;
 }

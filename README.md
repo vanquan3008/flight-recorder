@@ -1,190 +1,345 @@
 # TracePilot
 
-TracePilot is a self-hosted OpenTelemetry trace and log service with an optional
-best-effort metrics path. It receives OTLP data, redacts configured sensitive
-attributes, applies bounded batch persistence, and stores canonical events plus
-first-class spans/logs in PostgreSQL.
+**TracePilot is a self-hosted OpenTelemetry trace, log, and security-event
+workspace for small teams that need useful investigation data without sending
+telemetry to a third party.** It accepts OTLP, persists traces and logs in
+PostgreSQL, and provides a browser console and scoped API for finding failures,
+following correlated logs, and investigating security detections.
 
-With a bootstrap API key configured, it provides project-scoped trace/log
-search, service and incident views. Optional replay is disabled by default;
-it forwards only redacted JSON bodies and an allowlisted set of non-secret
-headers to explicit allowlisted hosts, then records every attempt. A file log
-agent is included for shipping local log files.
+> Project status: **pre-release / beta**. Trace and log ingestion are the
+> primary workflow. Metrics are intentionally best-effort, and some security
+> and webhook capabilities are optional. Read [Production readiness](#production-readiness)
+> before using TracePilot with production traffic.
 
-For package boundaries and runtime flows, see the
-[`architecture guide`](docs/ARCHITECTURE.md). For reproducible development,
-test, benchmark and Docker commands, see the
-[`development/runbook`](docs/DEVELOPMENT.md).
-Production drills are in the [`operations runbook`](docs/OPERATIONS.md), and
-remaining refactor/product work is tracked in the
-[`roadmap`](docs/ROADMAP.md).
+## Why TracePilot
 
-## Architecture Overview
+- **Own the data path.** Run one immutable application image with PostgreSQL
+  you control; telemetry is not forwarded to a hosted TracePilot service.
+- **Durability before acknowledgement.** Trace and log ingestion succeeds only
+  after its PostgreSQL transaction commits. Backpressure and storage failures
+  are retryable instead of silently acknowledged.
+- **Useful in the first ten minutes.** The embedded console guides an operator
+  from an API key to a first trace; a repeatable sample dataset is available for
+  local evaluation.
+- **One investigation surface.** Inspect a trace waterfall, correlated logs,
+  incidents, security events, detections, and source inventory from the same
+  console.
+- **Safe defaults.** API keys are project-scoped, replay is disabled by
+  default, production requires TLS and authentication, and webhook delivery is
+  signed and protected against SSRF.
 
-```mermaid
-flowchart LR
-    App[Application / Collector] --> OTLP[OTLP gRPC or HTTP]
-    File[Local log file] --> Agent[Agent + disk spool]
-    Agent --> OTLP
-    Device[Firewall / Syslog sender] -->|TLS + optional mTLS| Syslog[Syslog receiver]
-    OTLP --> Auth[API-key scope + project check]
-    Auth --> Normalize[Validate, normalize, redact]
-    Normalize -->|traces and logs| Durable[Bounded durable pipeline]
-    Syslog --> Security[Preserve raw log + security parse]
-    Security --> Durable
-    Durable -->|single transaction; ACK after commit| PG[(PostgreSQL)]
-    Normalize -->|metrics| BestEffort[Best-effort metrics pipeline]
-    BestEffort --> PG
-    PG --> Detection[Rule detection + incidents]
-    Detection -->|same transaction| Outbox[Webhook outbox]
-    Outbox --> Worker[SSRF-safe signed delivery worker]
-    PG --> API[Scoped management/query API]
-    API --> UI[Embedded web UI]
-```
+## What it does today
 
-Trace and log ingestion is acknowledged only after the PostgreSQL transaction
-commits. Metrics intentionally use a separate best-effort queue. Direct Syslog
-has no application-level acknowledgement, so senders that need lossless
-delivery should use their own disk queue or the included file agent.
+| Area | Included |
+| --- | --- |
+| Ingestion | OTLP traces and logs over gRPC and HTTP; bounded batching, redaction, validation, and backpressure. OTLP metrics use a separate best-effort path. |
+| Exploration | Trace search, detail waterfall, correlated logs, service views, incident timelines, URL-backed filters, pagination, loading/error/retry states. |
+| Security | Optional Syslog TCP/TLS input; Syslog, CEF, and LEEF normalization; rule-driven detections, incidents, source inventory, and raw evidence. |
+| Delivery | Optional HTTPS webhooks with encrypted secrets, HMAC signatures, durable outbox retries, and SSRF controls. |
+| Operations | Readiness/liveness endpoints, Prometheus metrics, migrations, retention, graceful shutdown, Docker Compose, and operational drill scripts. |
+| Agents | A file-log agent with checkpointing and an optional bounded disk spool. |
 
-## Repository Structure
+## Quickstart: local Docker Compose
 
-```text
-backend/cmd/                         server and file-agent binaries
-backend/internal/domain/             framework-free telemetry/security models
-backend/internal/ingest/              OTLP, Syslog and bounded persistence pipeline
-backend/internal/storage/postgres/    PostgreSQL adapter and generated sqlc code
-backend/internal/transport/httpapi/   management API, auth, OpenAPI and UI wiring
-backend/internal/agent/               file tailer, checkpoint and disk spool
-backend/db/{migrations,queries}/      schema history and sqlc query source
-deploy/                               dev/prod Compose and env examples
-docs/                                 architecture, contract and development runbook
-scripts/                              backup, restore, load, soak and release drills
-```
+### Prerequisites
 
-Package ownership and dependency direction are enforced by
-`backend/internal/architecture` tests; the complete map is in
-[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+- Docker Engine or Docker Desktop with Docker Compose v2
+- A free local port for `8080`, `4317`, `4318`, `5432`, and optionally `6514`
 
-## Configuration
-
-TracePilot uses compiled defaults, then an optional versioned YAML file, then
-environment overrides. Copy `deploy/.env.example` to `deploy/.env` when
-overriding defaults:
-
-```env
-POSTGRES_PASSWORD=tracepilot-dev-only
-TRACEPILOT_DATABASE_URL=postgres://tracepilot:tracepilot-dev-only@postgres:5432/tracepilot?sslmode=disable
-# TRACEPILOT_AUTH_BOOTSTRAP_API_KEY=replace-with-a-secret-at-least-32-characters
-```
-
-For native commands, change the database host from `postgres` to `localhost`.
-
-See the [roadmap](docs/ROADMAP.md) for prioritized refactor, product and
-production gates.
-
-## How to Run
-
-The commands below are the direct, cross-platform form. The repository
-`Makefile` provides equivalent shortcuts for teams that use GNU Make.
-
-### Option 1: Docker Compose (Recommended)
-This starts PostgreSQL, applies migrations, and then starts TracePilot. The
-development Compose file supplies a known local-only API key so the console is
-ready after the command completes:
+From the repository root, start the full development stack:
 
 ```powershell
 docker compose -f deploy/compose.dev.yaml up --build -d
 Invoke-WebRequest http://localhost:8080/health/ready
 ```
 
-Open `http://localhost:8080` and use
-`tracepilot-development-bootstrap-key-000000` to connect the local console.
-For a guided dataset containing a failed trace and correlated log, run
-`docker compose -f deploy/compose.dev.yaml run --build --rm tracepilot mockdata`
-after the first start (`make demo` is the GNU Make equivalent).
+The stack starts PostgreSQL, runs migrations, then starts TracePilot. If the
+readiness request is made before startup completes, repeat it after a few
+seconds.
 
-The development stack publishes management HTTP on `8080`, OTLP gRPC on
-`4317`, OTLP HTTP on `4318`, Syslog on `6514`, and PostgreSQL on `5432`.
+Open [http://localhost:8080](http://localhost:8080) and connect the console
+with the development-only key:
 
-### Option 2: Native Go
-For local debugging, keep PostgreSQL in Compose and run the Go processes on the
-host:
+```text
+tracepilot-development-bootstrap-key-000000
+```
+
+To load a deterministic walkthrough containing a failed checkout trace and its
+correlated log:
+
+```powershell
+docker compose -f deploy/compose.dev.yaml run --build --rm tracepilot mockdata
+```
+
+Then open **Trace explorer**, inspect trace
+`33333333333333333333333333333333`, and view the correlated log. The fixture is
+safe to run more than once and is disabled when `TRACEPILOT_PRODUCTION=true`.
+
+Stop the development stack without deleting data:
+
+```powershell
+docker compose -f deploy/compose.dev.yaml down
+```
+
+To destroy the local PostgreSQL volume as well:
+
+```powershell
+docker compose -f deploy/compose.dev.yaml down --volumes
+```
+
+> This last command permanently removes the local development database.
+
+## Send your first application trace
+
+Configure one OpenTelemetry SDK with an **ingest-scoped** API key. The console
+shows the same template after connection. For a local HTTP/protobuf exporter:
+
+```powershell
+$env:OTEL_SERVICE_NAME = "checkout"
+$env:OTEL_EXPORTER_OTLP_PROTOCOL = "http/protobuf"
+$env:OTEL_EXPORTER_OTLP_ENDPOINT = "http://localhost:4318"
+$env:OTEL_EXPORTER_OTLP_HEADERS = "x-api-key=<your-ingest-api-key>"
+```
+
+Use an API key created for the application, rather than sharing an operator or
+bootstrap key. The development bootstrap key is intentionally public and must
+never be used outside a local machine.
+
+After your instrumented application receives traffic:
+
+1. Open **Trace explorer** in the Console.
+2. Filter by service, status, or trace ID; filters remain in the URL.
+3. Select **Inspect** to view the span hierarchy and correlated logs.
+
+Trace and log requests are acknowledged only after persistence. Applications
+should therefore retain the OpenTelemetry SDK's normal retry behavior for
+temporary `429`/`5xx` responses.
+
+## Architecture at a glance
+
+```mermaid
+flowchart LR
+    App[Application / OTel Collector] --> OTLP[OTLP gRPC or HTTP]
+    Agent[File-log agent] --> OTLP
+    Device[Syslog sender] --> Syslog[Optional Syslog TCP/TLS]
+    OTLP --> Normalize[Authenticate, validate, redact, normalize]
+    Syslog --> Normalize
+    Normalize --> Durable[Bounded trace/log pipeline]
+    Durable --> PG[(PostgreSQL)]
+    Normalize --> Metrics[Best-effort metrics pipeline]
+    Metrics --> PG
+    PG --> API[Scoped API + embedded Console]
+    PG --> Detect[Security detection]
+    Detect --> Outbox[Optional signed webhook outbox]
+```
+
+The key runtime contracts are:
+
+- Trace and log records are committed atomically before OTLP acknowledgement.
+- Metrics may be dropped under pressure; they are not on the durability path.
+- Direct Syslog has no application-level acknowledgement. Use the included
+  agent or a sender-side disk queue when losslessness matters.
+- Query and mutation APIs apply the project identity from the API key.
+
+See the [architecture guide](docs/ARCHITECTURE.md) for package ownership,
+dependency direction, API contracts, migrations, and detailed runtime flows.
+
+## Interfaces and ports
+
+| Address | Interface | Purpose |
+| --- | --- | --- |
+| `:8080` | `GET /`, `/openapi.json` | Embedded Console and generated OpenAPI contract |
+| `:8080` | `GET /health/live`, `/health/ready` | Liveness and readiness probes |
+| `:8080` | `GET /metrics` | Prometheus metrics; authentication is required in production |
+| `:8080` | `/api/v1/...` | Authenticated query and management API |
+| `:4317` | OTLP gRPC | Trace, log, and best-effort metric ingestion |
+| `:4318` | `POST /v1/traces`, `/v1/logs`, `/v1/metrics` | OTLP HTTP ingestion |
+| configurable | Syslog TCP/TLS | Optional security-event ingestion |
+
+The live contract is always available from the running server at
+[`/openapi.json`](http://localhost:8080/openapi.json). Route registration and
+the generated specification use the same manifest, so disabled optional
+capabilities are not advertised as available.
+
+## Configuration
+
+Configuration is applied in this order:
+
+1. Compiled defaults
+2. Optional versioned YAML configuration file
+3. Environment-variable overrides
+
+Copy [`deploy/.env.example`](deploy/.env.example) to `deploy/.env` only when
+you need to override development defaults. For native execution, use
+`localhost` instead of the Compose hostname `postgres` in the database URL.
+
+Important variables:
+
+| Variable | Purpose |
+| --- | --- |
+| `TRACEPILOT_DATABASE_URL` | PostgreSQL connection string |
+| `TRACEPILOT_AUTH_BOOTSTRAP_API_KEY` | Initial all-scope administrative key; required in production and at least 32 characters |
+| `TRACEPILOT_HTTP_ALLOWED_ORIGINS` | Explicit browser origins allowed to call the management API |
+| `TRACEPILOT_SECURITY_ENABLED` | Enables the Syslog security-input path |
+| `TRACEPILOT_NOTIFICATIONS_ENABLED` | Enables webhook delivery; also requires `TRACEPILOT_WEBHOOK_ENCRYPTION_KEY` |
+| `TRACEPILOT_PRODUCTION` | Enables production validation such as TLS and authentication requirements |
+
+Run `tracepilot serve -config path/to/config.yaml` or set
+`TRACEPILOT_CONFIG_FILE` to supply YAML configuration. The complete defaults
+and validation rules live in [`backend/internal/config`](backend/internal/config).
+
+## Native development
+
+Use native binaries when debugging Go while keeping PostgreSQL in Compose:
 
 ```powershell
 docker compose -f deploy/compose.dev.yaml up -d postgres
 $env:TRACEPILOT_DATABASE_URL = "postgres://tracepilot:tracepilot-dev-only@localhost:5432/tracepilot?sslmode=disable"
+$env:TRACEPILOT_AUTH_BOOTSTRAP_API_KEY = "local-development-key-at-least-32-characters"
 go -C backend run ./cmd/tracepilot migrate up
-go -C backend run ./cmd/tracepilot mockdata  # optional deterministic seed
 go -C backend run ./cmd/tracepilot serve
 ```
 
-The server requires the database schema to be at the current migration version.
-Full agent, test, SQLC and troubleshooting commands are in
-[`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md).
+Useful commands:
 
-### Console development
+```powershell
+go -C backend run ./cmd/tracepilot version
+go -C backend run ./cmd/tracepilot healthcheck
+go -C backend run ./cmd/tracepilot migrate version
+go -C backend run ./cmd/tracepilot mockdata
+```
 
-The embedded console is a React application in `web/`; its generated static
-output remains committed under `backend/internal/webui/dist` so `go build` and
-the existing Docker context stay self-contained. Run the API on `:8080`, then:
+For console development, start the API on `:8080`, then run:
 
 ```powershell
 npm --prefix web ci
 npm --prefix web run dev
 ```
 
-The Vite dev server proxies `/api` to TracePilot. Before committing UI changes,
-run `npm --prefix web run check`, `npm --prefix web run test`, and
-`npm --prefix web run build`; `make web-ci` runs the same gates and verifies
-the embedded assets are current.
+The Vite server proxies `/api` and `/health` to TracePilot. Its built assets are
+committed to `backend/internal/webui/dist` so the Go binary and Docker image are
+self-contained.
 
-For the repeatable ingestion baseline, run `make bench-pipeline`; the
-PostgreSQL benchmark requires a migrated disposable database and is available
-as `make bench-postgres`.
+## File-log agent
 
-### Main endpoints
+The optional agent tails a newline-delimited file, exports logs over OTLP gRPC,
+persists a checkpoint, and spills to a bounded disk buffer when the server is
+unavailable.
 
-| Address | Endpoint | Purpose |
-| --- | --- | --- |
-| `:8080` | `/health/live`, `/health/ready` | liveness/readiness |
-| `:8080` | `/metrics`, `/openapi.json`, `/` | metrics, generated contract, UI |
-| `:8080` | `/api/v1/...` | authenticated query and management API |
-| `:4317` | OTLP gRPC | trace/log ingestion and best-effort metrics |
-| `:4318` | `POST /v1/traces`, `POST /v1/logs`, `POST /v1/metrics` | OTLP HTTP ingestion (`metrics` best-effort) |
-| configured | Syslog TCP/TLS | optional security event ingestion |
-
-Webhook management uses `/api/v1/webhooks` with the `admin` scope. Enable the
-delivery worker with `TRACEPILOT_NOTIFICATIONS_ENABLED=true` and provide a
-32-byte hex or base64 `TRACEPILOT_WEBHOOK_ENCRYPTION_KEY`; create and rotate
-operations return the signing secret only once.
-
-### Production Compose
-
-Copy `deploy/.env.production.example` outside the repository, replace every
-placeholder with secret-manager or release values, then migrate and start the
-immutable image:
-
-```bash
-docker compose --env-file /secure/tracepilot.env -f deploy/compose.prod.yaml run --rm tracepilot migrate up
-docker compose --env-file /secure/tracepilot.env -f deploy/compose.prod.yaml up -d
+```powershell
+go -C backend run ./cmd/tracepilot-agent `
+  -source .\app.log `
+  -checkpoint .\var\agent.checkpoint `
+  -endpoint localhost:4317 `
+  -disk-buffer .\var\agent-spool `
+  -api-key-file .\secrets\otlp.key
 ```
 
-The TLS directory must contain `tls.crt`, `tls.key`, and the issuing CA as
-`ca.crt`; the healthcheck verifies the configured certificate name. When direct
-Syslog is enabled in production, the same CA verifies sender client
-certificates (`TRACEPILOT_SECURITY_SYSLOG_CLIENT_CA_FILE`).
+Prefer `-api-key-file` or `TRACEPILOT_AGENT_API_KEY` over putting a secret in
+the process command line. See the [development runbook](docs/DEVELOPMENT.md)
+for all agent flags and troubleshooting.
 
-Production evidence helpers are dependency-light PowerShell scripts:
-`scripts/load-test.ps1` supports fixed-request and timed soak modes, reports
-p50/p95/p99 and enforces SLO thresholds,
-`scripts/query-plan.ps1` captures `EXPLAIN (ANALYZE, BUFFERS)`,
-`scripts/upgrade-rollback-drill.ps1` exercises `up → down 1 → up` on a
-disposable database, and `scripts/cert-check.ps1` checks PEM expiry, SAN and
-the issuer chain. The release workflow builds a multi-architecture image with
-BuildKit SBOM/provenance, signs its immutable digest and runs an entrypoint
-smoke test.
+## Production readiness
+
+TracePilot's first supported production topology is one immutable application
+image, a private managed PostgreSQL instance, and a TLS reverse proxy. The
+production Compose file deliberately does **not** start or expose PostgreSQL.
+
+1. Copy [`deploy/.env.production.example`](deploy/.env.production.example) to
+   a secret-manager controlled file outside this repository.
+2. Set an immutable image digest, database URL, unique bootstrap key, TLS
+   directory, certificate server name, and trusted-network port bindings.
+3. Run migration as a one-shot operation, then start the image:
+
+   ```bash
+   docker compose --env-file /secure/tracepilot.env -f deploy/compose.prod.yaml run --rm tracepilot migrate up
+   docker compose --env-file /secure/tracepilot.env -f deploy/compose.prod.yaml up -d
+   ```
+
+4. Require `/health/ready` before sending traffic, and verify the schema
+   version, metrics, and a scoped API query.
+
+Production containers run non-root, read-only, with a temporary writable
+directory and CPU/memory limits. TLS is mandatory; direct Syslog additionally
+requires TLS and client-CA verification. Keep OTLP and Syslog listeners on a
+trusted network rather than publishing them to the internet.
+
+Before onboarding a design partner, complete the backup/restore, migration,
+certificate, load, and outage drills in the [operations runbook](docs/OPERATIONS.md).
+
+## Security model
+
+- API keys carry project identity and scopes. Use least-privilege keys for
+  console reads, ingestion, administration, and replay.
+- The embedded Console retains its entered key in `sessionStorage` only; it is
+  cleared on disconnect or when the browser session ends.
+- CORS requires explicit allowed origins. Production management endpoints and
+  OTLP listeners use the configured TLS certificate.
+- Replay is off by default and requires allowlisted hosts. It forwards only
+  redacted JSON and explicitly allowed non-secret headers.
+- Webhooks require HTTPS, encrypt stored secrets, sign deliveries with HMAC,
+  do not follow redirects, and reject private or metadata-network targets.
+
+Please do not report a suspected credential, cross-project isolation, replay
+SSRF, or arbitrary-file-access issue in a public ticket. Read
+[SECURITY.md](SECURITY.md) for the reporting policy.
+
+## Development and quality gates
+
+The repository validates backend, console, generated assets, SQLC output, and
+container behavior in CI. Run the relevant checks before opening a pull request:
+
+```powershell
+go -C backend test ./...
+go -C backend vet ./...
+go -C backend build ./...
+npm --prefix web run check
+npm --prefix web run test
+npm --prefix web run build
+```
+
+GNU Make shortcuts are available for teams using Make:
+
+```bash
+make dev          # start local Compose stack
+make demo         # start it and seed the walkthrough fixture
+make web-ci       # install, type-check, test, build, verify embedded assets
+make ci           # full local gate, including SQLC and Go tooling
+```
+
+The browser smoke test covers the primary Console path: connect with a key,
+find the seeded failed trace, and open its correlated log. Database integration
+tests and release checks run in CI. See [CONTRIBUTING.md](CONTRIBUTING.md) and
+the [development runbook](docs/DEVELOPMENT.md) for the complete workflow.
+
+## Repository map
+
+```text
+backend/cmd/                         TracePilot and file-agent binaries
+backend/db/                          PostgreSQL migrations and SQLC source
+backend/internal/domain/             Framework-free domain models
+backend/internal/ingest/             OTLP, Syslog, bounded pipelines
+backend/internal/storage/postgres/   PostgreSQL adapter and generated SQLC code
+backend/internal/transport/httpapi/  API, OpenAPI, middleware, embedded UI wiring
+backend/internal/webui/              Built Console assets embedded by Go
+web/                                 React/Vite Console and browser smoke test
+deploy/                              Development and production Compose files
+docs/                                Architecture, development, operations, roadmap
+scripts/                             Load, query-plan, certificate, rollback drills
+```
+
+## Roadmap and contribution
+
+The beta promise is deliberately narrow:
+
+```text
+Install → send an OTLP trace/log → find a failed trace → inspect its correlated log
+```
+
+Prioritized product and production work is tracked in [docs/ROADMAP.md](docs/ROADMAP.md).
+Before making a large change, open an issue to discuss it; small focused fixes
+can go directly to a pull request. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-TracePilot is licensed under the Apache License 2.0.
+TracePilot is distributed under the [Apache License 2.0](LICENSE).

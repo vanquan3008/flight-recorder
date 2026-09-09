@@ -37,7 +37,9 @@ export function Badge({ value }: { value?: string }) {
   return <span className={`badge ${label.toUpperCase()}`}>{label}</span>;
 }
 
-export function DataTable({ headers, rows, empty }: { headers: string[]; rows: ReactNode[][]; empty?: ReactNode }) {
+export type TableRow = ReactNode[];
+
+export function DataTable({ headers, rows, empty }: { headers: string[]; rows: TableRow[]; empty?: ReactNode }) {
   if (!rows.length) return <Empty>{empty || "No data yet."}</Empty>;
   return <div className="table-wrap"><table><thead><tr>{headers.map((header) => <th key={header}>{header}</th>)}</tr></thead><tbody>{rows.map((row, rowIndex) => <tr key={rowIndex}>{row.map((cell, cellIndex) => <td key={cellIndex}>{cell}</td>)}</tr>)}</tbody></table></div>;
 }

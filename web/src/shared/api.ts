@@ -56,8 +56,9 @@ export function usePagedQuery<T>(key: QueryKey, path: string, apiKey: string) {
   });
 }
 
-export const pageItems = <T,>(pages: Page<T>[] | undefined) =>
-  pages?.flatMap((page) => page.data) ?? [];
+export function pageItems<T>(pages: Page<T>[] | undefined) {
+  return pages?.flatMap((page) => page.data) ?? [];
+}
 
 export function queryString(values: Record<string, string | undefined>): string {
   const query = new URLSearchParams({ limit: "50" });

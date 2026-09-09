@@ -1,10 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { History, Plus, Power } from "lucide-react";
 import { useState, type ReactNode } from "react";
-import { api } from "../api";
-import { useAuth } from "../auth";
-import type { Page, Rule, RuleAudit } from "../types";
-import { Badge, DataTable, Empty, ErrorState, Loading, PageHeader, Panel, formatTime } from "../ui";
+import { useAuth } from "../../app/auth";
+import { api } from "../../shared/api";
+import type { Page, Rule, RuleAudit } from "../../shared/types";
+import { Badge, DataTable, Empty, ErrorState, Loading, PageHeader, Panel, formatTime } from "../../shared/ui";
 
 const fields = ["source_ip", "destination_ip", "outcome", "action", "severity", "kind", "category", "observer_vendor", "observer_product", "host_name", "user_name", "rule_identifier"];
 const operators = ["equals", "contains", "cidr", "exists"];
