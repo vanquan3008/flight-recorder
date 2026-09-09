@@ -24,7 +24,7 @@ func TestWebhookManagementAPIIntegration(t *testing.T) {
 	}
 	databaseURL := os.Getenv("TRACEPILOT_DATABASE_URL")
 	key := hex.EncodeToString([]byte(strings.Repeat("a", 32)))
-	database, openError := postgres.Open(context.Background(), config.DatabaseConfig{URL: databaseURL, MaxConnections: 4, MaxConnectionLifetime: time.Minute, MaxConnectionIdleTime: time.Minute, HealthCheckPeriod: time.Minute, WebhookEncryptionKey: key})
+	database, openError := postgres.OpenWithWebhookEncryptionKey(context.Background(), config.DatabaseConfig{URL: databaseURL, MaxConnections: 4, MaxConnectionLifetime: time.Minute, MaxConnectionIdleTime: time.Minute, HealthCheckPeriod: time.Minute}, key)
 	if openError != nil {
 		t.Fatal(openError)
 	}

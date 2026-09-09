@@ -10,6 +10,19 @@ import (
 	"github.com/vanquan3008/tracepilot/internal/domain/security"
 )
 
+// formatParser is one ordered strategy in the security-format recognition
+// chain. Parsers return false when the record belongs to another format.
+type formatParser func(string, time.Time) (security.Event, bool)
+
+// formatParsers is deliberately immutable. Adding a new supported format is
+// one parser plus one entry here; parser precedence stays explicit and tested.
+var formatParsers = [...]formatParser{
+	parseSyslog,
+	parseCEF,
+	parseLEEF,
+	parseJSON,
+}
+
 // Parse recognizes CEF, LEEF, JSON and Syslog (RFC 3164/5424) wrappers.
 // It returns false for regular application logs so OTLP/file ingestion stays
 // telemetry-only unless an operator sends a known security format.
@@ -18,17 +31,10 @@ func Parse(raw string, occurredAt time.Time) (security.Event, bool) {
 	if raw == "" {
 		return security.Event{}, false
 	}
-	if event, ok := parseSyslog(raw, occurredAt); ok {
-		return event, true
-	}
-	if event, ok := parseCEF(raw, occurredAt); ok {
-		return event, true
-	}
-	if event, ok := parseLEEF(raw, occurredAt); ok {
-		return event, true
-	}
-	if event, ok := parseJSON(raw, occurredAt); ok {
-		return event, true
+	for _, parse := range formatParsers {
+		if event, ok := parse(raw, occurredAt); ok {
+			return event, true
+		}
 	}
 	return security.Event{}, false
 }

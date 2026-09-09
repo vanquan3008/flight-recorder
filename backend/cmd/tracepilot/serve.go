@@ -56,10 +56,9 @@ func runServer(arguments []string) int {
 		return 1
 	}
 
-	// The database adapter owns encrypted webhook secrets; pass the key only to
-	// that in-memory adapter and never log or expose it through HTTP responses.
-	cfg.Database.WebhookEncryptionKey = cfg.Notifications.EncryptionKey
-	database, databaseError := postgres.Open(appCtx, cfg.Database)
+	// The database adapter owns encrypted webhook secrets; receive the key as an
+	// explicit dependency without mutating the validated application config.
+	database, databaseError := postgres.OpenWithWebhookEncryptionKey(appCtx, cfg.Database, cfg.Notifications.EncryptionKey)
 	if databaseError != nil {
 		logger.Error("database initialization failed", "error", databaseError)
 		return 1
