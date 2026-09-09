@@ -4,6 +4,9 @@
 /deploy/.env
 *.local.yaml
 coverage.out
+/web/node_modules/
+/web/.vite/
+/web/coverage/
 
 # Logs
 *.log
