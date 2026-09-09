@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	collectorlogspb "go.opentelemetry.io/proto/otlp/collector/logs/v1"
+	collectormetricspb "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
 	collectortracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -20,6 +21,7 @@ func newGRPCServer(receiver *Receiver, maxRecvMsgSize int, tlsConfig *tls.Config
 	grpcServer := grpc.NewServer(options...)
 	collectortracepb.RegisterTraceServiceServer(grpcServer, &traceService{receiver: receiver})
 	collectorlogspb.RegisterLogsServiceServer(grpcServer, &logsService{receiver: receiver})
+	collectormetricspb.RegisterMetricsServiceServer(grpcServer, &metricsService{receiver: receiver})
 	return grpcServer
 }
 

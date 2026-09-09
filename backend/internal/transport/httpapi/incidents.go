@@ -58,17 +58,8 @@ func (server *Server) listIncidentOccurrences(responseWriter http.ResponseWriter
 	if !ok {
 		return
 	}
-	limit, parseError := parsePageSize(request.URL.Query().Get("limit"))
+	limit, cursor, parseError := parsePagination(request, validUUID)
 	if parseError != nil {
-		writeAPIError(responseWriter, http.StatusBadRequest, "INVALID_QUERY", parseError.Error())
-		return
-	}
-	cursor, parseError := decodeCursor(request.URL.Query().Get("cursor"))
-	if parseError != nil {
-		writeAPIError(responseWriter, http.StatusBadRequest, "INVALID_QUERY", parseError.Error())
-		return
-	}
-	if parseError := validateCursorID(cursor, validUUID); parseError != nil {
 		writeAPIError(responseWriter, http.StatusBadRequest, "INVALID_QUERY", parseError.Error())
 		return
 	}
@@ -88,17 +79,8 @@ func (server *Server) listIncidentEvents(responseWriter http.ResponseWriter, req
 	if !ok {
 		return
 	}
-	limit, parseError := parsePageSize(request.URL.Query().Get("limit"))
+	limit, cursor, parseError := parsePagination(request, validUUID)
 	if parseError != nil {
-		writeAPIError(responseWriter, http.StatusBadRequest, "INVALID_QUERY", parseError.Error())
-		return
-	}
-	cursor, parseError := decodeCursor(request.URL.Query().Get("cursor"))
-	if parseError != nil {
-		writeAPIError(responseWriter, http.StatusBadRequest, "INVALID_QUERY", parseError.Error())
-		return
-	}
-	if parseError := validateCursorID(cursor, validUUID); parseError != nil {
 		writeAPIError(responseWriter, http.StatusBadRequest, "INVALID_QUERY", parseError.Error())
 		return
 	}
@@ -118,17 +100,8 @@ func (server *Server) listIncidentStatusChanges(responseWriter http.ResponseWrit
 	if !ok {
 		return
 	}
-	limit, parseError := parsePageSize(request.URL.Query().Get("limit"))
+	limit, cursor, parseError := parsePagination(request, validUUID)
 	if parseError != nil {
-		writeAPIError(responseWriter, http.StatusBadRequest, "INVALID_QUERY", parseError.Error())
-		return
-	}
-	cursor, parseError := decodeCursor(request.URL.Query().Get("cursor"))
-	if parseError != nil {
-		writeAPIError(responseWriter, http.StatusBadRequest, "INVALID_QUERY", parseError.Error())
-		return
-	}
-	if parseError := validateCursorID(cursor, validUUID); parseError != nil {
 		writeAPIError(responseWriter, http.StatusBadRequest, "INVALID_QUERY", parseError.Error())
 		return
 	}
@@ -148,17 +121,8 @@ func (server *Server) listAllowedRequestExecutions(responseWriter http.ResponseW
 	if !ok {
 		return
 	}
-	limit, parseError := parsePageSize(request.URL.Query().Get("limit"))
+	limit, cursor, parseError := parsePagination(request, validUUID)
 	if parseError != nil {
-		writeAPIError(responseWriter, http.StatusBadRequest, "INVALID_QUERY", parseError.Error())
-		return
-	}
-	cursor, parseError := decodeCursor(request.URL.Query().Get("cursor"))
-	if parseError != nil {
-		writeAPIError(responseWriter, http.StatusBadRequest, "INVALID_QUERY", parseError.Error())
-		return
-	}
-	if parseError := validateCursorID(cursor, validUUID); parseError != nil {
 		writeAPIError(responseWriter, http.StatusBadRequest, "INVALID_QUERY", parseError.Error())
 		return
 	}

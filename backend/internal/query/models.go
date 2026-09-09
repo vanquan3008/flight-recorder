@@ -13,6 +13,8 @@ type TraceFilter struct {
 	TraceID       string
 	From          time.Time
 	To            time.Time
+	MinDurationNs *int64
+	MaxDurationNs *int64
 	Before        time.Time
 	CursorID      string
 	Limit         int

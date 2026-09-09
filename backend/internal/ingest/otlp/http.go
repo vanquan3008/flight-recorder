@@ -11,6 +11,7 @@ import (
 
 	"github.com/vanquan3008/tracepilot/internal/config"
 	collectorlogspb "go.opentelemetry.io/proto/otlp/collector/logs/v1"
+	collectormetricspb "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
 	collectortracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	statuspb "google.golang.org/genproto/googleapis/rpc/status"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -21,6 +22,7 @@ func newHTTPServer(configuration config.Config, server *Server) *http.Server {
 	router := http.NewServeMux()
 	router.HandleFunc("POST /v1/traces", server.traces)
 	router.HandleFunc("POST /v1/logs", server.logs)
+	router.HandleFunc("POST /v1/metrics", server.httpMetrics)
 	return &http.Server{
 		Addr:              server.httpAddress,
 		Handler:           router,
@@ -70,6 +72,29 @@ func (server *Server) logs(responseWriter http.ResponseWriter, request *http.Req
 		return
 	}
 	response, exportError := server.receiver.exportLogs(request.Context(), message)
+	if exportError != nil {
+		outcome = "unavailable"
+	} else if response.GetPartialSuccess() != nil {
+		outcome = "partial"
+	}
+	server.writeHTTP(responseWriter, encoding, response, exportError)
+}
+
+func (server *Server) httpMetrics(responseWriter http.ResponseWriter, request *http.Request) {
+	startedAt, outcome := time.Now(), "ok"
+	defer func() { server.observeHTTPRequest("metrics", outcome, time.Since(startedAt)) }()
+	message := &collectormetricspb.ExportMetricsServiceRequest{}
+	encoding, decodeError := server.decodeHTTP(responseWriter, request, message)
+	if decodeError != nil {
+		outcome = "rejected"
+		return
+	}
+	if authError := server.receiver.authorize(request.Context(), httpAPIKey(request)); authError != nil {
+		outcome = "unauthenticated"
+		server.writeHTTPError(responseWriter, encoding, http.StatusUnauthorized, "OTLP authentication failed")
+		return
+	}
+	response, exportError := server.receiver.exportMetrics(request.Context(), message)
 	if exportError != nil {
 		outcome = "unavailable"
 	} else if response.GetPartialSuccess() != nil {

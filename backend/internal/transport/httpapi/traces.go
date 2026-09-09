@@ -16,6 +16,7 @@ func (server *Server) listTraces(responseWriter http.ResponseWriter, request *ht
 		writeAPIError(responseWriter, http.StatusBadRequest, "INVALID_QUERY", parseError.Error())
 		return
 	}
+	filter.EnvironmentID = server.environmentID
 	filter.Before, filter.CursorID = cursor.At, cursor.ID
 	traces, queryError := server.backend.ListTraces(request.Context(), principal.ProjectID, filter)
 	if queryError != nil {

@@ -27,17 +27,19 @@ const (
 )
 
 type Config struct {
-	Version         int             `yaml:"version"`
-	Production      bool            `yaml:"production"`
-	HTTP            HTTPConfig      `yaml:"http"`
-	Ingestion       IngestionConfig `yaml:"ingestion"`
-	Database        DatabaseConfig  `yaml:"database"`
-	Auth            AuthConfig      `yaml:"auth"`
-	TLS             TLSConfig       `yaml:"tls"`
-	Retention       RetentionConfig `yaml:"retention"`
-	Replay          ReplayConfig    `yaml:"replay"`
-	ShutdownTimeout time.Duration   `yaml:"shutdown_timeout"`
-	LogLevel        slog.Level      `yaml:"log_level"`
+	Version         int                 `yaml:"version"`
+	Production      bool                `yaml:"production"`
+	HTTP            HTTPConfig          `yaml:"http"`
+	Ingestion       IngestionConfig     `yaml:"ingestion"`
+	Database        DatabaseConfig      `yaml:"database"`
+	Auth            AuthConfig          `yaml:"auth"`
+	TLS             TLSConfig           `yaml:"tls"`
+	Retention       RetentionConfig     `yaml:"retention"`
+	Replay          ReplayConfig        `yaml:"replay"`
+	Security        SecurityConfig      `yaml:"security"`
+	Notifications   NotificationsConfig `yaml:"notifications"`
+	ShutdownTimeout time.Duration       `yaml:"shutdown_timeout"`
+	LogLevel        slog.Level          `yaml:"log_level"`
 }
 
 type IngestionConfig struct {
@@ -64,14 +66,18 @@ type IngestionConfig struct {
 }
 
 type HTTPConfig struct {
-	Address                string        `yaml:"address"`
-	AllowedOrigins         []string      `yaml:"allowed_origins"`
-	ReadHeaderTimeout      time.Duration `yaml:"read_header_timeout"`
-	ReadTimeout            time.Duration `yaml:"read_timeout"`
-	WriteTimeout           time.Duration `yaml:"write_timeout"`
-	IdleTimeout            time.Duration `yaml:"idle_timeout"`
-	MaxHeaderBytes         int           `yaml:"max_header_bytes"`
-	ManagementMaxBodyBytes int64         `yaml:"management_max_body_bytes"`
+	Address                 string        `yaml:"address"`
+	AllowedOrigins          []string      `yaml:"allowed_origins"`
+	ReadHeaderTimeout       time.Duration `yaml:"read_header_timeout"`
+	ReadTimeout             time.Duration `yaml:"read_timeout"`
+	WriteTimeout            time.Duration `yaml:"write_timeout"`
+	IdleTimeout             time.Duration `yaml:"idle_timeout"`
+	MaxHeaderBytes          int           `yaml:"max_header_bytes"`
+	ManagementMaxBodyBytes  int64         `yaml:"management_max_body_bytes"`
+	RateLimitRequests       int           `yaml:"rate_limit_requests"`
+	RateLimitWindow         time.Duration `yaml:"rate_limit_window"`
+	RateLimitAuthRequests   int           `yaml:"rate_limit_auth_requests"`
+	RateLimitReplayRequests int           `yaml:"rate_limit_replay_requests"`
 }
 
 type DatabaseConfig struct {
@@ -83,6 +89,7 @@ type DatabaseConfig struct {
 	HealthCheckPeriod     time.Duration `yaml:"health_check_period"`
 	ReadinessTimeout      time.Duration `yaml:"readiness_timeout"`
 	MigrationsPath        string        `yaml:"migrations_path"`
+	WebhookEncryptionKey  string        `yaml:"-"`
 }
 
 type AuthConfig struct {
@@ -110,11 +117,29 @@ type ReplayConfig struct {
 	MaxConcurrent    int           `yaml:"max_concurrent"`
 }
 
+type SecurityConfig struct {
+	Enabled            bool          `yaml:"enabled"`
+	SyslogAddress      string        `yaml:"syslog_address"`
+	SyslogTLS          bool          `yaml:"syslog_tls"`
+	SyslogClientCAFile string        `yaml:"syslog_client_ca_file"`
+	MaxLineBytes       int           `yaml:"max_line_bytes"`
+	MaxConnections     int           `yaml:"max_connections"`
+	IdleTimeout        time.Duration `yaml:"idle_timeout"`
+	DetectionInterval  time.Duration `yaml:"detection_interval"`
+}
+
+type NotificationsConfig struct {
+	Enabled        bool          `yaml:"enabled"`
+	EncryptionKey  string        `yaml:"encryption_key"`
+	PollInterval   time.Duration `yaml:"poll_interval"`
+	Workers        int           `yaml:"workers"`
+	RequestTimeout time.Duration `yaml:"request_timeout"`
+}
+
 func Load(configFile string) (Config, error) {
 	if loadError := godotenv.Load(); loadError != nil {
 		_ = godotenv.Load("../.env")
 	}
-
 	configuration := defaultConfig()
 	if configFile == "" {
 		configFile = os.Getenv("TRACEPILOT_CONFIG_FILE")
@@ -140,7 +165,6 @@ func decodeFile(configFile string, configuration *Config) error {
 		return fmt.Errorf("open configuration file: %w", openError)
 	}
 	defer file.Close()
-
 	contents, readError := io.ReadAll(io.LimitReader(file, maxConfigFileSize+1))
 	if readError != nil {
 		return fmt.Errorf("read configuration file: %w", readError)
@@ -148,7 +172,6 @@ func decodeFile(configFile string, configuration *Config) error {
 	if len(contents) > maxConfigFileSize {
 		return fmt.Errorf("configuration file exceeds %d bytes", maxConfigFileSize)
 	}
-
 	decoder := yaml.NewDecoder(bytes.NewReader(contents))
 	decoder.KnownFields(true)
 	if decodeError := decoder.Decode(configuration); decodeError != nil {

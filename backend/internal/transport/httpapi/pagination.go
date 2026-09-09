@@ -42,18 +42,26 @@ func parseTraceFilter(request *http.Request) (query.TraceFilter, pageCursor, err
 	if rangeError := validateTimeRange(from, to); rangeError != nil {
 		return query.TraceFilter{}, pageCursor{}, rangeError
 	}
-	cursor, parseError := decodeCursor(values.Get("cursor"))
+	minimumDuration, parseError := parseDurationNanos(values.Get("minDuration"))
 	if parseError != nil {
 		return query.TraceFilter{}, pageCursor{}, parseError
 	}
-	if parseError := validateCursorID(cursor, validTraceID); parseError != nil {
+	maximumDuration, parseError := parseDurationNanos(values.Get("maxDuration"))
+	if parseError != nil {
+		return query.TraceFilter{}, pageCursor{}, parseError
+	}
+	if minimumDuration != nil && maximumDuration != nil && *minimumDuration > *maximumDuration {
+		return query.TraceFilter{}, pageCursor{}, errors.New("minDuration must not exceed maxDuration")
+	}
+	cursor, parseError := parsePageCursor(values.Get("cursor"), validTraceID)
+	if parseError != nil {
 		return query.TraceFilter{}, pageCursor{}, parseError
 	}
 	traceID := strings.TrimSpace(values.Get("traceId"))
 	if traceID != "" && !validTraceID(traceID) {
 		return query.TraceFilter{}, pageCursor{}, errors.New("traceId must be 16 bytes of hexadecimal")
 	}
-	return query.TraceFilter{Service: values.Get("service"), Operation: values.Get("operation"), Status: values.Get("status"), TraceID: traceID, From: from, To: to, Limit: limit}, cursor, nil
+	return query.TraceFilter{Service: values.Get("service"), Operation: values.Get("operation"), Status: values.Get("status"), TraceID: traceID, From: from, To: to, MinDurationNs: minimumDuration, MaxDurationNs: maximumDuration, Limit: limit}, cursor, nil
 }
 
 func parseLogFilter(request *http.Request) (query.LogFilter, pageCursor, error) {
@@ -80,11 +88,8 @@ func parseLogFilter(request *http.Request) (query.LogFilter, pageCursor, error) 
 	if search != "" && to.Sub(from) > maxLogSearchRange {
 		return query.LogFilter{}, pageCursor{}, errors.New("log content search range must not exceed 24 hours")
 	}
-	cursor, parseError := decodeCursor(values.Get("cursor"))
+	cursor, parseError := parsePageCursor(values.Get("cursor"), validUUID)
 	if parseError != nil {
-		return query.LogFilter{}, pageCursor{}, parseError
-	}
-	if parseError := validateCursorID(cursor, validUUID); parseError != nil {
 		return query.LogFilter{}, pageCursor{}, parseError
 	}
 	traceID := strings.TrimSpace(values.Get("traceId"))
@@ -121,11 +126,8 @@ func parseIncidentFilter(request *http.Request) (incident.Filter, pageCursor, er
 			return incident.Filter{}, pageCursor{}, errors.New("incident status is invalid")
 		}
 	}
-	cursor, parseError := decodeCursor(values.Get("cursor"))
+	cursor, parseError := parsePageCursor(values.Get("cursor"), validUUID)
 	if parseError != nil {
-		return incident.Filter{}, pageCursor{}, parseError
-	}
-	if parseError := validateCursorID(cursor, validUUID); parseError != nil {
 		return incident.Filter{}, pageCursor{}, parseError
 	}
 	return incident.Filter{
@@ -152,6 +154,18 @@ func parsePageSize(value string) (int, error) {
 	return limit, nil
 }
 
+func parsePagination(request *http.Request, validID func(string) bool) (int, pageCursor, error) {
+	limit, parseError := parsePageSize(request.URL.Query().Get("limit"))
+	if parseError != nil {
+		return 0, pageCursor{}, parseError
+	}
+	cursor, parseError := parsePageCursor(request.URL.Query().Get("cursor"), validID)
+	if parseError != nil {
+		return 0, pageCursor{}, parseError
+	}
+	return limit, cursor, nil
+}
+
 func parseTime(value string) (time.Time, error) {
 	if value == "" {
 		return time.Time{}, nil
@@ -161,6 +175,18 @@ func parseTime(value string) (time.Time, error) {
 		return time.Time{}, errors.New("time filters must use RFC3339")
 	}
 	return parsed, nil
+}
+
+func parseDurationNanos(value string) (*int64, error) {
+	if value == "" {
+		return nil, nil
+	}
+	duration, parseError := time.ParseDuration(value)
+	if parseError != nil || duration < 0 || duration > 24*time.Hour {
+		return nil, errors.New("duration filters must use a non-negative value up to 24h (for example 250ms)")
+	}
+	nanos := duration.Nanoseconds()
+	return &nanos, nil
 }
 
 func decodeCursor(value string) (pageCursor, error) {
@@ -174,6 +200,17 @@ func decodeCursor(value string) (pageCursor, error) {
 	var cursor pageCursor
 	if jsonError := json.Unmarshal(decoded, &cursor); jsonError != nil || cursor.At.IsZero() || cursor.ID == "" {
 		return pageCursor{}, errors.New("cursor is invalid")
+	}
+	return cursor, nil
+}
+
+func parsePageCursor(value string, validID func(string) bool) (pageCursor, error) {
+	cursor, parseError := decodeCursor(value)
+	if parseError != nil {
+		return pageCursor{}, parseError
+	}
+	if parseError := validateCursorID(cursor, validID); parseError != nil {
+		return pageCursor{}, parseError
 	}
 	return cursor, nil
 }

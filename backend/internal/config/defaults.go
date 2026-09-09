@@ -9,13 +9,17 @@ func defaultConfig() Config {
 	return Config{
 		Version: CurrentVersion,
 		HTTP: HTTPConfig{
-			Address:                ":8080",
-			ReadHeaderTimeout:      5 * time.Second,
-			ReadTimeout:            15 * time.Second,
-			WriteTimeout:           30 * time.Second,
-			IdleTimeout:            60 * time.Second,
-			MaxHeaderBytes:         1 << 20,
-			ManagementMaxBodyBytes: 1 << 20,
+			Address:                 ":8080",
+			ReadHeaderTimeout:       5 * time.Second,
+			ReadTimeout:             15 * time.Second,
+			WriteTimeout:            30 * time.Second,
+			IdleTimeout:             60 * time.Second,
+			MaxHeaderBytes:          1 << 20,
+			ManagementMaxBodyBytes:  1 << 20,
+			RateLimitRequests:       120,
+			RateLimitWindow:         time.Minute,
+			RateLimitAuthRequests:   20,
+			RateLimitReplayRequests: 10,
 		},
 		Ingestion: IngestionConfig{
 			GRPCAddress:            ":4317",
@@ -56,6 +60,17 @@ func defaultConfig() Config {
 		Retention: RetentionConfig{
 			CheckInterval: time.Hour,
 			BatchSize:     10_000,
+		},
+		Security: SecurityConfig{
+			MaxLineBytes:      64 << 10,
+			MaxConnections:    1000,
+			IdleTimeout:       30 * time.Second,
+			DetectionInterval: 5 * time.Second,
+		},
+		Notifications: NotificationsConfig{
+			PollInterval:   5 * time.Second,
+			Workers:        4,
+			RequestTimeout: 10 * time.Second,
 		},
 		ShutdownTimeout: 15 * time.Second,
 		LogLevel:        slog.LevelInfo,

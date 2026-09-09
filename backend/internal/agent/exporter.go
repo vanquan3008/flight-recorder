@@ -15,13 +15,13 @@ import (
 )
 
 type Exporter struct {
-	connection *grpc.ClientConn
-	client     collectorlogspb.LogsServiceClient
-	apiKey     string
-	service    string
+	connection         *grpc.ClientConn
+	client             collectorlogspb.LogsServiceClient
+	apiKey             string
+	resourceAttributes []*commonpb.KeyValue
 }
 
-func NewExporter(endpoint, apiKey, service string, secure bool, serverName string) (*Exporter, error) {
+func NewExporter(endpoint, apiKey, service, hostName, sourcePath string, secure bool, serverName string) (*Exporter, error) {
 	transportCredentials := grpc.WithTransportCredentials(insecure.NewCredentials())
 	if secure {
 		transportCredentials = grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{MinVersion: tls.VersionTLS12, ServerName: serverName}))
@@ -34,7 +34,12 @@ func NewExporter(endpoint, apiKey, service string, secure bool, serverName strin
 		connection: connection,
 		client:     collectorlogspb.NewLogsServiceClient(connection),
 		apiKey:     apiKey,
-		service:    service,
+		resourceAttributes: []*commonpb.KeyValue{
+			{Key: "service.name", Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: service}}},
+			{Key: "host.name", Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: hostName}}},
+			{Key: "log.file.path", Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: sourcePath}}},
+			{Key: "log.source.type", Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: "file"}}},
+		},
 	}, nil
 }
 
@@ -50,6 +55,6 @@ func (exporter *Exporter) Export(ctx context.Context, batch Batch) error {
 	if exporter.apiKey != "" {
 		ctx = metadata.AppendToOutgoingContext(ctx, "x-api-key", exporter.apiKey)
 	}
-	_, exportError := exporter.client.Export(ctx, &collectorlogspb.ExportLogsServiceRequest{ResourceLogs: []*logspb.ResourceLogs{{Resource: &resourcepb.Resource{Attributes: []*commonpb.KeyValue{{Key: "service.name", Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: exporter.service}}}}}, ScopeLogs: []*logspb.ScopeLogs{{LogRecords: records}}}}})
+	_, exportError := exporter.client.Export(ctx, &collectorlogspb.ExportLogsServiceRequest{ResourceLogs: []*logspb.ResourceLogs{{Resource: &resourcepb.Resource{Attributes: exporter.resourceAttributes}, ScopeLogs: []*logspb.ScopeLogs{{LogRecords: records}}}}})
 	return exportError
 }

@@ -126,13 +126,6 @@ func readLine(reader *bufio.Reader, maxLineBytes int) (string, int, error) {
 	}
 }
 
-func min(left, right int) int {
-	if left < right {
-		return left
-	}
-	return right
-}
-
 func withPrefix(file *os.File, checkpoint Checkpoint) Checkpoint {
 	length := checkpoint.Offset
 	if length > 4096 {

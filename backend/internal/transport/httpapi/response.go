@@ -8,7 +8,11 @@ import (
 )
 
 func writeAPIError(responseWriter http.ResponseWriter, statusCode int, code, message string) {
-	writeJSONValue(responseWriter, statusCode, map[string]any{"error": map[string]string{"code": code, "message": message}})
+	writeJSONValue(responseWriter, statusCode, map[string]any{"error": map[string]string{
+		"code":       code,
+		"message":    message,
+		"request_id": responseWriter.Header().Get(requestIDHeader),
+	}})
 }
 
 func writeJSONValue(responseWriter http.ResponseWriter, statusCode int, value any) {
