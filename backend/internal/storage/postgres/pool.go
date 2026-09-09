@@ -19,7 +19,20 @@ type Database struct {
 	webhookEncryptionKey []byte
 }
 
+// Open creates a database adapter without webhook-secret capabilities.
+// Call OpenWithWebhookEncryptionKey when outbound notifications are enabled.
 func Open(applicationContext context.Context, configuration config.DatabaseConfig) (*Database, error) {
+	return open(applicationContext, configuration, "")
+}
+
+// OpenWithWebhookEncryptionKey creates a database adapter able to encrypt and
+// decrypt webhook secrets. The bootstrap layer supplies this secret explicitly
+// so loading configuration never requires a post-validation mutation.
+func OpenWithWebhookEncryptionKey(applicationContext context.Context, configuration config.DatabaseConfig, webhookEncryptionKey string) (*Database, error) {
+	return open(applicationContext, configuration, webhookEncryptionKey)
+}
+
+func open(applicationContext context.Context, configuration config.DatabaseConfig, webhookEncryptionKey string) (*Database, error) {
 	poolConfiguration, parseError := pgxpool.ParseConfig(configuration.URL)
 	if parseError != nil {
 		return nil, fmt.Errorf("parse database configuration: %w", parseError)
@@ -36,9 +49,9 @@ func Open(applicationContext context.Context, configuration config.DatabaseConfi
 		return nil, fmt.Errorf("open database pool: %w", openError)
 	}
 	var webhookKey []byte
-	if configuration.WebhookEncryptionKey != "" {
+	if webhookEncryptionKey != "" {
 		var keyError error
-		webhookKey, keyError = notificationdomain.DecodeEncryptionKey(configuration.WebhookEncryptionKey)
+		webhookKey, keyError = notificationdomain.DecodeEncryptionKey(webhookEncryptionKey)
 		if keyError != nil {
 			databasePool.Close()
 			return nil, fmt.Errorf("parse webhook encryption key: %w", keyError)

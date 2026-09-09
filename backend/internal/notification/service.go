@@ -7,7 +7,6 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -20,9 +19,6 @@ import (
 
 type Store interface {
 	RecordDeliveryAttempt(context.Context, string, string, string, int, string, bool) error
-}
-
-type RetryStore interface {
 	ClaimDueDeliveries(context.Context, int) ([]notificationdomain.DeliveryAttempt, error)
 }
 
@@ -73,11 +69,7 @@ func NewService(store Store, logger *slog.Logger, configurations ...Config) *Ser
 }
 
 func (service *Service) Run(ctx context.Context) error {
-	store, ok := service.store.(RetryStore)
-	if !ok {
-		return errors.New("notification store does not implement retry worker")
-	}
-	service.processDue(ctx, store)
+	service.processDue(ctx)
 	ticker := time.NewTicker(service.config.PollInterval)
 	defer ticker.Stop()
 	for {
@@ -86,13 +78,13 @@ func (service *Service) Run(ctx context.Context) error {
 			service.request.Wait()
 			return nil
 		case <-ticker.C:
-			service.processDue(ctx, store)
+			service.processDue(ctx)
 		}
 	}
 }
 
-func (service *Service) processDue(ctx context.Context, store RetryStore) {
-	batch, claimError := store.ClaimDueDeliveries(ctx, service.config.Workers)
+func (service *Service) processDue(ctx context.Context) {
+	batch, claimError := service.store.ClaimDueDeliveries(ctx, service.config.Workers)
 	if claimError != nil {
 		service.observe("claim_error")
 		service.logger.Error("claim webhook deliveries failed", "error", claimError)

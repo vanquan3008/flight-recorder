@@ -89,7 +89,6 @@ type DatabaseConfig struct {
 	HealthCheckPeriod     time.Duration `yaml:"health_check_period"`
 	ReadinessTimeout      time.Duration `yaml:"readiness_timeout"`
 	MigrationsPath        string        `yaml:"migrations_path"`
-	WebhookEncryptionKey  string        `yaml:"-"`
 }
 
 type AuthConfig struct {

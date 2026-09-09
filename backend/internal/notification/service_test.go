@@ -23,6 +23,10 @@ func (deliveryStoreStub) RecordDeliveryAttempt(context.Context, string, string, 
 	return nil
 }
 
+func (deliveryStoreStub) ClaimDueDeliveries(context.Context, int) ([]notificationdomain.DeliveryAttempt, error) {
+	return nil, nil
+}
+
 type recordingStoreStub struct {
 	called  chan struct{}
 	success atomic.Bool
@@ -40,6 +44,10 @@ func (store *recordingStoreStub) RecordDeliveryAttempt(_ context.Context, _ stri
 	store.success.Store(success)
 	close(store.called)
 	return nil
+}
+
+func (store *recordingStoreStub) ClaimDueDeliveries(context.Context, int) ([]notificationdomain.DeliveryAttempt, error) {
+	return nil, nil
 }
 
 type retryStoreStub struct {

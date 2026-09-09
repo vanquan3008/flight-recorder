@@ -24,7 +24,7 @@ func TestWebhookEncryptionAndDurableClaimIntegration(t *testing.T) {
 		t.Fatal("TRACEPILOT_DATABASE_URL is required")
 	}
 	key := []byte(strings.Repeat("w", 32))
-	database, openError := Open(context.Background(), config.DatabaseConfig{URL: databaseURL, MaxConnections: 4, MaxConnectionLifetime: time.Minute, MaxConnectionIdleTime: time.Minute, HealthCheckPeriod: time.Minute, WebhookEncryptionKey: hex.EncodeToString(key)})
+	database, openError := OpenWithWebhookEncryptionKey(context.Background(), config.DatabaseConfig{URL: databaseURL, MaxConnections: 4, MaxConnectionLifetime: time.Minute, MaxConnectionIdleTime: time.Minute, HealthCheckPeriod: time.Minute}, hex.EncodeToString(key))
 	if openError != nil {
 		t.Fatal(openError)
 	}
