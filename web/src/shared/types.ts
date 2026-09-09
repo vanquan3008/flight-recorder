@@ -1,4 +1,4 @@
-export type Page<T> = { data: T[]; next_cursor?: string };
+export interface Page<T> { data: T[]; next_cursor?: string }
 
 export type TraceSummary = {
   trace_id: string;

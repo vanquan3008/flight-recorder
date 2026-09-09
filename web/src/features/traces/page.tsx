@@ -1,11 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft, Copy, Search } from "lucide-react";
-import { FormEvent, useState } from "react";
+import { type FormEvent, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
-import { api, pageItems, queryString, usePagedQuery } from "../api";
-import { useAuth } from "../auth";
-import type { LogRecord, Span, TraceDetail, TraceSummary } from "../types";
-import { Badge, DataTable, Empty, ErrorState, LoadMore, Loading, PageHeader, Panel, formatDuration, formatTime, json } from "../ui";
+import { useAuth } from "../../app/auth";
+import { api, pageItems, queryString, usePagedQuery } from "../../shared/api";
+import { compactSearchParams } from "../../shared/search-params";
+import type { LogRecord, Span, TraceDetail, TraceSummary } from "../../shared/types";
+import { PagedTable } from "../../shared/paged-table";
+import { Badge, Empty, ErrorState, Loading, PageHeader, Panel, formatDuration, formatTime, json } from "../../shared/ui";
 
 export function TracesPage() {
   const { apiKey } = useAuth();
@@ -15,8 +17,7 @@ export function TracesPage() {
   const traces = pageItems(query.data?.pages);
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const data = new FormData(event.currentTarget);
-    setParams(new URLSearchParams([...data.entries()].filter(([, value]) => String(value).trim()).map(([key, value]) => [key, String(value)])));
+    setParams(compactSearchParams(event.currentTarget));
   };
   return <>
     <PageHeader title="Trace explorer">Find slow or failed requests, then inspect their spans and correlated logs.</PageHeader>
@@ -26,7 +27,7 @@ export function TracesPage() {
       <input name="traceId" placeholder="Trace ID" aria-label="Filter by trace ID" defaultValue={params.get("traceId") || ""} />
       <button><Search size={16} /> Search traces</button>
     </form>
-    <Panel title="Recent traces" meta={`${traces.length} loaded`}><QueryTable query={query} empty={<>No traces match those filters. <Link to="/overview">Review the setup steps.</Link></>} headers={["Started", "Service", "Duration", "Spans", "Errors", "Trace ID", ""]} rows={traces.map((trace) => [
+    <Panel title="Recent traces" meta={`${traces.length} loaded`}><PagedTable query={query} empty={<>No traces match those filters. <Link to="/overview">Review the setup steps.</Link></>} headers={["Started", "Service", "Duration", "Spans", "Errors", "Trace ID", ""]} rows={traces.map((trace) => [
       formatTime(trace.started_at), trace.root_service, formatDuration(trace.duration_nanos), trace.span_count, <Badge value={trace.error_count ? "ERROR" : "OK"} />, <code>{trace.trace_id}</code>, <Link className="table-link" to={`/traces/${trace.trace_id}`}>Inspect</Link>,
     ])} /></Panel>
   </>;
@@ -43,7 +44,7 @@ export function TraceDetailPage() {
   return <>
     <PageHeader title="Trace detail" action={<Link className="back-link" to="/traces"><ArrowLeft size={16} /> Back to traces</Link>}>{traceID}</PageHeader>
     <Panel title="Span waterfall" meta={`${trace.data.spans.length} spans`}><Waterfall spans={trace.data.spans} /></Panel>
-    <Panel title="Correlated logs" meta={`${logRows.length} loaded`}><QueryTable query={logs} empty="No logs are linked to this trace." headers={["Time", "Service", "Severity", "Body"]} rows={logRows.map((log) => [formatTime(log.occurred_at), log.service_name, <Badge value={log.severity_text} />, <pre className="inline-json">{json(log.body)}</pre>])} /></Panel>
+    <Panel title="Correlated logs" meta={`${logRows.length} loaded`}><PagedTable query={logs} empty="No logs are linked to this trace." headers={["Time", "Service", "Severity", "Body"]} rows={logRows.map((log) => [formatTime(log.occurred_at), log.service_name, <Badge value={log.severity_text} />, <pre className="inline-json">{json(log.body)}</pre>])} /></Panel>
   </>;
 }
 
@@ -88,12 +89,4 @@ function SpanDetail({ span }: { span: Span }) {
 function CopyButton({ value }: { value: string }) {
   const [copied, setCopied] = useState(false);
   return <button className="icon-button" aria-label="Copy span ID" onClick={() => void navigator.clipboard.writeText(value).then(() => { setCopied(true); window.setTimeout(() => setCopied(false), 1200); })}><Copy size={16} />{copied && <span className="sr-only">Copied</span>}</button>;
-}
-
-type QueryLike = { isPending: boolean; isError: boolean; error: unknown; refetch: () => Promise<unknown>; hasNextPage: boolean; isFetchingNextPage: boolean; fetchNextPage: () => Promise<unknown> };
-
-function QueryTable({ query, headers, rows, empty }: { query: QueryLike; headers: string[]; rows: React.ReactNode[][]; empty: React.ReactNode }) {
-  if (query.isPending) return <Loading />;
-  if (query.isError) return <ErrorState error={query.error} retry={() => void query.refetch()} />;
-  return <><DataTable headers={headers} rows={rows} empty={empty} /><LoadMore hasMore={query.hasNextPage} loading={query.isFetchingNextPage} onClick={() => void query.fetchNextPage()} /></>;
 }

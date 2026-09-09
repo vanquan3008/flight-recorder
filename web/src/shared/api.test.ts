@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { APIError, api, queryString } from "./api";
+import { compactSearchParams } from "./search-params";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -23,5 +24,13 @@ describe("api", () => {
 describe("queryString", () => {
   it("keeps the page limit and omits blank filters", () => {
     expect(queryString({ service: " checkout ", status: "" })).toBe("limit=50&service=checkout");
+  });
+});
+
+describe("compactSearchParams", () => {
+  it("trims populated fields and omits blank fields", () => {
+    const form = document.createElement("form");
+    form.innerHTML = '<input name="service" value=" checkout "><input name="status" value=" ">';
+    expect(compactSearchParams(form).toString()).toBe("service=checkout");
   });
 });

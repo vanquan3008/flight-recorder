@@ -1,10 +1,10 @@
 import { useQueries } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { api } from "../api";
-import { useAuth } from "../auth";
-import { Onboarding } from "../onboarding";
-import type { Detection, Incident, LogRecord, Page, SecurityEvent, TraceSummary } from "../types";
-import { Badge, DataTable, ErrorState, Loading, PageHeader, Panel, formatTime } from "../ui";
+import { useAuth } from "../../app/auth";
+import { api } from "../../shared/api";
+import type { Detection, Incident, LogRecord, Page, SecurityEvent, TraceSummary } from "../../shared/types";
+import { Badge, DataTable, ErrorState, Loading, PageHeader, Panel, formatTime } from "../../shared/ui";
+import { Onboarding } from "../onboarding/onboarding";
 
 const latest = <T,>(path: string, apiKey: string) => ({
   queryKey: ["overview", path],

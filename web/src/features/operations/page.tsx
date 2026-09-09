@@ -2,10 +2,12 @@ import { useMutation, useQueries } from "@tanstack/react-query";
 import { ArrowLeft, Search } from "lucide-react";
 import type { FormEvent, ReactNode } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
-import { api, pageItems, queryString, usePagedQuery } from "../api";
-import { useAuth } from "../auth";
-import type { Incident, IncidentEvent, IncidentOccurrence, LogRecord, Page, StatusChange } from "../types";
-import { Badge, DataTable, ErrorState, LoadMore, Loading, PageHeader, Panel, formatTime, json } from "../ui";
+import { useAuth } from "../../app/auth";
+import { api, pageItems, queryString, usePagedQuery } from "../../shared/api";
+import { compactSearchParams } from "../../shared/search-params";
+import { PagedTable } from "../../shared/paged-table";
+import type { Incident, IncidentEvent, IncidentOccurrence, LogRecord, Page, StatusChange } from "../../shared/types";
+import { Badge, DataTable, ErrorState, Loading, PageHeader, Panel, formatTime, json } from "../../shared/ui";
 import { useQueryClient } from "@tanstack/react-query";
 
 export function MachineLogsPage() {
@@ -16,8 +18,7 @@ export function MachineLogsPage() {
   const logs = pageItems(query.data?.pages);
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    setParams(new URLSearchParams([...form.entries()].filter(([, value]) => String(value).trim()).map(([key, value]) => [key, String(value)])));
+    setParams(compactSearchParams(event.currentTarget));
   };
   return <><PageHeader title="Machine logs">Logs shipped by tracepilot-agent, with host and source file context.</PageHeader><form className="toolbar" onSubmit={submit}><input name="service" placeholder="Agent service" aria-label="Filter by agent service" defaultValue={params.get("service") || "file-agent"} /><button><Search size={16} /> Load logs</button></form><Panel title="Machine log records" meta={`${logs.length} loaded`}><PagedTable query={query} empty="No machine logs match this service." headers={["Time", "Host", "File", "Severity", "Message"]} rows={logs.map((log) => {
     const attrs = object(log.resource_attributes);
@@ -33,8 +34,7 @@ export function OperationsPage() {
   const incidents = pageItems(query.data?.pages);
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    setParams(new URLSearchParams([...form.entries()].filter(([, value]) => String(value).trim()).map(([key, value]) => [key, String(value)])));
+    setParams(compactSearchParams(event.currentTarget));
   };
   return <><PageHeader title="Incidents">Investigate application failures from their timeline and correlated telemetry.</PageHeader><form className="toolbar" onSubmit={submit}><input name="service" placeholder="Service" aria-label="Filter by service" defaultValue={params.get("service") || ""} /><select name="status" aria-label="Filter by status" defaultValue={params.get("status") || ""}><option value="">All statuses</option><option>OPEN</option><option>INVESTIGATING</option><option>RESOLVED</option><option>IGNORED</option></select><button><Search size={16} /> Apply filters</button></form><Panel title="Incident timeline" meta={`${incidents.length} loaded`}><PagedTable query={query} empty="No incidents yet." headers={["Last seen", "Severity", "Status", "Title", "Occurrences", ""]} rows={incidents.map((incident) => [
     formatTime(incident.last_seen_at), <Badge value={incident.severity} />, <Badge value={incident.status} />, incident.title, incident.occurrence_count, <Link className="table-link" to={`/incidents/${incident.id}`}>Inspect</Link>,
@@ -81,12 +81,4 @@ function object(value: unknown): Record<string, string> {
   } catch {
     return {};
   }
-}
-
-type PagedQuery = { isPending: boolean; isError: boolean; error: unknown; refetch: () => Promise<unknown>; hasNextPage: boolean; isFetchingNextPage: boolean; fetchNextPage: () => Promise<unknown> };
-
-function PagedTable({ query, headers, rows, empty }: { query: PagedQuery; headers: string[]; rows: ReactNode[][]; empty: string }) {
-  if (query.isPending) return <Loading />;
-  if (query.isError) return <ErrorState error={query.error} retry={() => void query.refetch()} />;
-  return <><DataTable headers={headers} rows={rows} empty={empty} /><LoadMore hasMore={query.hasNextPage} loading={query.isFetchingNextPage} onClick={() => void query.fetchNextPage()} /></>;
 }

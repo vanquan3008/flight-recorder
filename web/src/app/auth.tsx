@@ -1,7 +1,10 @@
 import { createContext, useContext } from "react";
 
+export const apiKeyStorageKey = "tracepilot-api-key";
+
 export type AuthState = {
   apiKey: string;
+  isAuthenticated: boolean;
   connect: (key: string) => void;
   disconnect: () => void;
 };
