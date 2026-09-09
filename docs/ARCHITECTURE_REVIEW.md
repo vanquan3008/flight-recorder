@@ -40,6 +40,22 @@ The dependency guard in `internal/architecture/dependencies_test.go` enforces
 the most important edges: domain cannot import adapters, transport and ingest
 cannot import PostgreSQL, and PostgreSQL cannot import replay.
 
+## Design patterns in use
+
+| Pattern | Location | Extension benefit |
+| --- | --- | --- |
+| Ports and Adapters | `cmd/tracepilot`, `transport/httpapi`, `ingest/*`, `storage/postgres` | A transport or store changes behind a consumer-owned port, not through domain code. |
+| Strategy | Pipeline store functions, replay executor/store ports, agent exporter port | Tests and alternate behavior can be supplied without a concrete infrastructure dependency. |
+| Strategy Chain | `security/parser` ordered `formatParsers` | Add a supported security format by adding one parser and one explicit precedence entry. |
+| Adapter | OTLP and Syslog ingest adapters | Different wire protocols normalize into the single `telemetry.Event` model. |
+| Decorator | HTTP middleware chain | Cross-cutting concerns such as request ID, CORS, limits and metrics remain outside handlers. |
+| Transactional Outbox | Security detection transaction and `webhook_deliveries` | A committed detection also commits its delivery intent; delivery is retried independently. |
+| Producer–Consumer Pipeline | Ingest event and metrics pipelines | Admission, batching, retry and shutdown stay separate from protocol receivers. |
+
+The code deliberately does not add a generic repository, event bus, factory
+framework or plugin registry. Each would have one implementation or one known
+consumer today, so it would make extension more expensive rather than easier.
+
 ## Refactors applied
 
 ### 1. Configuration is no longer mutated after validation
