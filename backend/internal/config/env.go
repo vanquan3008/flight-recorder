@@ -1,14 +1,6 @@
 package config
 
-import (
-	"errors"
-	"fmt"
-	"log/slog"
-	"os"
-	"strconv"
-	"strings"
-	"time"
-)
+import "os"
 
 func applyEnvironment(configuration *Config) error {
 	var parseError error
@@ -32,6 +24,18 @@ func applyEnvironment(configuration *Config) error {
 		return parseError
 	}
 	if configuration.Replay.Enabled, parseError = readBoolean("TRACEPILOT_REPLAY_ENABLED", configuration.Replay.Enabled); parseError != nil {
+		return parseError
+	}
+	if configuration.Security.Enabled, parseError = readBoolean("TRACEPILOT_SECURITY_ENABLED", configuration.Security.Enabled); parseError != nil {
+		return parseError
+	}
+	if configuration.Notifications.Enabled, parseError = readBoolean("TRACEPILOT_NOTIFICATIONS_ENABLED", configuration.Notifications.Enabled); parseError != nil {
+		return parseError
+	}
+	configuration.Notifications.EncryptionKey = environmentValue("TRACEPILOT_WEBHOOK_ENCRYPTION_KEY", configuration.Notifications.EncryptionKey)
+	configuration.Security.SyslogAddress = environmentValue("TRACEPILOT_SECURITY_SYSLOG_ADDRESS", configuration.Security.SyslogAddress)
+	configuration.Security.SyslogClientCAFile = environmentValue("TRACEPILOT_SECURITY_SYSLOG_CLIENT_CA_FILE", configuration.Security.SyslogClientCAFile)
+	if configuration.Security.SyslogTLS, parseError = readBoolean("TRACEPILOT_SECURITY_SYSLOG_TLS", configuration.Security.SyslogTLS); parseError != nil {
 		return parseError
 	}
 	if replayAllowedHosts, exists := os.LookupEnv("TRACEPILOT_REPLAY_ALLOWED_HOSTS"); exists {
@@ -69,6 +73,18 @@ func applyEnvironment(configuration *Config) error {
 		return parseError
 	}
 	if configuration.HTTP.ManagementMaxBodyBytes, parseError = readPositiveInt64("TRACEPILOT_HTTP_MANAGEMENT_MAX_BODY_BYTES", configuration.HTTP.ManagementMaxBodyBytes); parseError != nil {
+		return parseError
+	}
+	if configuration.HTTP.RateLimitRequests, parseError = readPositiveInteger("TRACEPILOT_HTTP_RATE_LIMIT_REQUESTS", configuration.HTTP.RateLimitRequests); parseError != nil {
+		return parseError
+	}
+	if configuration.HTTP.RateLimitWindow, parseError = readDuration("TRACEPILOT_HTTP_RATE_LIMIT_WINDOW", configuration.HTTP.RateLimitWindow); parseError != nil {
+		return parseError
+	}
+	if configuration.HTTP.RateLimitAuthRequests, parseError = readPositiveInteger("TRACEPILOT_HTTP_RATE_LIMIT_AUTH_REQUESTS", configuration.HTTP.RateLimitAuthRequests); parseError != nil {
+		return parseError
+	}
+	if configuration.HTTP.RateLimitReplayRequests, parseError = readPositiveInteger("TRACEPILOT_HTTP_RATE_LIMIT_REPLAY_REQUESTS", configuration.HTTP.RateLimitReplayRequests); parseError != nil {
 		return parseError
 	}
 	if configuration.Replay.MaxResponseBytes, parseError = readPositiveInt64("TRACEPILOT_REPLAY_MAX_RESPONSE_BYTES", configuration.Replay.MaxResponseBytes); parseError != nil {
@@ -119,6 +135,27 @@ func applyEnvironment(configuration *Config) error {
 	if configuration.Ingestion.Workers, parseError = readPositiveInteger("TRACEPILOT_INGESTION_WORKERS", configuration.Ingestion.Workers); parseError != nil {
 		return parseError
 	}
+	if configuration.Security.MaxLineBytes, parseError = readPositiveInteger("TRACEPILOT_SECURITY_MAX_LINE_BYTES", configuration.Security.MaxLineBytes); parseError != nil {
+		return parseError
+	}
+	if configuration.Security.MaxConnections, parseError = readPositiveInteger("TRACEPILOT_SECURITY_MAX_CONNECTIONS", configuration.Security.MaxConnections); parseError != nil {
+		return parseError
+	}
+	if configuration.Security.IdleTimeout, parseError = readDuration("TRACEPILOT_SECURITY_IDLE_TIMEOUT", configuration.Security.IdleTimeout); parseError != nil {
+		return parseError
+	}
+	if configuration.Security.DetectionInterval, parseError = readDuration("TRACEPILOT_SECURITY_DETECTION_INTERVAL", configuration.Security.DetectionInterval); parseError != nil {
+		return parseError
+	}
+	if configuration.Notifications.PollInterval, parseError = readDuration("TRACEPILOT_WEBHOOK_POLL_INTERVAL", configuration.Notifications.PollInterval); parseError != nil {
+		return parseError
+	}
+	if configuration.Notifications.RequestTimeout, parseError = readDuration("TRACEPILOT_WEBHOOK_REQUEST_TIMEOUT", configuration.Notifications.RequestTimeout); parseError != nil {
+		return parseError
+	}
+	if configuration.Notifications.Workers, parseError = readPositiveInteger("TRACEPILOT_WEBHOOK_WORKERS", configuration.Notifications.Workers); parseError != nil {
+		return parseError
+	}
 	if redactedKeys, exists := os.LookupEnv("TRACEPILOT_INGESTION_REDACTED_KEYS"); exists {
 		configuration.Ingestion.RedactedKeys = splitCommaSeparated(redactedKeys)
 	}
@@ -144,115 +181,4 @@ func applyEnvironment(configuration *Config) error {
 		return parseError
 	}
 	return nil
-}
-
-func splitCommaSeparated(value string) []string {
-	parts := strings.Split(value, ",")
-	result := make([]string, 0, len(parts))
-	for _, part := range parts {
-		if trimmed := strings.TrimSpace(part); trimmed != "" {
-			result = append(result, trimmed)
-		}
-	}
-	return result
-}
-
-func environmentValue(name, fallback string) string {
-	if value, exists := os.LookupEnv(name); exists {
-		return value
-	}
-	return fallback
-}
-
-func readDuration(name string, fallback time.Duration) (time.Duration, error) {
-	rawValue, exists := os.LookupEnv(name)
-	if !exists {
-		return fallback, nil
-	}
-	parsedDuration, parseError := time.ParseDuration(rawValue)
-	if parseError != nil || parsedDuration <= 0 {
-		return 0, fmt.Errorf("%s must be a positive duration", name)
-	}
-	return parsedDuration, nil
-}
-
-func readNonNegativeDuration(name string, fallback time.Duration) (time.Duration, error) {
-	rawValue, exists := os.LookupEnv(name)
-	if !exists {
-		return fallback, nil
-	}
-	parsedDuration, parseError := time.ParseDuration(rawValue)
-	if parseError != nil || parsedDuration < 0 {
-		return 0, fmt.Errorf("%s must be a non-negative duration", name)
-	}
-	return parsedDuration, nil
-}
-
-func readBoolean(name string, fallback bool) (bool, error) {
-	rawValue, exists := os.LookupEnv(name)
-	if !exists {
-		return fallback, nil
-	}
-	parsed, parseError := strconv.ParseBool(rawValue)
-	if parseError != nil {
-		return false, fmt.Errorf("%s must be a boolean", name)
-	}
-	return parsed, nil
-}
-
-func readPositiveInteger(name string, fallback int) (int, error) {
-	rawValue, exists := os.LookupEnv(name)
-	if !exists {
-		return fallback, nil
-	}
-	parsedInteger, parseError := strconv.Atoi(rawValue)
-	if parseError != nil || parsedInteger <= 0 {
-		return 0, fmt.Errorf("%s must be a positive integer", name)
-	}
-	return parsedInteger, nil
-}
-
-func readPositiveInt64(name string, fallback int64) (int64, error) {
-	rawValue, exists := os.LookupEnv(name)
-	if !exists {
-		return fallback, nil
-	}
-	parsedInteger, parseError := strconv.ParseInt(rawValue, 10, 64)
-	if parseError != nil || parsedInteger <= 0 {
-		return 0, fmt.Errorf("%s must be a positive integer", name)
-	}
-	return parsedInteger, nil
-}
-
-func readPositiveInt32(name string, fallback int32) (int32, error) {
-	parsedInteger, parseError := readInt32(name, fallback)
-	if parseError != nil || parsedInteger <= 0 {
-		return 0, fmt.Errorf("%s must be a positive integer", name)
-	}
-	return parsedInteger, nil
-}
-
-func readNonNegativeInt32(name string, fallback int32) (int32, error) {
-	parsedInteger, parseError := readInt32(name, fallback)
-	if parseError != nil || parsedInteger < 0 {
-		return 0, fmt.Errorf("%s must be a non-negative integer", name)
-	}
-	return parsedInteger, nil
-}
-
-func readInt32(name string, fallback int32) (int32, error) {
-	rawValue, exists := os.LookupEnv(name)
-	if !exists {
-		return fallback, nil
-	}
-	parsedInteger, parseError := strconv.ParseInt(rawValue, 10, 32)
-	return int32(parsedInteger), parseError
-}
-
-func parseLogLevel(value string) (slog.Level, error) {
-	var level slog.Level
-	if parseError := level.UnmarshalText([]byte(strings.ToUpper(value))); parseError != nil {
-		return 0, errors.New("TRACEPILOT_LOG_LEVEL/log_level must be debug, info, warn, or error")
-	}
-	return level, nil
 }

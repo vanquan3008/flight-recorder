@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"net/http"
 	"regexp"
+	"strings"
 	"time"
 )
 
@@ -89,6 +90,19 @@ func (server *Server) withRequestID(nextHandler http.Handler) http.Handler {
 	})
 }
 
+func (server *Server) withSecurityHeaders(nextHandler http.Handler) http.Handler {
+	return http.HandlerFunc(func(responseWriter http.ResponseWriter, request *http.Request) {
+		responseWriter.Header().Set("X-Content-Type-Options", "nosniff")
+		responseWriter.Header().Set("X-Frame-Options", "DENY")
+		responseWriter.Header().Set("Referrer-Policy", "no-referrer")
+		responseWriter.Header().Set("Permissions-Policy", "camera=(), geolocation=(), microphone=()")
+		if server.certificateFile != "" {
+			responseWriter.Header().Set("Strict-Transport-Security", "max-age=31536000")
+		}
+		nextHandler.ServeHTTP(responseWriter, request)
+	})
+}
+
 func (server *Server) withCORS(nextHandler http.Handler) http.Handler {
 	return http.HandlerFunc(func(responseWriter http.ResponseWriter, request *http.Request) {
 		origin := request.Header.Get("Origin")
@@ -107,10 +121,14 @@ func (server *Server) withCORS(nextHandler http.Handler) http.Handler {
 
 		responseWriter.Header().Set("Access-Control-Allow-Origin", origin)
 		responseWriter.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-API-Key, X-Request-ID")
-		responseWriter.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, POST, PATCH, DELETE, OPTIONS")
+		responseWriter.Header().Set("Access-Control-Allow-Methods", server.corsAllowedMethods)
 		responseWriter.Header().Set("Access-Control-Max-Age", corsMaxAgeSeconds)
 		responseWriter.Header().Add("Vary", "Origin")
 		if request.Method == http.MethodOptions {
+			if !allowsCORSMethod(server.corsAllowedMethods, request.Header.Get("Access-Control-Request-Method")) {
+				http.Error(responseWriter, "method is not allowed", http.StatusMethodNotAllowed)
+				return
+			}
 			responseWriter.WriteHeader(http.StatusNoContent)
 			return
 		}
@@ -118,12 +136,21 @@ func (server *Server) withCORS(nextHandler http.Handler) http.Handler {
 	})
 }
 
+func allowsCORSMethod(methods, wanted string) bool {
+	for _, method := range strings.Split(methods, ",") {
+		if strings.TrimSpace(method) == wanted {
+			return true
+		}
+	}
+	return false
+}
+
 func (server *Server) withPanicRecovery(nextHandler http.Handler) http.Handler {
 	return http.HandlerFunc(func(responseWriter http.ResponseWriter, request *http.Request) {
 		defer func() {
 			if recoveredValue := recover(); recoveredValue != nil {
 				server.logger.Error("http panic", "request_id", request.Header.Get(requestIDHeader), "error", recoveredValue)
-				writeJSON(responseWriter, http.StatusInternalServerError, `{"error":{"code":"INTERNAL_ERROR","message":"internal server error"}}`)
+				writeAPIError(responseWriter, http.StatusInternalServerError, "INTERNAL_ERROR", "internal server error")
 			}
 		}()
 		nextHandler.ServeHTTP(responseWriter, request)

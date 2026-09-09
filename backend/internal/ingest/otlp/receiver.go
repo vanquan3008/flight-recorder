@@ -10,6 +10,7 @@ import (
 	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
 	"github.com/vanquan3008/tracepilot/internal/observability/metrics"
 	collectorlogspb "go.opentelemetry.io/proto/otlp/collector/logs/v1"
+	collectormetricspb "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
 	collectortracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -19,15 +20,33 @@ type Submitter interface {
 	Submit(context.Context, []telemetry.Event) (int, error)
 }
 
-type Receiver struct {
-	normalizer   *normalizer
-	pipeline     Submitter
-	metrics      *metrics.Registry
-	authenticate func(context.Context, string) (auth.Principal, error)
+// MetricsSubmitter accepts metric data points from the OTLP metrics pipeline.
+type MetricsSubmitter interface {
+	SubmitMetrics(context.Context, []telemetry.MetricDataPoint) (int, error)
 }
 
-func NewReceiver(configuration config.IngestionConfig, ingestionPipeline Submitter, metricRegistry *metrics.Registry, authenticate func(context.Context, string) (auth.Principal, error)) *Receiver {
-	return &Receiver{normalizer: newNormalizer(configuration), pipeline: ingestionPipeline, metrics: metricRegistry, authenticate: authenticate}
+type Receiver struct {
+	normalizer      *normalizer
+	pipeline        Submitter
+	metricsPipeline MetricsSubmitter
+	metrics         *metrics.Registry
+	authenticate    func(context.Context, string) (auth.Principal, error)
+}
+
+func NewReceiver(
+	configuration config.IngestionConfig,
+	ingestionPipeline Submitter,
+	metricsPipeline MetricsSubmitter,
+	metricRegistry *metrics.Registry,
+	authenticate func(context.Context, string) (auth.Principal, error),
+) *Receiver {
+	return &Receiver{
+		normalizer:      newNormalizer(configuration),
+		pipeline:        ingestionPipeline,
+		metricsPipeline: metricsPipeline,
+		metrics:         metricRegistry,
+		authenticate:    authenticate,
+	}
 }
 
 func (receiver *Receiver) authorize(ctx context.Context, rawKey string) error {
@@ -130,6 +149,57 @@ func (service *logsService) Export(ctx context.Context, request *collectorlogspb
 		return nil, status.Error(codes.Unauthenticated, "OTLP authentication failed")
 	}
 	response, exportError := service.receiver.exportLogs(ctx, request)
+	if exportError != nil {
+		return nil, status.Error(codes.Unavailable, exportError.Error())
+	}
+	return response, nil
+}
+
+func (receiver *Receiver) exportMetrics(ctx context.Context, request *collectormetricspb.ExportMetricsServiceRequest) (*collectormetricspb.ExportMetricsServiceResponse, error) {
+	if receiver.metricsPipeline == nil {
+		// Metrics pipeline not configured — accept silently to avoid breaking
+		// senders that include metrics alongside traces/logs.
+		return &collectormetricspb.ExportMetricsServiceResponse{}, nil
+	}
+	points, rejected := receiver.normalizer.metrics(request.GetResourceMetrics())
+	persisted, submitError := receiver.metricsPipeline.SubmitMetrics(ctx, points)
+	receiver.metrics.ObserveIngested("metrics", persisted)
+	if rejected > 0 {
+		receiver.metrics.ObserveRejected("metrics", "validation", rejected)
+	}
+	if submitError != nil {
+		return nil, errors.New("metrics ingestion unavailable")
+	}
+	response := &collectormetricspb.ExportMetricsServiceResponse{}
+	if rejected > 0 {
+		response.PartialSuccess = &collectormetricspb.ExportMetricsPartialSuccess{
+			RejectedDataPoints: int64(rejected),
+			ErrorMessage:       "one or more data points were rejected by validated ingestion limits",
+		}
+	}
+	return response, nil
+}
+
+type metricsService struct {
+	collectormetricspb.UnimplementedMetricsServiceServer
+	receiver *Receiver
+}
+
+func (service *metricsService) Export(ctx context.Context, request *collectormetricspb.ExportMetricsServiceRequest) (response *collectormetricspb.ExportMetricsServiceResponse, returnError error) {
+	startedAt := time.Now()
+	defer func() {
+		outcome := "ok"
+		if returnError != nil {
+			outcome = status.Code(returnError).String()
+		} else if response.GetPartialSuccess() != nil {
+			outcome = "partial"
+		}
+		service.receiver.metrics.ObserveOTLPRequest("grpc", "metrics", outcome, time.Since(startedAt))
+	}()
+	if authError := service.receiver.authorize(ctx, grpcAPIKey(ctx)); authError != nil {
+		return nil, status.Error(codes.Unauthenticated, "OTLP authentication failed")
+	}
+	response, exportError := service.receiver.exportMetrics(ctx, request)
 	if exportError != nil {
 		return nil, status.Error(codes.Unavailable, exportError.Error())
 	}

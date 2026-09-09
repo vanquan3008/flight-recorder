@@ -30,6 +30,15 @@ func TestLivenessReturnsRequestID(t *testing.T) {
 	if responseRequestID := responseRecorder.Header().Get(requestIDHeader); responseRequestID != "test-request-1" {
 		t.Fatalf("request ID = %q", responseRequestID)
 	}
+	for header, want := range map[string]string{
+		"X-Content-Type-Options": "nosniff",
+		"X-Frame-Options":        "DENY",
+		"Referrer-Policy":        "no-referrer",
+	} {
+		if got := responseRecorder.Header().Get(header); got != want {
+			t.Fatalf("%s = %q, want %q", header, got, want)
+		}
+	}
 }
 
 func TestCORSAllowsConfiguredOriginOnLiveness(t *testing.T) {
@@ -115,48 +124,51 @@ func TestManagementTLSConfigurationUsesModernMinimum(t *testing.T) {
 	}
 }
 
-func TestBackendDoesNotServeDashboard(t *testing.T) {
+func TestBackendServesSecurityConsole(t *testing.T) {
 	httpServer := newTestServer(func(context.Context) error { return nil })
 	responseRecorder := httptest.NewRecorder()
 	httpRequest := httptest.NewRequest(http.MethodGet, "/", nil)
 	httpServer.httpServer.Handler.ServeHTTP(responseRecorder, httpRequest)
-	if responseRecorder.Code != http.StatusNotFound {
-		t.Fatalf("status = %d", responseRecorder.Code)
+	if responseRecorder.Code != http.StatusOK || !strings.Contains(responseRecorder.Body.String(), "TracePilot Console") {
+		t.Fatalf("unexpected dashboard response: %d %s", responseRecorder.Code, responseRecorder.Body.String())
 	}
 }
 
-func TestServerExposesOpenAPIContract(t *testing.T) {
-	httpServer := newTestServer(func(context.Context) error { return nil })
-	responseRecorder := httptest.NewRecorder()
-	httpRequest := httptest.NewRequest(http.MethodGet, "/openapi.json", nil)
-	httpServer.httpServer.Handler.ServeHTTP(responseRecorder, httpRequest)
-	if responseRecorder.Code != http.StatusOK {
-		t.Fatalf("status = %d", responseRecorder.Code)
+func TestRateLimitReturnsStandardErrorAndRetryAfter(t *testing.T) {
+	configuration := config.Config{
+		HTTP:            config.HTTPConfig{ManagementMaxBodyBytes: 1024, RateLimitRequests: 1, RateLimitWindow: time.Minute},
+		Database:        config.DatabaseConfig{ReadinessTimeout: time.Second},
+		ShutdownTimeout: time.Second,
 	}
-	if !strings.Contains(responseRecorder.Body.String(), `"openapi":"3.1.0"`) || !strings.Contains(responseRecorder.Body.String(), `"/api/v1/api-key-events"`) {
-		t.Fatalf("unexpected OpenAPI response: %s", responseRecorder.Body.String())
+	server := New(configuration, slog.New(slog.NewTextHandler(io.Discard, nil)), func(context.Context) error { return nil }, metrics.New("test", "test", "test"), nil, nil)
+	for attempt := 0; attempt < 2; attempt++ {
+		responseRecorder := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodGet, "/api/v1/logs", nil)
+		request.RemoteAddr = "192.0.2.10:1234"
+		server.httpServer.Handler.ServeHTTP(responseRecorder, request)
+		if attempt == 0 && responseRecorder.Code == http.StatusTooManyRequests {
+			t.Fatal("first request was rate limited")
+		}
+		if attempt == 1 {
+			if responseRecorder.Code != http.StatusTooManyRequests || responseRecorder.Header().Get("Retry-After") == "" {
+				t.Fatalf("status=%d retry-after=%q", responseRecorder.Code, responseRecorder.Header().Get("Retry-After"))
+			}
+			if !strings.Contains(responseRecorder.Body.String(), `"RATE_LIMITED"`) || responseRecorder.Header().Get(requestIDHeader) == "" {
+				t.Fatalf("unexpected rate limit response: %s", responseRecorder.Body.String())
+			}
+		}
 	}
 }
 
 func TestCORSPreflightAllowsConfiguredOrigin(t *testing.T) {
-	tests := []struct {
-		path   string
-		method string
-	}{
-		{path: "/api/v1/traces", method: http.MethodGet},
-		{path: "/api/v1/incidents/01900000-0000-7000-8000-000000000001", method: http.MethodPatch},
-		{path: "/api/v1/api-keys/01900000-0000-7000-8000-000000000001", method: http.MethodDelete},
-		{path: "/health/ready", method: http.MethodGet},
-	}
-
-	for _, preflight := range tests {
-		t.Run(preflight.method+" "+preflight.path, func(t *testing.T) {
+	for _, route := range apiRouteDefinitions {
+		t.Run(route.method+" "+route.path, func(t *testing.T) {
 			httpServer := newTestServer(func(context.Context) error { return nil })
 			httpServer.allowedOrigins["http://operator.example.test"] = struct{}{}
 			responseRecorder := httptest.NewRecorder()
-			httpRequest := httptest.NewRequest(http.MethodOptions, preflight.path, nil)
+			httpRequest := httptest.NewRequest(http.MethodOptions, route.path, nil)
 			httpRequest.Header.Set("Origin", "http://operator.example.test")
-			httpRequest.Header.Set("Access-Control-Request-Method", preflight.method)
+			httpRequest.Header.Set("Access-Control-Request-Method", route.method)
 
 			httpServer.httpServer.Handler.ServeHTTP(responseRecorder, httpRequest)
 
@@ -166,8 +178,8 @@ func TestCORSPreflightAllowsConfiguredOrigin(t *testing.T) {
 			if allowedOrigin := responseRecorder.Header().Get("Access-Control-Allow-Origin"); allowedOrigin != "http://operator.example.test" {
 				t.Fatalf("allowed origin = %q", allowedOrigin)
 			}
-			if allowedMethods := responseRecorder.Header().Get("Access-Control-Allow-Methods"); !strings.Contains(allowedMethods, preflight.method) {
-				t.Fatalf("allowed methods %q do not contain %q", allowedMethods, preflight.method)
+			if !allowsCORSMethod(responseRecorder.Header().Get("Access-Control-Allow-Methods"), route.method) {
+				t.Fatalf("allowed methods do not contain %q", route.method)
 			}
 		})
 	}
@@ -182,6 +194,21 @@ func TestCORSPreflightRejectsUnknownOrigin(t *testing.T) {
 	httpServer.httpServer.Handler.ServeHTTP(responseRecorder, httpRequest)
 
 	if responseRecorder.Code != http.StatusForbidden {
+		t.Fatalf("status = %d", responseRecorder.Code)
+	}
+}
+
+func TestCORSPreflightRejectsUnsupportedMethod(t *testing.T) {
+	httpServer := newTestServer(func(context.Context) error { return nil })
+	httpServer.allowedOrigins["http://operator.example.test"] = struct{}{}
+	responseRecorder := httptest.NewRecorder()
+	httpRequest := httptest.NewRequest(http.MethodOptions, "/api/v1/traces", nil)
+	httpRequest.Header.Set("Origin", "http://operator.example.test")
+	httpRequest.Header.Set("Access-Control-Request-Method", http.MethodConnect)
+
+	httpServer.httpServer.Handler.ServeHTTP(responseRecorder, httpRequest)
+
+	if responseRecorder.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("status = %d", responseRecorder.Code)
 	}
 }

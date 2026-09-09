@@ -59,9 +59,13 @@ func Enqueue(directory string, maxBytes int64, payload []byte) error {
 	}
 	var used int64
 	for _, entry := range entries {
-		info, infoError := entry.Info()
+		path := filepath.Join(directory, entry.Name())
+		info, infoError := os.Lstat(path)
 		if infoError != nil {
 			return infoError
+		}
+		if !info.Mode().IsRegular() {
+			continue
 		}
 		used += info.Size()
 	}
@@ -88,10 +92,23 @@ func Dequeue(directory string) ([]byte, func() error, error) {
 	if len(entries) == 0 {
 		return nil, nil, nil
 	}
-	path := filepath.Join(directory, entries[0].Name())
-	payload, payloadError := os.ReadFile(path)
-	if payloadError != nil {
-		return nil, nil, payloadError
+	for _, entry := range entries {
+		path := filepath.Join(directory, entry.Name())
+		info, infoError := os.Lstat(path)
+		if infoError != nil {
+			return nil, nil, infoError
+		}
+		// Never follow symlinks or process directories placed in the spool. The
+		// spool is an untrusted filesystem boundary and only regular files are
+		// valid queue entries.
+		if !info.Mode().IsRegular() {
+			continue
+		}
+		payload, payloadError := os.ReadFile(path)
+		if payloadError != nil {
+			return nil, nil, payloadError
+		}
+		return payload, func() error { return os.Remove(path) }, nil
 	}
-	return payload, func() error { return os.Remove(path) }, nil
+	return nil, nil, nil
 }

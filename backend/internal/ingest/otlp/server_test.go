@@ -22,7 +22,9 @@ import (
 	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
 	statuspb "google.golang.org/genproto/googleapis/rpc/status"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
@@ -38,7 +40,7 @@ func TestOTLPHTTPLogsPersistBeforeSuccess(t *testing.T) {
 	ingestionPipeline.Start()
 	ingestionConfiguration := testIngestionConfig()
 	ingestionConfiguration.MaxRequestBytes = 1 << 20
-	receiver := NewReceiver(ingestionConfiguration, ingestionPipeline, metricRegistry, nil)
+	receiver := NewReceiver(ingestionConfiguration, ingestionPipeline, nil, metricRegistry, nil)
 	server := NewServer(config.Config{
 		Ingestion:       ingestionConfiguration,
 		HTTP:            config.HTTPConfig{MaxHeaderBytes: 1 << 20},
@@ -84,7 +86,7 @@ func TestOTLPGRPCTracesPersistBeforeSuccess(t *testing.T) {
 	ingestionPipeline.Start()
 	ingestionConfiguration := testIngestionConfig()
 	ingestionConfiguration.MaxRequestBytes = 1 << 20
-	server := NewServer(config.Config{Ingestion: ingestionConfiguration}, NewReceiver(ingestionConfiguration, ingestionPipeline, metricRegistry, nil))
+	server := NewServer(config.Config{Ingestion: ingestionConfiguration}, NewReceiver(ingestionConfiguration, ingestionPipeline, nil, metricRegistry, nil))
 	listener := bufconn.Listen(1 << 20)
 	go func() { _ = server.grpcServer.Serve(listener) }()
 	t.Cleanup(server.grpcServer.Stop)
@@ -182,7 +184,7 @@ func TestOTLPHTTPStorageFailureIsRetryable(t *testing.T) {
 
 	ingestionConfiguration := testIngestionConfig()
 	ingestionConfiguration.MaxRequestBytes = 1 << 20
-	server := NewServer(config.Config{Ingestion: ingestionConfiguration}, NewReceiver(ingestionConfiguration, ingestionPipeline, metricRegistry, nil))
+	server := NewServer(config.Config{Ingestion: ingestionConfiguration}, NewReceiver(ingestionConfiguration, ingestionPipeline, nil, metricRegistry, nil))
 	requestMessage := &collectortracepb.ExportTraceServiceRequest{ResourceSpans: []*tracepb.ResourceSpans{{
 		Resource: &resourcepb.Resource{Attributes: []*commonpb.KeyValue{stringKeyValue("service.name", "api")}},
 		ScopeSpans: []*tracepb.ScopeSpans{{Spans: []*tracepb.Span{{
@@ -206,6 +208,26 @@ func TestOTLPHTTPStorageFailureIsRetryable(t *testing.T) {
 	}
 	if responseRecorder.Header().Get("Retry-After") != "1" {
 		t.Fatalf("retry-after = %q", responseRecorder.Header().Get("Retry-After"))
+	}
+}
+
+func TestOTLPGRPCRejectsMessageAboveHTTPBodyLimit(t *testing.T) {
+	server := NewServer(config.Config{Ingestion: config.IngestionConfig{MaxRequestBytes: 32}}, nil)
+	listener := bufconn.Listen(1 << 20)
+	go func() { _ = server.grpcServer.Serve(listener) }()
+	t.Cleanup(server.grpcServer.Stop)
+	connection, connectionError := grpc.NewClient("passthrough:///bufnet-limit",
+		grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) { return listener.Dial() }),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	if connectionError != nil {
+		t.Fatal(connectionError)
+	}
+	defer connection.Close()
+	request := &collectortracepb.ExportTraceServiceRequest{ResourceSpans: []*tracepb.ResourceSpans{{ScopeSpans: []*tracepb.ScopeSpans{{Spans: []*tracepb.Span{{Name: "this payload is larger than thirty two bytes"}}}}}}}
+	_, exportError := collectortracepb.NewTraceServiceClient(connection).Export(context.Background(), request)
+	if status.Code(exportError) != codes.ResourceExhausted {
+		t.Fatalf("gRPC oversized status = %v, error=%v", status.Code(exportError), exportError)
 	}
 }
 

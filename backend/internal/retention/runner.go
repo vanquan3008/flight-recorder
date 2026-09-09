@@ -14,12 +14,26 @@ type Store interface {
 	CountEventsBefore(context.Context, time.Time) (int64, error)
 }
 
+// MetricStore is optional so existing stores and tests can retain their small
+// event-only contract. PostgreSQL implements it when OTLP metrics are enabled.
+type MetricStore interface {
+	DeleteMetricsBefore(context.Context, time.Time, int) (int64, error)
+}
+
 func Run(ctx context.Context, logger *slog.Logger, store Store, selfMetrics *metrics.Registry, maxAge, interval time.Duration, batchSize int) error {
 	prune := func() {
 		startedAt := time.Now()
 		pruneContext, cancelPrune := context.WithTimeout(ctx, 30*time.Second)
 		before := time.Now().UTC().Add(-maxAge)
 		deleted, pruneError := DeleteExpired(pruneContext, before, batchSize, store.DeleteEventsBefore)
+		if metricStore, ok := store.(MetricStore); ok {
+			metricDeleted, metricError := DeleteExpired(pruneContext, before, batchSize, metricStore.DeleteMetricsBefore)
+			if metricError != nil {
+				pruneError = errors.Join(pruneError, metricError)
+			} else if metricDeleted > 0 {
+				logger.Info("metric retention cleanup completed", "deleted_points", metricDeleted)
+			}
+		}
 		if pruneError == nil {
 			if backlog, backlogError := store.CountEventsBefore(pruneContext, before); backlogError != nil {
 				logger.Warn("retention backlog metric failed", "error", backlogError)

@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -18,46 +17,14 @@ import (
 	replaydomain "github.com/vanquan3008/tracepilot/internal/domain/replay"
 	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
 	"github.com/vanquan3008/tracepilot/internal/observability/metrics"
+	"github.com/vanquan3008/tracepilot/internal/query"
 	"github.com/vanquan3008/tracepilot/internal/replay"
-	"github.com/vanquan3008/tracepilot/internal/storage/postgres"
 )
 
 func TestAuthenticatedLogQueryIntegration(t *testing.T) {
-	if os.Getenv("TRACEPILOT_INTEGRATION_TEST") != "1" {
-		t.Skip("set TRACEPILOT_INTEGRATION_TEST=1 against a migrated disposable PostgreSQL database")
-	}
-	databaseURL := os.Getenv("TRACEPILOT_DATABASE_URL")
-	if databaseURL == "" {
-		t.Fatal("TRACEPILOT_DATABASE_URL is required")
-	}
-	database, openError := postgres.Open(context.Background(), config.DatabaseConfig{
-		URL:                   databaseURL,
-		MaxConnections:        4,
-		MaxConnectionLifetime: time.Minute,
-		MaxConnectionIdleTime: time.Minute,
-		HealthCheckPeriod:     time.Minute,
-	})
-	if openError != nil {
-		t.Fatal(openError)
-	}
-	t.Cleanup(database.Close)
-
-	runID := time.Now().UTC().Format(time.RFC3339Nano)
-	projectID := telemetry.DeterministicID(time.Now().UTC(), "query-integration-project", runID)
-	ingestion := config.IngestionConfig{
-		ProjectID:       projectID,
-		ProjectSlug:     "query-" + projectID[24:32],
-		ProjectName:     "Query Integration",
-		EnvironmentID:   telemetry.DeterministicID(time.Now().UTC(), "query-integration-environment", runID),
-		EnvironmentName: "test",
-	}
-	if scopeError := database.EnsureIngestionScope(context.Background(), ingestion); scopeError != nil {
-		t.Fatal(scopeError)
-	}
-	bootstrapKey := "integration-query-key-" + projectID
-	if keyError := database.EnsureBootstrapAPIKey(context.Background(), ingestion.ProjectID, bootstrapKey); keyError != nil {
-		t.Fatal(keyError)
-	}
+	database, ingestion, bootstrapKey := newQueryIntegrationDatabase(t)
+	projectID := ingestion.ProjectID
+	runID := projectID
 	timestamp := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
 	event := telemetry.Event{
 		ID:                 telemetry.DeterministicID(timestamp, "query-integration", projectID),
@@ -77,8 +44,20 @@ func TestAuthenticatedLogQueryIntegration(t *testing.T) {
 	secondEvent := event
 	secondEvent.ID = telemetry.DeterministicID(timestamp.Add(time.Second), "query-integration", projectID)
 	secondEvent.Timestamp = timestamp.Add(time.Second)
-	if storeError := database.StoreEvents(context.Background(), ingestion, []telemetry.Event{event, secondEvent}); storeError != nil {
+	spanEvent := telemetry.Event{
+		ID: telemetry.DeterministicID(timestamp, "query-integration-span", projectID), ProjectID: ingestion.ProjectID,
+		Environment: ingestion.EnvironmentName, ServiceName: "query-service", Type: telemetry.EventHTTPServer,
+		Timestamp: timestamp, Duration: 500 * time.Millisecond, Operation: "GET /slow", Status: "OK",
+		TraceID: "0123456789abcdef0123456789abcdef", SpanID: "0123456789abcdef", Signal: telemetry.SignalTrace,
+		Attributes: map[string]any{}, ResourceAttributes: map[string]any{}, ScopeAttributes: map[string]any{}, RecordAttributes: map[string]any{},
+	}
+	if storeError := database.StoreEvents(context.Background(), ingestion, []telemetry.Event{event, secondEvent, spanEvent}); storeError != nil {
 		t.Fatal(storeError)
+	}
+	minimumDuration := int64(250 * time.Millisecond)
+	traces, traceError := database.ListTraces(context.Background(), ingestion.ProjectID, query.TraceFilter{EnvironmentID: ingestion.EnvironmentID, MinDurationNs: &minimumDuration, Limit: 10})
+	if traceError != nil || len(traces) != 1 || traces[0].TraceID != spanEvent.TraceID {
+		t.Fatalf("duration trace query = %#v, error = %v", traces, traceError)
 	}
 	otherEnvironment := ingestion
 	otherEnvironment.EnvironmentID = telemetry.DeterministicID(time.Now().UTC(), "query-integration-other-environment", runID)
@@ -121,6 +100,13 @@ func TestAuthenticatedLogQueryIntegration(t *testing.T) {
 	}
 	replayService := replay.NewService(database, executor)
 	server := New(configuration, slog.New(slog.NewTextHandler(io.Discard, nil)), func(context.Context) error { return nil }, metrics.New("test", "test", "test"), database, replayService)
+	traceRequest := httptest.NewRequest(http.MethodGet, "/api/v1/traces?minDuration=250ms", nil)
+	traceRequest.Header.Set(apiKeyHeader, bootstrapKey)
+	traceResponse := httptest.NewRecorder()
+	server.httpServer.Handler.ServeHTTP(traceResponse, traceRequest)
+	if traceResponse.Code != http.StatusOK || !strings.Contains(traceResponse.Body.String(), spanEvent.TraceID) {
+		t.Fatalf("trace query status = %d, body = %s", traceResponse.Code, traceResponse.Body.String())
+	}
 	secureConfiguration := configuration
 	secureConfiguration.Production = true
 	secureServer := New(secureConfiguration, slog.New(slog.NewTextHandler(io.Discard, nil)), func(context.Context) error { return nil }, metrics.New("test", "test", "test"), database, replayService)

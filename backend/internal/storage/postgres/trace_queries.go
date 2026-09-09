@@ -20,10 +20,12 @@ func (database *Database) ListTraces(ctx context.Context, projectID string, filt
 			AND ($6 = '' OR trace_id = $6) AND ($7::timestamptz IS NULL OR started_at >= $7)
 			AND ($8::timestamptz IS NULL OR started_at <= $8)
 		GROUP BY trace_id
-		HAVING $9::timestamptz IS NULL OR max(started_at) < $9 OR (max(started_at) = $9 AND trace_id < $10)
-		ORDER BY max(started_at) DESC, trace_id DESC LIMIT $11`,
+		HAVING ($9::timestamptz IS NULL OR max(started_at) < $9 OR (max(started_at) = $9 AND trace_id < $10))
+		   AND ($11::bigint IS NULL OR (extract(epoch FROM max(ended_at) - min(started_at)) * 1000000000)::bigint >= $11)
+		   AND ($12::bigint IS NULL OR (extract(epoch FROM max(ended_at) - min(started_at)) * 1000000000)::bigint <= $12)
+		ORDER BY max(started_at) DESC, trace_id DESC LIMIT $13`,
 		projectID, filter.EnvironmentID, filter.Service, filter.Operation, filter.Status, filter.TraceID,
-		nullableTime(filter.From), nullableTime(filter.To), nullableTime(filter.Before), filter.CursorID, filter.Limit+1)
+		nullableTime(filter.From), nullableTime(filter.To), nullableTime(filter.Before), nullableString(filter.CursorID), nullableInt64Ptr(filter.MinDurationNs), nullableInt64Ptr(filter.MaxDurationNs), filter.Limit+1)
 	if queryError != nil {
 		return nil, fmt.Errorf("list traces: %w", queryError)
 	}

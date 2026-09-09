@@ -5,6 +5,8 @@
 package sqlc
 
 import (
+	"net/netip"
+
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -130,6 +132,31 @@ type Log struct {
 	DroppedAttributesCount int32
 }
 
+type MetricDataPoint struct {
+	ID                 pgtype.UUID
+	ProjectID          pgtype.UUID
+	EnvironmentID      pgtype.UUID
+	MetricName         string
+	MetricUnit         string
+	MetricType         string
+	ServiceName        string
+	ServiceVersion     pgtype.Text
+	OccurredAt         pgtype.Timestamptz
+	Value              pgtype.Float8
+	HistCount          pgtype.Int8
+	HistSum            pgtype.Float8
+	HistMin            pgtype.Float8
+	HistMax            pgtype.Float8
+	HistBuckets        []byte
+	Temporality        string
+	IsMonotonic        pgtype.Bool
+	Attributes         []byte
+	ResourceAttributes []byte
+	ScopeName          string
+	ScopeVersion       string
+	IngestedAt         pgtype.Timestamptz
+}
+
 type Project struct {
 	ID        pgtype.UUID
 	Slug      string
@@ -151,6 +178,103 @@ type ReplayExecution struct {
 	Comparison  []byte
 	CreatedBy   string
 	CreatedAt   pgtype.Timestamptz
+}
+
+type SecurityDetection struct {
+	ID              pgtype.UUID
+	ProjectID       pgtype.UUID
+	EnvironmentID   pgtype.UUID
+	RuleID          pgtype.UUID
+	RuleVersion     int32
+	SecurityEventID pgtype.UUID
+	IncidentID      pgtype.UUID
+	GroupKey        string
+	WindowStartedAt pgtype.Timestamptz
+	WindowEndedAt   pgtype.Timestamptz
+	Severity        string
+	CreatedAt       pgtype.Timestamptz
+}
+
+type SecurityDetectionCheckpoint struct {
+	ProjectID      pgtype.UUID
+	EnvironmentID  pgtype.UUID
+	LastIngestedAt pgtype.Timestamptz
+	LastEventID    pgtype.UUID
+	UpdatedAt      pgtype.Timestamptz
+}
+
+type SecurityDetectionRule struct {
+	ID             pgtype.UUID
+	ProjectID      pgtype.UUID
+	Name           string
+	Description    pgtype.Text
+	Version        int32
+	Enabled        bool
+	Severity       string
+	MatchField     string
+	MatchOperator  string
+	MatchValue     string
+	ThresholdCount int32
+	GroupByField   pgtype.Text
+	WindowSeconds  int32
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+}
+
+type SecurityEvent struct {
+	ID               pgtype.UUID
+	ProjectID        pgtype.UUID
+	EnvironmentID    pgtype.UUID
+	RawEventID       pgtype.UUID
+	SourceID         pgtype.UUID
+	OccurredAt       pgtype.Timestamptz
+	IngestedAt       pgtype.Timestamptz
+	Format           string
+	EventKind        string
+	Category         pgtype.Text
+	Action           pgtype.Text
+	Outcome          pgtype.Text
+	Severity         pgtype.Text
+	ObserverVendor   pgtype.Text
+	ObserverProduct  pgtype.Text
+	ObserverHostname pgtype.Text
+	HostName         pgtype.Text
+	UserName         pgtype.Text
+	SourceIp         *netip.Addr
+	SourcePort       pgtype.Int4
+	DestinationIp    *netip.Addr
+	DestinationPort  pgtype.Int4
+	NetworkTransport pgtype.Text
+	NetworkProtocol  pgtype.Text
+	RuleIdentifier   pgtype.Text
+	RuleName         pgtype.Text
+	Message          pgtype.Text
+	Attributes       []byte
+}
+
+type SecurityRuleAudit struct {
+	ID           pgtype.UUID
+	ProjectID    pgtype.UUID
+	RuleID       pgtype.UUID
+	RuleVersion  int32
+	Action       string
+	ActorKeyID   pgtype.UUID
+	RuleSnapshot []byte
+	CreatedAt    pgtype.Timestamptz
+}
+
+type SecuritySource struct {
+	ID            pgtype.UUID
+	ProjectID     pgtype.UUID
+	EnvironmentID pgtype.UUID
+	Name          string
+	SourceType    string
+	Format        string
+	LastSeenAt    pgtype.Timestamptz
+	AcceptedCount int64
+	ErrorCount    int64
+	CreatedAt     pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
 }
 
 type Service struct {
@@ -191,4 +315,32 @@ type Span struct {
 	DroppedAttributesCount int32
 	DroppedEventsCount     int32
 	DroppedLinksCount      int32
+}
+
+type Webhook struct {
+	ID        pgtype.UUID
+	ProjectID pgtype.UUID
+	Name      string
+	Url       string
+	Secret    string
+	Events    []string
+	Enabled   bool
+	CreatedAt pgtype.Timestamptz
+	UpdatedAt pgtype.Timestamptz
+}
+
+type WebhookDelivery struct {
+	ID            pgtype.UUID
+	ProjectID     pgtype.UUID
+	WebhookID     pgtype.UUID
+	EventType     string
+	Payload       []byte
+	Status        string
+	Attempt       int32
+	MaxAttempts   int32
+	HttpStatus    pgtype.Int4
+	LastError     pgtype.Text
+	NextAttemptAt pgtype.Timestamptz
+	CreatedAt     pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
 }

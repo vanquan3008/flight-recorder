@@ -12,50 +12,73 @@ import (
 
 	"github.com/vanquan3008/tracepilot/internal/config"
 	"github.com/vanquan3008/tracepilot/internal/observability/metrics"
+	"github.com/vanquan3008/tracepilot/internal/webui"
 )
 
 type Server struct {
-	httpServer            *http.Server
-	logger                *slog.Logger
-	metrics               *metrics.Registry
-	metricsHandler        http.Handler
-	readinessCheck        func(context.Context) error
-	readinessTimeout      time.Duration
-	environmentID         string
-	maxBodyBytes          int64
-	ready                 atomic.Bool
-	shutdownTimeout       time.Duration
-	backend               Backend
-	replay                ReplayRunner
-	replayMaxRequestBytes int64
-	allowedOrigins        map[string]struct{}
-	metricsRequireAuth    bool
-	certificateFile       string
-	privateKeyFile        string
+	httpServer              *http.Server
+	logger                  *slog.Logger
+	metrics                 *metrics.Registry
+	metricsHandler          http.Handler
+	readinessCheck          func(context.Context) error
+	readinessTimeout        time.Duration
+	environmentID           string
+	maxBodyBytes            int64
+	ready                   atomic.Bool
+	shutdownTimeout         time.Duration
+	backend                 Backend
+	replay                  ReplayRunner
+	replayMaxRequestBytes   int64
+	allowedOrigins          map[string]struct{}
+	corsAllowedMethods      string
+	metricsRequireAuth      bool
+	rateLimiter             *requestRateLimiter
+	rateLimitRequests       int
+	rateLimitAuthRequests   int
+	rateLimitReplayRequests int
+	certificateFile         string
+	privateKeyFile          string
+	webhooksEnabled         bool
 }
 
 func New(configuration config.Config, logger *slog.Logger, readinessCheck func(context.Context) error, metricRegistry *metrics.Registry, backend Backend, replayRunner ReplayRunner) *Server {
 	server := &Server{
-		logger:                logger,
-		metrics:               metricRegistry,
-		metricsHandler:        metricRegistry.Handler(),
-		readinessCheck:        readinessCheck,
-		readinessTimeout:      configuration.Database.ReadinessTimeout,
-		environmentID:         configuration.Ingestion.EnvironmentID,
-		maxBodyBytes:          configuration.HTTP.ManagementMaxBodyBytes,
-		shutdownTimeout:       configuration.ShutdownTimeout,
-		backend:               backend,
-		replay:                replayRunner,
-		replayMaxRequestBytes: configuration.Replay.MaxRequestBytes,
-		allowedOrigins:        make(map[string]struct{}, len(configuration.HTTP.AllowedOrigins)),
-		metricsRequireAuth:    configuration.Production,
-		certificateFile:       configuration.TLS.CertificateFile,
-		privateKeyFile:        configuration.TLS.PrivateKeyFile,
+		logger:                  logger,
+		metrics:                 metricRegistry,
+		metricsHandler:          metricRegistry.Handler(),
+		readinessCheck:          readinessCheck,
+		readinessTimeout:        configuration.Database.ReadinessTimeout,
+		environmentID:           configuration.Ingestion.EnvironmentID,
+		maxBodyBytes:            configuration.HTTP.ManagementMaxBodyBytes,
+		shutdownTimeout:         configuration.ShutdownTimeout,
+		backend:                 backend,
+		replay:                  replayRunner,
+		replayMaxRequestBytes:   configuration.Replay.MaxRequestBytes,
+		allowedOrigins:          make(map[string]struct{}, len(configuration.HTTP.AllowedOrigins)),
+		corsAllowedMethods:      corsMethods(apiRouteDefinitions),
+		metricsRequireAuth:      configuration.Production,
+		rateLimiter:             newRequestRateLimiter(configuration.HTTP.RateLimitWindow),
+		rateLimitRequests:       configuration.HTTP.RateLimitRequests,
+		rateLimitAuthRequests:   configuration.HTTP.RateLimitAuthRequests,
+		rateLimitReplayRequests: configuration.HTTP.RateLimitReplayRequests,
+		certificateFile:         configuration.TLS.CertificateFile,
+		privateKeyFile:          configuration.TLS.PrivateKeyFile,
+		webhooksEnabled:         configuration.Notifications.Enabled,
+	}
+	if server.rateLimitRequests <= 0 {
+		server.rateLimitRequests = 120
+	}
+	if server.rateLimitAuthRequests <= 0 {
+		server.rateLimitAuthRequests = 20
+	}
+	if server.rateLimitReplayRequests <= 0 {
+		server.rateLimitReplayRequests = 10
 	}
 	for _, origin := range configuration.HTTP.AllowedOrigins {
 		server.allowedOrigins[origin] = struct{}{}
 	}
 	router := http.NewServeMux()
+	router.Handle("GET /", webui.New())
 	router.HandleFunc("GET /openapi.json", server.openAPI)
 	router.HandleFunc("GET /health/live", server.live)
 	router.HandleFunc("GET /health/ready", server.readiness)
@@ -64,29 +87,7 @@ func New(configuration config.Config, logger *slog.Logger, readinessCheck func(c
 	// authentication has not been configured they return an explicit 401 instead
 	// of falling through to the dashboard and looking like a missing route.
 	if backend != nil {
-		router.HandleFunc("GET /api/v1/traces", server.listTraces)
-		router.HandleFunc("GET /api/v1/traces/{traceID}", server.getTrace)
-		router.HandleFunc("GET /api/v1/traces/{traceID}/logs", server.listTraceLogs)
-		router.HandleFunc("GET /api/v1/logs", server.listLogs)
-		router.HandleFunc("GET /api/v1/logs/{eventID}", server.getLog)
-		router.HandleFunc("GET /api/v1/services", server.listServices)
-		router.HandleFunc("GET /api/v1/services/{service}/dependencies", server.listServiceDependencies)
-		router.HandleFunc("GET /api/v1/incidents", server.listIncidents)
-		router.HandleFunc("GET /api/v1/incidents/{incidentID}", server.getIncident)
-		router.HandleFunc("GET /api/v1/incidents/{incidentID}/occurrences", server.listIncidentOccurrences)
-		router.HandleFunc("GET /api/v1/incidents/{incidentID}/events", server.listIncidentEvents)
-		router.HandleFunc("GET /api/v1/incidents/{incidentID}/status-changes", server.listIncidentStatusChanges)
-		router.HandleFunc("GET /api/v1/incidents/{incidentID}/executions", server.listAllowedRequestExecutions)
-		router.HandleFunc("GET /api/v1/incidents/{incidentID}/executions/{executionID}", server.getAllowedRequestExecution)
-		router.HandleFunc("PATCH /api/v1/incidents/{incidentID}", server.updateIncident)
-		router.HandleFunc("GET /api/v1/api-keys", server.listAPIKeys)
-		router.HandleFunc("GET /api/v1/api-key-events", server.listAPIKeyEvents)
-		router.HandleFunc("POST /api/v1/api-keys", server.createAPIKey)
-		router.HandleFunc("POST /api/v1/api-keys/{keyID}/rotate", server.rotateAPIKey)
-		router.HandleFunc("DELETE /api/v1/api-keys/{keyID}", server.revokeAPIKey)
-		if replayRunner != nil {
-			router.HandleFunc("POST /api/v1/incidents/{incidentID}/replays", server.replayIncident)
-		}
+		server.registerAPIRoutes(router)
 	}
 
 	var requestHandler http.Handler = router
@@ -94,7 +95,9 @@ func New(configuration config.Config, logger *slog.Logger, readinessCheck func(c
 	requestHandler = server.withPanicRecovery(requestHandler)
 	requestHandler = server.withCORS(requestHandler)
 	requestHandler = server.withAccessLog(requestHandler)
+	requestHandler = server.withRateLimit(requestHandler)
 	requestHandler = server.withMetrics(requestHandler)
+	requestHandler = server.withSecurityHeaders(requestHandler)
 	requestHandler = server.withRequestID(requestHandler)
 	server.httpServer = &http.Server{
 		Addr:              configuration.HTTP.Address,

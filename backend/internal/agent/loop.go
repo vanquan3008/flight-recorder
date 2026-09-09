@@ -2,8 +2,9 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"os"
+	"log/slog"
 	"time"
 )
 
@@ -29,6 +30,7 @@ type AgentLoop struct {
 	BatchLines      int
 	Exporter        LogExporter
 	Metrics         *Metrics
+	Logger          *slog.Logger
 
 	// State managed across Tick calls.
 	checkpoint  Checkpoint
@@ -39,9 +41,24 @@ type AgentLoop struct {
 // NewAgentLoop creates an AgentLoop and loads the initial checkpoint from disk.
 // Returns an error if the checkpoint file exists but cannot be parsed.
 func NewAgentLoop(source, checkpointPath, bufferDirectory string, bufferBytes int64, batchBytes, batchLines int, exporter LogExporter, metrics *Metrics) (*AgentLoop, error) {
+	return NewAgentLoopWithLogger(source, checkpointPath, bufferDirectory, bufferBytes, batchBytes, batchLines, exporter, metrics, slog.Default())
+}
+
+// NewAgentLoopWithLogger creates an AgentLoop with a custom logger.
+// Use this when you need structured logging integrated with the parent process.
+func NewAgentLoopWithLogger(source, checkpointPath, bufferDirectory string, bufferBytes int64, batchBytes, batchLines int, exporter LogExporter, metrics *Metrics, logger *slog.Logger) (*AgentLoop, error) {
+	if exporter == nil {
+		return nil, errors.New("agent exporter is required")
+	}
 	checkpoint, err := LoadCheckpoint(checkpointPath)
 	if err != nil {
 		return nil, err
+	}
+	if metrics == nil {
+		metrics = NewMetrics()
+	}
+	if logger == nil {
+		logger = slog.Default()
 	}
 	return &AgentLoop{
 		Source:          source,
@@ -52,6 +69,7 @@ func NewAgentLoop(source, checkpointPath, bufferDirectory string, bufferBytes in
 		BatchLines:      batchLines,
 		Exporter:        exporter,
 		Metrics:         metrics,
+		Logger:          logger,
 		checkpoint:      checkpoint,
 	}, nil
 }
@@ -63,7 +81,7 @@ func NewAgentLoop(source, checkpointPath, bufferDirectory string, bufferBytes in
 //
 // Returns a non-nil error only for unrecoverable failures (checkpoint write failure,
 // spool acknowledgement failure after a successful export). Transient errors — export
-// timeouts, read errors, spool encode/enqueue failures — are printed to stderr and
+// timeouts, read errors, spool encode/enqueue failures — are logged as warnings and
 // reported via Metrics so the loop can continue on the next Tick.
 func (loop *AgentLoop) Tick(ctx context.Context) error {
 	spoolBlocked := false
@@ -72,14 +90,14 @@ func (loop *AgentLoop) Tick(ctx context.Context) error {
 	if loop.BufferDirectory != "" {
 		payload, acknowledge, dequeueError := Dequeue(loop.BufferDirectory)
 		if dequeueError != nil {
-			fmt.Fprintln(os.Stderr, dequeueError)
+			loop.Logger.Warn("spool dequeue failed", "source", loop.Source, "error", dequeueError)
 			loop.Metrics.ObserveSpoolFailure()
 			spoolBlocked = true
 		} else if payload != nil {
 			batch, decodeError := DecodeBatch(payload)
 			if decodeError != nil {
 				// Corrupt or unrecognisable spool entry: delete it and continue.
-				fmt.Fprintln(os.Stderr, decodeError)
+				loop.Logger.Warn("corrupt spool entry removed", "source", loop.Source, "error", decodeError)
 				loop.Metrics.ObserveSpoolFailure()
 				if ackErr := acknowledge(); ackErr != nil {
 					return fmt.Errorf("acknowledge corrupt spool entry: %w", ackErr)
@@ -89,7 +107,7 @@ func (loop *AgentLoop) Tick(ctx context.Context) error {
 				exportError := loop.Exporter.Export(exportCtx, batch)
 				cancel()
 				if exportError != nil {
-					fmt.Fprintln(os.Stderr, exportError)
+					loop.Logger.Warn("spool export failed", "source", loop.Source, "error", exportError)
 					loop.Metrics.ObserveExportFailure()
 					spoolBlocked = true
 				} else {
@@ -106,7 +124,7 @@ func (loop *AgentLoop) Tick(ctx context.Context) error {
 	if !spoolBlocked && len(loop.pending) == 0 {
 		lines, next, skipped, readError := ReadLines(loop.Source, loop.checkpoint, loop.BatchBytes, loop.BatchBytes, loop.BatchLines)
 		if readError != nil {
-			fmt.Fprintln(os.Stderr, readError)
+			loop.Logger.Warn("read lines failed", "source", loop.Source, "error", readError)
 		} else {
 			loop.Metrics.ObserveSkipped(skipped)
 			if len(lines) == 0 && next != loop.checkpoint {
@@ -136,15 +154,15 @@ func (loop *AgentLoop) Tick(ctx context.Context) error {
 			}
 			loop.pending = nil
 		} else {
-			fmt.Fprintln(os.Stderr, exportError)
+			loop.Logger.Warn("export failed", "source", loop.Source, "error", exportError)
 			loop.Metrics.ObserveExportFailure()
 			if loop.BufferDirectory != "" {
 				payload, encodeError := EncodeBatch(loop.pending)
 				if encodeError != nil {
-					fmt.Fprintln(os.Stderr, encodeError)
+					loop.Logger.Warn("spool encode failed", "source", loop.Source, "error", encodeError)
 					loop.Metrics.ObserveSpoolFailure()
 				} else if enqueueError := Enqueue(loop.BufferDirectory, loop.BufferBytes, payload); enqueueError != nil {
-					fmt.Fprintln(os.Stderr, enqueueError)
+					loop.Logger.Warn("spool enqueue failed", "source", loop.Source, "error", enqueueError)
 					loop.Metrics.ObserveSpoolFailure()
 				} else {
 					loop.checkpoint = loop.pendingCkpt

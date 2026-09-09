@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -40,6 +41,16 @@ func run() int {
 		fmt.Fprintln(os.Stderr, "source and checkpoint are required")
 		return 2
 	}
+	resolvedSource, sourceError := filepath.Abs(*source)
+	if sourceError != nil {
+		fmt.Fprintln(os.Stderr, "resolve source path:", sourceError)
+		return 2
+	}
+	hostName, hostError := os.Hostname()
+	if hostError != nil || hostName == "" {
+		fmt.Fprintln(os.Stderr, "read machine hostname:", hostError)
+		return 1
+	}
 	if *batchBytes < 64<<10 || *batchLines <= 0 || *bufferBytes < 0 {
 		fmt.Fprintln(os.Stderr, "batch limits must be positive and batch-bytes must be at least 65536")
 		return 2
@@ -52,7 +63,7 @@ func run() int {
 	if *apiKey != "" {
 		fmt.Fprintln(os.Stderr, "warning: -api-key exposes the secret in process arguments; use TRACEPILOT_AGENT_API_KEY or -api-key-file")
 	}
-	logExporter, exporterError := agent.NewExporter(*endpoint, resolvedAPIKey, *service, *secure, *tlsServerName)
+	logExporter, exporterError := agent.NewExporter(*endpoint, resolvedAPIKey, *service, hostName, resolvedSource, *secure, *tlsServerName)
 	if exporterError != nil {
 		fmt.Fprintln(os.Stderr, exporterError)
 		return 1
@@ -80,7 +91,7 @@ func run() int {
 		}()
 	}
 	loop, loopError := agent.NewAgentLoop(
-		*source, *checkpointPath, *bufferDirectory, *bufferBytes,
+		resolvedSource, *checkpointPath, *bufferDirectory, *bufferBytes,
 		*batchBytes, *batchLines, logExporter, metrics,
 	)
 	if loopError != nil {

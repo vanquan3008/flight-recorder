@@ -15,29 +15,41 @@ import (
 const incidentDeduplicationWindow = time.Hour
 
 func storeIncidents(ctx context.Context, transaction pgx.Tx, ingestion config.IngestionConfig, events []telemetry.Event) error {
+	// Process every candidate event. The occurrence idempotency check inside
+	// storeIncident prevents duplicate event IDs while preserving distinct
+	// occurrences that share a fingerprint in the same batch.
 	for _, event := range events {
 		if !incident.Candidate(event) {
 			continue
 		}
-		if incidentError := storeIncident(ctx, transaction, ingestion, event); incidentError != nil {
+		incidentID, created, incidentError := storeIncident(ctx, transaction, ingestion, event)
+		if incidentError != nil {
 			return incidentError
+		}
+		if created {
+			if enqueueError := enqueueWebhookDeliveries(ctx, transaction, ingestion.ProjectID, "incident.opened", map[string]any{
+				"incident_id": incidentID, "environment_id": ingestion.EnvironmentID, "service": event.ServiceName,
+				"title": incident.Title(event), "severity": incident.Severity(event),
+			}); enqueueError != nil {
+				return enqueueError
+			}
 		}
 	}
 	return nil
 }
 
-func storeIncident(ctx context.Context, transaction pgx.Tx, ingestion config.IngestionConfig, event telemetry.Event) error {
+func storeIncident(ctx context.Context, transaction pgx.Tx, ingestion config.IngestionConfig, event telemetry.Event) (string, bool, error) {
 	fingerprint := incident.Fingerprint(event)
 	if _, lockError := transaction.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtext($1))", ingestion.ProjectID+":"+ingestion.EnvironmentID+":"+fingerprint); lockError != nil {
-		return fmt.Errorf("lock incident fingerprint: %w", lockError)
+		return "", false, fmt.Errorf("lock incident fingerprint: %w", lockError)
 	}
 
 	var alreadyRecorded bool
 	if queryError := transaction.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM incident_occurrences WHERE project_id = $1 AND event_id = $2)", ingestion.ProjectID, event.ID).Scan(&alreadyRecorded); queryError != nil {
-		return fmt.Errorf("check incident occurrence: %w", queryError)
+		return "", false, fmt.Errorf("check incident occurrence: %w", queryError)
 	}
 	if alreadyRecorded {
-		return nil
+		return "", false, nil
 	}
 
 	cutoff := event.Timestamp.Add(-incidentDeduplicationWindow)
@@ -63,26 +75,26 @@ func storeIncident(ctx context.Context, transaction pgx.Tx, ingestion config.Ing
 			)`,
 			incidentID, ingestion.ProjectID, ingestion.EnvironmentID, event.ServiceName, nullableString(event.TraceID), nullableString(event.RequestID), fingerprint,
 			incident.Title(event), nullableString(event.ErrorType), nullableString(event.ErrorMessage), nullableInt(event.HTTPStatus), incident.Severity(event), event.Timestamp); insertError != nil {
-			return fmt.Errorf("insert incident: %w", insertError)
+			return "", false, fmt.Errorf("insert incident: %w", insertError)
 		}
 	} else if queryError != nil {
-		return fmt.Errorf("find incident: %w", queryError)
+		return "", false, fmt.Errorf("find incident: %w", queryError)
 	}
 
 	occurrenceID := telemetry.DeterministicID(event.Timestamp, "incident-occurrence", incidentID, event.ID)
 	if _, insertError := transaction.Exec(ctx, `
 		INSERT INTO incident_occurrences (id, project_id, incident_id, event_id, occurred_at)
 		VALUES ($1, $2, $3, $4, $5)`, occurrenceID, ingestion.ProjectID, incidentID, event.ID, event.Timestamp); insertError != nil {
-		return fmt.Errorf("insert incident occurrence: %w", insertError)
+		return "", false, fmt.Errorf("insert incident occurrence: %w", insertError)
 	}
 	if _, insertError := transaction.Exec(ctx, `
 		INSERT INTO incident_events (project_id, incident_id, event_id)
 		VALUES ($1, $2, $3)
 		ON CONFLICT DO NOTHING`, ingestion.ProjectID, incidentID, event.ID); insertError != nil {
-		return fmt.Errorf("link incident event: %w", insertError)
+		return "", false, fmt.Errorf("link incident event: %w", insertError)
 	}
 	if newIncident {
-		return nil
+		return incidentID, true, nil
 	}
 	if _, updateError := transaction.Exec(ctx, `
 		UPDATE incidents
@@ -93,9 +105,9 @@ func storeIncident(ctx context.Context, transaction pgx.Tx, ingestion config.Ing
 		WHERE project_id = $1 AND id = $2`,
 		ingestion.ProjectID, incidentID, event.Timestamp, nullableString(event.TraceID), nullableString(event.RequestID),
 		nullableString(event.ErrorType), nullableString(event.ErrorMessage), nullableInt(event.HTTPStatus), incident.Severity(event)); updateError != nil {
-		return fmt.Errorf("update incident: %w", updateError)
+		return "", false, fmt.Errorf("update incident: %w", updateError)
 	}
-	return nil
+	return incidentID, false, nil
 }
 
 func (database *Database) UpdateIncidentStatus(ctx context.Context, projectID, environmentID, incidentID, requestedStatus, actorKeyID string) (incident.Incident, error) {
@@ -136,6 +148,18 @@ func (database *Database) UpdateIncidentStatus(ctx context.Context, projectID, e
 		INSERT INTO incident_status_changes (id, project_id, incident_id, previous_status, status, actor_key_id, changed_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)`, changeID, projectID, incidentID, previous, status, actorKeyID, changedAt); insertError != nil {
 		return incident.Incident{}, fmt.Errorf("record incident status change: %w", insertError)
+	}
+	if status == "RESOLVED" || status == "OPEN" {
+		eventType := "incident.resolved"
+		if status == "OPEN" {
+			eventType = "incident.opened"
+		}
+		if enqueueError := enqueueWebhookDeliveries(ctx, transaction, projectID, eventType, map[string]any{
+			"incident_id": incidentID, "environment_id": environmentID,
+			"previous_status": previous, "status": status, "actor_key_id": actorKeyID,
+		}); enqueueError != nil {
+			return incident.Incident{}, enqueueError
+		}
 	}
 	if commitError := transaction.Commit(ctx); commitError != nil {
 		return incident.Incident{}, fmt.Errorf("commit incident status update: %w", commitError)

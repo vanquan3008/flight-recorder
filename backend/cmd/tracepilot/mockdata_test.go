@@ -13,8 +13,8 @@ func TestMockEventsAreStableAndScoped(t *testing.T) {
 	}
 	first := mockEvents(ingestion)
 	second := mockEvents(ingestion)
-	if len(first) != 6 || len(second) != len(first) {
-		t.Fatalf("mock event count = %d and %d, want 6", len(first), len(second))
+	if len(first) != 8 || len(second) != len(first) {
+		t.Fatalf("mock event count = %d and %d, want 8", len(first), len(second))
 	}
 	seen := make(map[string]struct{}, len(first))
 	for index, event := range first {
@@ -28,5 +28,11 @@ func TestMockEventsAreStableAndScoped(t *testing.T) {
 		if event.ID != second[index].ID {
 			t.Fatalf("event %d is not stable across runs", index)
 		}
+	}
+	if first[len(first)-1].Security == nil || first[len(first)-1].Security.Format != "syslog+cef" {
+		t.Fatalf("security mock event was not normalized: %#v", first[len(first)-1].Security)
+	}
+	if first[5].ResourceAttributes["host.name"] != "demo-host-01" || first[5].ResourceAttributes["log.file.path"] != "/var/log/auth.log" {
+		t.Fatalf("machine log metadata = %#v", first[5].ResourceAttributes)
 	}
 }

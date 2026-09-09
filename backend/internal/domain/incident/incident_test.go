@@ -9,7 +9,7 @@ import (
 
 func TestPolicy(t *testing.T) {
 	event := telemetry.Event{ServiceName: "checkout", Operation: "POST /checkout", ErrorType: "PaymentError", ErrorMessage: "declined", HTTPStatus: 500}
-	if !Candidate(event) || Fingerprint(event) != Fingerprint(event) || Title(event) == "" || Severity(event) != "ERROR" {
+	if !Candidate(event) || Fingerprint(event) == "" || Title(event) == "" || Severity(event) != "ERROR" {
 		t.Fatal("incident policy rejected a failure")
 	}
 	event.ErrorMessage = "timeout"

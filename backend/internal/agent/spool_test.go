@@ -3,6 +3,7 @@ package agent
 import (
 	"bytes"
 	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 )
@@ -63,5 +64,24 @@ func TestSpoolKeepsPayloadUntilAcknowledged(t *testing.T) {
 	payload, _, dequeueError = Dequeue(directory)
 	if dequeueError != nil || payload != nil {
 		t.Fatalf("payload=%q error=%v", payload, dequeueError)
+	}
+}
+
+func TestDequeueDoesNotFollowSymlinks(t *testing.T) {
+	directory := t.TempDir()
+	target := filepath.Join(t.TempDir(), "outside")
+	if writeError := os.WriteFile(target, []byte("outside"), 0o600); writeError != nil {
+		t.Fatal(writeError)
+	}
+	link := filepath.Join(directory, "00000000-symlink")
+	if symlinkError := os.Symlink(target, link); symlinkError != nil {
+		t.Skipf("symlinks unavailable: %v", symlinkError)
+	}
+	payload, acknowledge, dequeueError := Dequeue(directory)
+	if dequeueError != nil || payload != nil || acknowledge != nil {
+		t.Fatalf("symlink was treated as a spool entry: payload=%q ack=%v error=%v", payload, acknowledge != nil, dequeueError)
+	}
+	if contents, readError := os.ReadFile(target); readError != nil || string(contents) != "outside" {
+		t.Fatalf("symlink target was changed: %q error=%v", contents, readError)
 	}
 }

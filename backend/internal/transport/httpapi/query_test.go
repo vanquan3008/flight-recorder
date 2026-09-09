@@ -28,6 +28,21 @@ func TestParsePageSizeBounds(t *testing.T) {
 	}
 }
 
+func TestParsePaginationRejectsMalformedCursor(t *testing.T) {
+	valid := encodeCursor(pageCursor{At: time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC), ID: "01900000-0000-7000-8000-000000000001"})
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/logs?limit=10&cursor="+valid, nil)
+	limit, cursor, parseError := parsePagination(request, validUUID)
+	if parseError != nil || limit != 10 || cursor.ID != "01900000-0000-7000-8000-000000000001" {
+		t.Fatalf("pagination = (%d, %#v, %v)", limit, cursor, parseError)
+	}
+
+	invalid := encodeCursor(pageCursor{At: time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC), ID: "not-a-uuid"})
+	request = httptest.NewRequest(http.MethodGet, "/api/v1/logs?cursor="+invalid, nil)
+	if _, _, parseError = parsePagination(request, validUUID); parseError == nil {
+		t.Fatal("expected malformed cursor ID to fail")
+	}
+}
+
 func TestLogSearchRequiresBoundedTimeRange(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/logs?search=timeout", nil)
 	if _, _, parseError := parseLogFilter(request); parseError == nil {
@@ -80,6 +95,26 @@ func TestParseFiltersRejectMalformedCursorIDs(t *testing.T) {
 	}
 	if _, _, parseError := parseIncidentFilter(httptest.NewRequest(http.MethodGet, "/api/v1/incidents?cursor="+cursor, nil)); parseError == nil {
 		t.Fatal("expected malformed incident cursor to fail")
+	}
+}
+
+func TestParseTraceDurationFilters(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/traces?minDuration=250ms&maxDuration=5s", nil)
+	filter, _, err := parseTraceFilter(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filter.MinDurationNs == nil || *filter.MinDurationNs != int64(250*time.Millisecond) {
+		t.Fatalf("min duration = %#v", filter.MinDurationNs)
+	}
+	if filter.MaxDurationNs == nil || *filter.MaxDurationNs != int64(5*time.Second) {
+		t.Fatalf("max duration = %#v", filter.MaxDurationNs)
+	}
+	if _, _, err := parseTraceFilter(httptest.NewRequest(http.MethodGet, "/api/v1/traces?minDuration=5s&maxDuration=1s", nil)); err == nil {
+		t.Fatal("accepted inverted duration range")
+	}
+	if _, _, err := parseTraceFilter(httptest.NewRequest(http.MethodGet, "/api/v1/traces?minDuration=-1s", nil)); err == nil {
+		t.Fatal("accepted negative duration")
 	}
 }
 
