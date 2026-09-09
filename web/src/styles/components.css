@@ -36,6 +36,14 @@ nav { display: flex; flex-direction: column; gap: 22px; padding: 26px 14px; bord
 .panel { margin-bottom: 20px; overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: linear-gradient(145deg, #111e33, #0b1526); box-shadow: var(--shadow); }
 .panel-head { display: flex; min-height: 52px; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 18px; border-bottom: 1px solid var(--line); }
 .panel h2 { margin: 0; font-size: 14px; letter-spacing: -.01em; }
+.onboarding { padding: 18px; }
+.onboarding > p { margin-bottom: 16px; color: var(--muted); }
+.onboarding-steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.onboarding-step { min-width: 0; padding: 14px; border: 1px solid #304462; border-radius: 9px; background: #0c1729; }
+.onboarding-step strong { display: block; margin-bottom: 4px; }
+.onboarding-step p { margin-bottom: 8px; color: var(--muted); font-size: 12px; }
+.onboarding-step code { display: block; margin: 9px 0; padding: 9px; border-radius: 6px; background: #07101d; white-space: pre-wrap; }
+.onboarding-step.complete { border-color: #2e7668; }
 .muted { color: var(--muted); font-size: 12px; }
 .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; margin: 0 0 16px; }
 .toolbar input { min-width: 155px; }

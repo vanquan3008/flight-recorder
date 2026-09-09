@@ -18,11 +18,15 @@ trên Linux/macOS.
 Lần đầu nên build image và chạy migration tách biệt để thấy lỗi rõ ràng:
 
 ```powershell
-docker compose -f deploy/compose.dev.yaml up --build -d postgres
-docker compose -f deploy/compose.dev.yaml run --build --rm migrate
-docker compose -f deploy/compose.dev.yaml up --build -d tracepilot
+docker compose -f deploy/compose.dev.yaml up --build -d
 Invoke-WebRequest http://localhost:8080/health/ready
 ```
+
+Compose local dùng `tracepilot-development-bootstrap-key-000000` cho phiên
+console đầu tiên. Key này chỉ dùng ở development; không dùng ngoài máy local.
+Chạy `make demo` hoặc
+`docker compose -f deploy/compose.dev.yaml run --build --rm tracepilot mockdata`
+để seed trace lỗi và correlated log cho console walkthrough.
 
 Các cổng mặc định:
 

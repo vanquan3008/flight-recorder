@@ -26,7 +26,7 @@ export function TracesPage() {
       <input name="traceId" placeholder="Trace ID" aria-label="Filter by trace ID" defaultValue={params.get("traceId") || ""} />
       <button><Search size={16} /> Search traces</button>
     </form>
-    <Panel title="Recent traces" meta={`${traces.length} loaded`}><QueryTable query={query} empty="No traces match those filters." headers={["Started", "Service", "Duration", "Spans", "Errors", "Trace ID", ""]} rows={traces.map((trace) => [
+    <Panel title="Recent traces" meta={`${traces.length} loaded`}><QueryTable query={query} empty={<>No traces match those filters. <Link to="/overview">Review the setup steps.</Link></>} headers={["Started", "Service", "Duration", "Spans", "Errors", "Trace ID", ""]} rows={traces.map((trace) => [
       formatTime(trace.started_at), trace.root_service, formatDuration(trace.duration_nanos), trace.span_count, <Badge value={trace.error_count ? "ERROR" : "OK"} />, <code>{trace.trace_id}</code>, <Link className="table-link" to={`/traces/${trace.trace_id}`}>Inspect</Link>,
     ])} /></Panel>
   </>;
@@ -92,7 +92,7 @@ function CopyButton({ value }: { value: string }) {
 
 type QueryLike = { isPending: boolean; isError: boolean; error: unknown; refetch: () => Promise<unknown>; hasNextPage: boolean; isFetchingNextPage: boolean; fetchNextPage: () => Promise<unknown> };
 
-function QueryTable({ query, headers, rows, empty }: { query: QueryLike; headers: string[]; rows: React.ReactNode[][]; empty: string }) {
+function QueryTable({ query, headers, rows, empty }: { query: QueryLike; headers: string[]; rows: React.ReactNode[][]; empty: React.ReactNode }) {
   if (query.isPending) return <Loading />;
   if (query.isError) return <ErrorState error={query.error} retry={() => void query.refetch()} />;
   return <><DataTable headers={headers} rows={rows} empty={empty} /><LoadMore hasMore={query.hasNextPage} loading={query.isFetchingNextPage} onClick={() => void query.fetchNextPage()} /></>;

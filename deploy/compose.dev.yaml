@@ -20,7 +20,6 @@ services:
   migrate:
     build: ../backend
     image: tracepilot:dev
-    profiles: ["tools"]
     depends_on:
       postgres:
         condition: service_healthy
@@ -39,9 +38,14 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     environment:
       TRACEPILOT_HTTP_ADDRESS: ${TRACEPILOT_HTTP_ADDRESS:-:8080}
       TRACEPILOT_LOG_LEVEL: ${TRACEPILOT_LOG_LEVEL:-info}
+      # This public development-only default makes the first local console
+      # session usable. Production Compose requires an explicit secret.
+      TRACEPILOT_AUTH_BOOTSTRAP_API_KEY: ${TRACEPILOT_AUTH_BOOTSTRAP_API_KEY:-tracepilot-development-bootstrap-key-000000}
       TRACEPILOT_SECURITY_ENABLED: ${TRACEPILOT_SECURITY_ENABLED:-false}
       TRACEPILOT_SECURITY_SYSLOG_ADDRESS: ${TRACEPILOT_SECURITY_SYSLOG_ADDRESS:-:6514}
       TRACEPILOT_SECURITY_SYSLOG_TLS: ${TRACEPILOT_SECURITY_SYSLOG_TLS:-false}

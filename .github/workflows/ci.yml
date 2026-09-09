@@ -71,7 +71,7 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     services:
       postgres:
         image: postgres:17-alpine
@@ -100,6 +100,26 @@ jobs:
         run: go -C backend test -race -coverprofile=coverage.out ./...
       - name: Compile all packages
         run: go -C backend build ./...
+      - name: Browser smoke test
+        env:
+          TRACEPILOT_AUTH_BOOTSTRAP_API_KEY: tracepilot-development-bootstrap-key-000000
+          TRACEPILOT_E2E_API_KEY: tracepilot-development-bootstrap-key-000000
+        run: |
+          npm --prefix web ci
+          npm --prefix web exec playwright -- install --with-deps chromium
+          go -C backend run ./cmd/tracepilot mockdata
+          go -C backend run ./cmd/tracepilot serve > tracepilot-e2e.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid"' EXIT
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:8080/health/ready > /dev/null; then
+              npm --prefix web run test:e2e
+              exit 0
+            fi
+            sleep 1
+          done
+          cat tracepilot-e2e.log
+          exit 1
       - name: Upload coverage
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: codecov/codecov-action@a99c28d3f0da835de33ff2feb2e15691c7b9641f # v7

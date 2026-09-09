@@ -7,6 +7,8 @@ coverage.out
 /web/node_modules/
 /web/.vite/
 /web/coverage/
+/web/test-results/
+/web/playwright-report/
 
 # Logs
 *.log
