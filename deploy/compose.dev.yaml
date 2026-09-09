@@ -42,8 +42,12 @@ services:
     environment:
       TRACEPILOT_HTTP_ADDRESS: ${TRACEPILOT_HTTP_ADDRESS:-:8080}
       TRACEPILOT_LOG_LEVEL: ${TRACEPILOT_LOG_LEVEL:-info}
+      TRACEPILOT_SECURITY_ENABLED: ${TRACEPILOT_SECURITY_ENABLED:-false}
+      TRACEPILOT_SECURITY_SYSLOG_ADDRESS: ${TRACEPILOT_SECURITY_SYSLOG_ADDRESS:-:6514}
+      TRACEPILOT_SECURITY_SYSLOG_TLS: ${TRACEPILOT_SECURITY_SYSLOG_TLS:-false}
       TRACEPILOT_DATABASE_URL: ${TRACEPILOT_DATABASE_URL:-postgres://${POSTGRES_USER:-tracepilot}:${POSTGRES_PASSWORD:-tracepilot-dev-only}@postgres:5432/${POSTGRES_DB:-tracepilot}?sslmode=disable}
     init: true
+    stop_grace_period: 20s
     read_only: true
     tmpfs:
       - /tmp
@@ -51,6 +55,7 @@ services:
       - "8080:8080"
       - "4317:4317"
       - "4318:4318"
+      - "6514:6514"
     healthcheck:
       test: ["CMD", "/tracepilot", "healthcheck"]
       interval: 10s

@@ -20,6 +20,27 @@ env:
   TRACEPILOT_DATABASE_URL: postgres://tracepilot:tracepilot-test@127.0.0.1:5432/tracepilot?sslmode=disable
 
 jobs:
+  web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version-file: web/.nvmrc
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install web dependencies
+        run: npm --prefix web ci
+      - name: Type check
+        run: npm --prefix web run check
+      - name: Test
+        run: npm --prefix web run test
+      - name: Build embedded console
+        run: npm --prefix web run build
+      - name: Verify generated console assets
+        run: git diff --exit-code -- backend/internal/webui/dist
+
   lint:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -30,16 +51,18 @@ jobs:
       - uses: ./.github/actions/setup-go
       - name: Format
         run: make fmt-check
+      - name: Source size
+        run: make size-check
       - name: Vet
         run: make vet
       - name: Staticcheck
-        uses: dominikh/staticcheck-action@v1.4.1
+        uses: dominikh/staticcheck-action@672a31696676d1592844bf0164b3bbfd855a4d50 # v1.4.1
         with:
           version: "2026.1"
           install-go: false
           working-directory: backend
       - name: Vulnerability scan
-        uses: golang/govulncheck-action@v1
+        uses: golang/govulncheck-action@032d45514ae346b1db93c04b0c90b841c370344f # v1
         with:
           go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
@@ -79,14 +102,14 @@ jobs:
         run: go -C backend build ./...
       - name: Upload coverage
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: codecov/codecov-action@v7
+        uses: codecov/codecov-action@a99c28d3f0da835de33ff2feb2e15691c7b9641f # v7
         continue-on-error: true
         with:
           files: backend/coverage.out
           fail_ci_if_error: false
 
   docker:
-    needs: [lint, test]
+    needs: [lint, test, web]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -96,13 +119,15 @@ jobs:
           docker build \
             --build-arg VERSION=ci \
             --build-arg COMMIT=${{ github.sha }} \
-            --build-arg BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
+            --build-arg "BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             -t tracepilot:ci backend
       - name: Verify image metadata
         run: docker inspect tracepilot:ci --format '{{.Config.User}}' | grep -E '^nonroot(:nonroot)?$'
+      - name: Smoke test image entrypoint
+        run: docker run --rm tracepilot:ci version
 
   ci-success:
-    needs: [lint, test, docker]
+    needs: [lint, test, web, docker]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
@@ -116,4 +141,5 @@ jobs:
           }
           check "${{ needs.lint.result }}"
           check "${{ needs.test.result }}"
+          check "${{ needs.web.result }}"
           check "${{ needs.docker.result }}"
