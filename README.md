@@ -89,14 +89,20 @@ The commands below are the direct, cross-platform form. The repository
 `Makefile` provides equivalent shortcuts for teams that use GNU Make.
 
 ### Option 1: Docker Compose (Recommended)
-This starts PostgreSQL, applies migrations and then starts TracePilot:
+This starts PostgreSQL, applies migrations, and then starts TracePilot. The
+development Compose file supplies a known local-only API key so the console is
+ready after the command completes:
 
 ```powershell
-docker compose -f deploy/compose.dev.yaml up --build -d postgres
-docker compose -f deploy/compose.dev.yaml run --build --rm migrate
-docker compose -f deploy/compose.dev.yaml up --build -d tracepilot
+docker compose -f deploy/compose.dev.yaml up --build -d
 Invoke-WebRequest http://localhost:8080/health/ready
 ```
+
+Open `http://localhost:8080` and use
+`tracepilot-development-bootstrap-key-000000` to connect the local console.
+For a guided dataset containing a failed trace and correlated log, run
+`docker compose -f deploy/compose.dev.yaml run --build --rm tracepilot mockdata`
+after the first start (`make demo` is the GNU Make equivalent).
 
 The development stack publishes management HTTP on `8080`, OTLP gRPC on
 `4317`, OTLP HTTP on `4318`, Syslog on `6514`, and PostgreSQL on `5432`.

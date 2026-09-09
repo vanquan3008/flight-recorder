@@ -1,7 +1,7 @@
 COMPOSE := docker compose -f deploy/compose.dev.yaml
 SQLC_IMAGE := sqlc/sqlc:1.31.1
 
-.PHONY: build build-all test test-race bench-pipeline bench-postgres vet staticcheck vulncheck fmt-check size-check sqlc-generate sqlc-check web-install web-check web-test web-build web-dist-check web-ci ci run dev migrate migrate-version migration-roundtrip mockdata clean
+.PHONY: build build-all test test-race bench-pipeline bench-postgres vet staticcheck vulncheck fmt-check size-check sqlc-generate sqlc-check web-install web-check web-test web-build web-dist-check web-ci ci run dev demo migrate migrate-version migration-roundtrip mockdata clean
 
 WEB_NPM := npm --prefix web
 
@@ -79,9 +79,10 @@ run:
 	go -C backend run ./cmd/tracepilot serve
 
 dev:
-	$(COMPOSE) up --build -d postgres
-	$(COMPOSE) run --build --rm migrate
-	$(COMPOSE) up -d tracepilot
+	$(COMPOSE) up --build -d
+
+demo: dev
+	$(COMPOSE) run --build --rm tracepilot mockdata
 
 migrate:
 	$(COMPOSE) run --rm migrate
