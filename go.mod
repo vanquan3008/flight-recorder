@@ -4,7 +4,7 @@ go 1.25.0
 
 require (
 	github.com/golang-migrate/migrate/v4 v4.19.1
-	github.com/jackc/pgx/v5 v5.10.0
+	github.com/jackc/pgx/v5 v5.11.0
 	github.com/prometheus/client_golang v1.24.1
 	go.opentelemetry.io/otel v1.46.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.45.0
