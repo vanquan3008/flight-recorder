@@ -39,7 +39,13 @@ jobs:
       - name: Build embedded console
         run: npm --prefix web run build
       - name: Verify generated console assets
-        run: git diff --exit-code -- backend/internal/webui/dist
+        run: |
+          git diff --exit-code -- backend/internal/webui/dist
+          test -z "$(git ls-files --others --exclude-standard -- backend/internal/webui/dist)" || {
+            echo "Build produced untracked console assets; commit backend/internal/webui/dist."
+            git ls-files --others --exclude-standard -- backend/internal/webui/dist
+            exit 1
+          }
 
   lint:
     runs-on: ubuntu-latest
@@ -48,6 +54,43 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Verify generated SQLC
         run: make sqlc-check
+      - name: Verify load tool
+        shell: pwsh
+        run: ./scripts/load-test.tests.ps1
+      - name: Verify unified Compose configuration
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $composePath = (Resolve-Path -LiteralPath compose.yaml).Path
+          $template = [IO.File]::ReadAllText((Resolve-Path -LiteralPath .env.example).Path)
+          $fixtureDirectory = Join-Path ([IO.Path]::GetTempPath()) ('tracepilot-compose-' + [Guid]::NewGuid().ToString('N'))
+          New-Item -ItemType Directory -Path $fixtureDirectory | Out-Null
+          $fixtureEnv = Join-Path $fixtureDirectory '.env'
+          try {
+              foreach ($local in @($true, $false)) {
+                  $content = $template + [Environment]::NewLine + 'TRACEPILOT_HTTP_RATE_LIMIT_REQUESTS=7'
+                  if (-not $local) {
+                      $content = $content.Replace('COMPOSE_PROFILES=local', 'COMPOSE_PROFILES=').Replace('TRACEPILOT_PRODUCTION=false', 'TRACEPILOT_PRODUCTION=true').Replace('@postgres:5432/tracepilot?sslmode=disable', '@managed-postgres:5432/tracepilot?sslmode=verify-full')
+                  }
+                  [IO.File]::WriteAllText($fixtureEnv, $content)
+                  $json = docker compose --project-directory $fixtureDirectory --env-file $fixtureEnv -f $composePath config --format json
+                  if ($LASTEXITCODE -ne 0) { throw 'Compose model validation failed' }
+                  $model = $json | ConvertFrom-Json
+                  $services = @($model.services.PSObject.Properties.Name)
+                  if (($services -contains 'postgres') -ne $local -or $services -contains 'migrate') { throw 'Profiles started unintended services' }
+                  if ($model.services.tracepilot.environment.TRACEPILOT_HTTP_RATE_LIMIT_REQUESTS -ne '7') { throw 'Root env_file was not injected' }
+                  $expectedHost = if ($local) { 'postgres' } else { 'managed-postgres' }
+                  if (([Uri]$model.services.tracepilot.environment.TRACEPILOT_DATABASE_URL).Host -ne $expectedHost) { throw 'Wrong runtime env file' }
+                  $json = docker compose --project-directory $fixtureDirectory --env-file $fixtureEnv -f $composePath --profile tools config --format json
+                  if ($LASTEXITCODE -ne 0) { throw 'Migration model validation failed' }
+                  $migration = ($json | ConvertFrom-Json).services.migrate
+                  if (($migration.command -join ' ') -ne 'migrate up' -or $migration.environment.TRACEPILOT_DATABASE_URL -ne $model.services.tracepilot.environment.TRACEPILOT_DATABASE_URL) { throw 'Migration config differs from application' }
+              }
+              Write-Output 'Compose checks passed: local/external DB, one-shot migration, root env injection.'
+          } finally {
+              Remove-Item -LiteralPath $fixtureEnv -ErrorAction SilentlyContinue
+              Remove-Item -LiteralPath $fixtureDirectory -ErrorAction SilentlyContinue
+          }
       - uses: ./.github/actions/setup-go
       - name: Format
         run: make fmt-check
@@ -137,6 +180,7 @@ jobs:
       - name: Build image
         run: |
           docker build \
+            --target server \
             --build-arg VERSION=ci \
             --build-arg COMMIT=${{ github.sha }} \
             --build-arg "BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \

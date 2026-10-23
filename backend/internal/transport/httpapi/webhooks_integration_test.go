@@ -47,7 +47,7 @@ func TestWebhookManagementAPIIntegration(t *testing.T) {
 	}
 	configuration := config.Config{Notifications: config.NotificationsConfig{Enabled: true}, HTTP: config.HTTPConfig{ManagementMaxBodyBytes: 4096}, Ingestion: ingestion, Database: config.DatabaseConfig{ReadinessTimeout: time.Second}, ShutdownTimeout: time.Second}
 	server := New(configuration, slog.New(slog.NewTextHandler(io.Discard, nil)), func(context.Context) error { return nil }, metrics.New("test", "test", "test"), database, nil)
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/webhooks", strings.NewReader(`{"name":"pager","url":"https://example.com/hook","events":["detection.created"]}`))
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/webhooks", strings.NewReader(`{"name":"pager","url":"https://example.com/hook","events":["incident.opened"]}`))
 	request.Header.Set(apiKeyHeader, bootstrap)
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()

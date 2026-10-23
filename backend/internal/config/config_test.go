@@ -60,13 +60,6 @@ var configEnvironment = []string{
 	"TRACEPILOT_RETENTION_CHECK_INTERVAL",
 	"TRACEPILOT_RETENTION_BATCH_SIZE",
 	"TRACEPILOT_REPLAY_ENABLED",
-	"TRACEPILOT_SECURITY_ENABLED",
-	"TRACEPILOT_SECURITY_SYSLOG_ADDRESS",
-	"TRACEPILOT_SECURITY_SYSLOG_TLS",
-	"TRACEPILOT_SECURITY_SYSLOG_CLIENT_CA_FILE",
-	"TRACEPILOT_SECURITY_MAX_LINE_BYTES",
-	"TRACEPILOT_SECURITY_IDLE_TIMEOUT",
-	"TRACEPILOT_SECURITY_DETECTION_INTERVAL",
 	"TRACEPILOT_NOTIFICATIONS_ENABLED",
 	"TRACEPILOT_WEBHOOK_ENCRYPTION_KEY",
 	"TRACEPILOT_WEBHOOK_POLL_INTERVAL",
@@ -131,19 +124,6 @@ func TestLoadRateLimitEnvironmentOverrides(t *testing.T) {
 	}
 }
 
-func TestLoadSyslogClientCAEnvironmentOverride(t *testing.T) {
-	clearConfigEnvironment(t)
-	t.Setenv("TRACEPILOT_DATABASE_URL", "postgres://environment")
-	t.Setenv("TRACEPILOT_SECURITY_SYSLOG_CLIENT_CA_FILE", "C:\\secrets\\syslog-ca.pem")
-	configuration, loadError := Load("")
-	if loadError != nil {
-		t.Fatal(loadError)
-	}
-	if configuration.Security.SyslogClientCAFile != "C:\\secrets\\syslog-ca.pem" {
-		t.Fatalf("client CA environment override = %q", configuration.Security.SyslogClientCAFile)
-	}
-}
-
 func TestLoadRejectsUnknownYAMLField(t *testing.T) {
 	clearConfigEnvironment(t)
 	configFile := filepath.Join(t.TempDir(), "tracepilot.yaml")
@@ -190,7 +170,11 @@ func TestLoadReadsRepositoryEnvironmentFile(t *testing.T) {
 	if makeDirectoryError := os.Mkdir(backendDirectory, 0o700); makeDirectoryError != nil {
 		t.Fatal(makeDirectoryError)
 	}
-	if writeError := os.WriteFile(filepath.Join(repositoryDirectory, ".env"), []byte("TRACEPILOT_DATABASE_URL=postgres://repository\n"), 0o600); writeError != nil {
+	contents := "TRACEPILOT_DATABASE_URL=postgres://repository\n" +
+		"TRACEPILOT_HTTP_READ_TIMEOUT=9s\n" +
+		"TRACEPILOT_HTTP_ALLOWED_ORIGINS=https://one.example, https://two.example\n" +
+		"TRACEPILOT_MIGRATIONS_PATH=/opt/tracepilot/migrations\n"
+	if writeError := os.WriteFile(filepath.Join(repositoryDirectory, ".env"), []byte(contents), 0o600); writeError != nil {
 		t.Fatal(writeError)
 	}
 	t.Chdir(backendDirectory)
@@ -201,6 +185,12 @@ func TestLoadReadsRepositoryEnvironmentFile(t *testing.T) {
 	}
 	if configuration.Database.URL != "postgres://repository" {
 		t.Fatalf("database URL = %q", configuration.Database.URL)
+	}
+	if configuration.HTTP.ReadTimeout != 9*time.Second || len(configuration.HTTP.AllowedOrigins) != 2 {
+		t.Fatalf("typed .env values were not loaded: %+v", configuration.HTTP)
+	}
+	if configuration.Database.MigrationsPath != "/opt/tracepilot/migrations" {
+		t.Fatalf("legacy .env alias was not loaded: %q", configuration.Database.MigrationsPath)
 	}
 }
 

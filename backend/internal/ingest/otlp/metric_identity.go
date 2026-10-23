@@ -16,14 +16,6 @@ func temporalityName(temporality metricspb.AggregationTemporality) string {
 	return "cumulative"
 }
 
-func numberDataPointTimestamp(point *metricspb.NumberDataPoint) time.Time {
-	return metricTimestamp(point.GetTimeUnixNano())
-}
-
-func histogramDataPointTimestamp(point *metricspb.HistogramDataPoint) time.Time {
-	return metricTimestamp(point.GetTimeUnixNano())
-}
-
 // metricPointID includes the complete series identity and sample payload, so
 // retries remain idempotent without collapsing distinct samples.
 func metricPointID(point telemetry.MetricDataPoint) string {
@@ -32,7 +24,16 @@ func metricPointID(point telemetry.MetricDataPoint) string {
 		point.MetricUnit, string(point.MetricType), point.ServiceName,
 		point.ServiceVersion, point.OccurredAt.Format(time.RFC3339Nano),
 		point.Temporality, encodeAttrs(point.Attributes), encodeAttrs(point.ResourceAttributes),
-		point.ScopeName, point.ScopeVersion,
+		point.ScopeName, point.ScopeVersion, encodeValue(point.Exemplars),
+	}
+	if !point.StartedAt.IsZero() {
+		identity = append(identity, "start="+point.StartedAt.Format(time.RFC3339Nano))
+	}
+	if point.Flags != 0 {
+		identity = append(identity, "flags="+strconv.FormatUint(uint64(point.Flags), 10))
+	}
+	if len(point.ScopeAttributes) > 0 {
+		identity = append(identity, "scope="+encodeAttrs(point.ScopeAttributes))
 	}
 	if point.Value != nil {
 		identity = append(identity, "value="+strconv.FormatFloat(*point.Value, 'g', -1, 64))
@@ -56,6 +57,14 @@ func metricPointID(point telemetry.MetricDataPoint) string {
 		identity = append(identity, "bucket="+strconv.FormatFloat(bucket.UpperBound, 'g', -1, 64)+":"+strconv.FormatUint(bucket.Count, 10))
 	}
 	return telemetry.DeterministicID(point.OccurredAt, identity...)
+}
+
+func encodeValue(value any) string {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return ""
+	}
+	return string(encoded)
 }
 
 func encodeAttrs(attributes map[string]any) string {

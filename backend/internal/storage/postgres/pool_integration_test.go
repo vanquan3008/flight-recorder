@@ -230,9 +230,15 @@ func cleanupIntegrationScope(t testing.TB, database *Database, projectID string)
 		t.Errorf("delete integration incidents: %v", deleteError)
 		return
 	}
-	if _, deleteError := database.pool.Exec(context.Background(), "DELETE FROM events WHERE project_id = $1", projectID); deleteError != nil {
-		t.Errorf("delete integration events: %v", deleteError)
-		return
+	// Partitioned telemetry has no cascading foreign keys, so each table is cleared explicitly.
+	for _, table := range []string{"spans", "logs", "events"} {
+		if _, deleteError := database.pool.Exec(context.Background(), "DELETE FROM "+table+" WHERE project_id = $1", projectID); deleteError != nil {
+			t.Errorf("delete integration %s: %v", table, deleteError)
+			return
+		}
+	}
+	if _, deleteError := database.pool.Exec(context.Background(), "DELETE FROM metric_data_points WHERE project_id = $1", projectID); deleteError != nil {
+		t.Errorf("delete integration metrics: %v", deleteError)
 	}
 	if _, deleteError := database.pool.Exec(context.Background(), "DELETE FROM projects WHERE id = $1", projectID); deleteError != nil {
 		t.Errorf("delete integration project: %v", deleteError)

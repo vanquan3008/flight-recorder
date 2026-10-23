@@ -12,13 +12,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/vanquan3008/tracepilot/internal/application/replay"
 	"github.com/vanquan3008/tracepilot/internal/config"
 	"github.com/vanquan3008/tracepilot/internal/domain/incident"
 	replaydomain "github.com/vanquan3008/tracepilot/internal/domain/replay"
 	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
 	"github.com/vanquan3008/tracepilot/internal/observability/metrics"
 	"github.com/vanquan3008/tracepilot/internal/query"
-	"github.com/vanquan3008/tracepilot/internal/replay"
 )
 
 func TestAuthenticatedLogQueryIntegration(t *testing.T) {

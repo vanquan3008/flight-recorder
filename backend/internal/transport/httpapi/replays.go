@@ -5,8 +5,8 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/vanquan3008/tracepilot/internal/replay"
-	"github.com/vanquan3008/tracepilot/internal/replay/capture"
+	"github.com/vanquan3008/tracepilot/internal/application/replay"
+	"github.com/vanquan3008/tracepilot/internal/application/replay/capture"
 )
 
 func (server *Server) replayIncident(responseWriter http.ResponseWriter, request *http.Request) {

@@ -2,7 +2,6 @@ package otlp
 
 import (
 	"errors"
-	"math"
 
 	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
@@ -16,153 +15,103 @@ func mergeAttributes(resource, datapoint []*commonpb.KeyValue) []*commonpb.KeyVa
 	return append(merged, datapoint...)
 }
 
-// metrics normalizes an OTLP ExportMetricsServiceRequest into a flat slice of
-// MetricDataPoint values ready for persistence. Each OTLP data point becomes
-// exactly one row. Returns the data points and the number of rejected records.
+// metrics counts every input point once, preserving valid siblings on rejection.
 func (n *normalizer) metrics(resourceMetrics []*metricspb.ResourceMetrics) ([]telemetry.MetricDataPoint, int) {
 	points := make([]telemetry.MetricDataPoint, 0)
-	rejected := 0
-	sequence := 0
+	rejected, remaining := 0, n.configuration.MaxRecordsPerRequest
 	for _, rm := range resourceMetrics {
-		resAttrs, resErr := n.attributeValues(rm.GetResource().GetAttributes())
-		if resErr != nil {
-			rejected++
-			continue
-		}
-		serviceName := stringAttribute(resAttrs, "service.name")
-		serviceVersion := stringAttribute(resAttrs, "service.version")
-
+		resAttrs, resourceError := n.attributeValues(rm.GetResource().GetAttributes())
+		service := stringAttribute(resAttrs, "service.name")
+		version := stringAttribute(resAttrs, "service.version")
 		for _, sm := range rm.GetScopeMetrics() {
 			for _, metric := range sm.GetMetrics() {
-				extracted, err := n.extractDataPoints(
-					rm.GetResource(), rm.GetSchemaUrl(),
-					sm.GetScope(),
-					metric,
-					serviceName, serviceVersion,
-					resAttrs,
-				)
-				if err != nil {
-					rejected += len(extracted) + 1
-					continue
+				count := metricPointCount(metric)
+				if resourceError != nil {
+					rejected += count
+				} else {
+					accepted, invalid := n.extractDataPoints(rm.GetResource(), rm.GetSchemaUrl(), sm.GetScope(), metric, service, version, resAttrs, max(remaining, 0))
+					points = append(points, accepted...)
+					rejected += invalid
 				}
-				for _, dp := range extracted {
-					sequence++
-					if sequence > n.configuration.MaxRecordsPerRequest {
-						rejected++
-						continue
-					}
-					points = append(points, dp)
-				}
+				remaining = max(remaining-count, 0)
 			}
 		}
 	}
 	return points, rejected
 }
 
-func (n *normalizer) extractDataPoints(
-	resource *resourcepb.Resource, _ string,
-	scope *commonpb.InstrumentationScope,
-	metric *metricspb.Metric,
-	serviceName, serviceVersion string,
-	resourceAttrs map[string]any,
-) ([]telemetry.MetricDataPoint, error) {
-	if metric.GetName() == "" {
-		return nil, errors.New("metric name is required")
+func (n *normalizer) extractDataPoints(resource *resourcepb.Resource, schema string, scope *commonpb.InstrumentationScope, metric *metricspb.Metric, service, version string, resourceAttrs map[string]any, limit int) ([]telemetry.MetricDataPoint, int) {
+	if metric.GetName() == "" || service == "" || n.validateText(metric.GetName(), metric.GetUnit(), metric.GetDescription(), schema, scope.GetName(), scope.GetVersion()) != nil {
+		return nil, metricPointCount(metric)
 	}
-	if textErr := n.validateText(metric.GetName(), metric.GetUnit(), metric.GetDescription()); textErr != nil {
-		return nil, textErr
+	scopeAttrs, err := n.attributeValues(scope.GetAttributes())
+	if err != nil {
+		return nil, metricPointCount(metric)
 	}
-
 	base := telemetry.MetricDataPoint{
-		ProjectID:          n.configuration.ProjectID,
-		EnvironmentID:      n.configuration.EnvironmentID,
-		MetricName:         metric.GetName(),
-		MetricUnit:         metric.GetUnit(),
-		ServiceName:        serviceName,
-		ServiceVersion:     serviceVersion,
-		ResourceAttributes: resourceAttrs,
-		ScopeName:          scope.GetName(),
-		ScopeVersion:       scope.GetVersion(),
+		ProjectID: n.configuration.ProjectID, EnvironmentID: n.configuration.EnvironmentID,
+		MetricName: metric.GetName(), MetricUnit: metric.GetUnit(),
+		ServiceName: service, ServiceVersion: version, ResourceAttributes: resourceAttrs,
+		ScopeName: scope.GetName(), ScopeVersion: scope.GetVersion(), ScopeAttributes: scopeAttrs,
 	}
-
-	switch data := metric.Data.(type) {
+	switch data := metric.GetData().(type) {
 	case *metricspb.Metric_Gauge:
-		return n.gaugePoints(base, data.Gauge.GetDataPoints(), resource)
+		base.MetricType = telemetry.MetricTypeGauge
+		return n.numberPoints(base, data.Gauge.GetDataPoints(), resource, limit)
 	case *metricspb.Metric_Sum:
-		mono := data.Sum.GetIsMonotonic()
-		temporality := temporalityName(data.Sum.GetAggregationTemporality())
-		return n.sumPoints(base, data.Sum.GetDataPoints(), resource, mono, temporality)
+		if !validTemporality(data.Sum.GetAggregationTemporality()) {
+			return nil, metricPointCount(metric)
+		}
+		base.MetricType = telemetry.MetricTypeSum
+		monotonic := data.Sum.GetIsMonotonic()
+		base.IsMonotonic = &monotonic
+		base.Temporality = temporalityName(data.Sum.GetAggregationTemporality())
+		return n.numberPoints(base, data.Sum.GetDataPoints(), resource, limit)
 	case *metricspb.Metric_Histogram:
-		temporality := temporalityName(data.Histogram.GetAggregationTemporality())
-		return n.histogramPoints(base, data.Histogram.GetDataPoints(), resource, temporality)
+		if !validTemporality(data.Histogram.GetAggregationTemporality()) {
+			return nil, metricPointCount(metric)
+		}
+		base.MetricType = telemetry.MetricTypeHistogram
+		base.Temporality = temporalityName(data.Histogram.GetAggregationTemporality())
+		return n.histogramPoints(base, data.Histogram.GetDataPoints(), resource, limit)
 	case *metricspb.Metric_ExponentialHistogram:
-		// Flatten exponential histogram to a regular histogram using explicit
-		// boundaries approximated from the scale and bucket indices.
-		temporality := temporalityName(data.ExponentialHistogram.GetAggregationTemporality())
-		return n.expHistogramPoints(base, data.ExponentialHistogram.GetDataPoints(), resource, temporality)
+		if !validTemporality(data.ExponentialHistogram.GetAggregationTemporality()) {
+			return nil, metricPointCount(metric)
+		}
+		base.MetricType = telemetry.MetricTypeHistogram
+		base.Temporality = temporalityName(data.ExponentialHistogram.GetAggregationTemporality())
+		return n.expHistogramPoints(base, data.ExponentialHistogram.GetDataPoints(), resource, limit)
 	case *metricspb.Metric_Summary:
-		// Store summary aggregates in the shared histogram columns.
-		return n.summaryPoints(base, data.Summary.GetDataPoints(), resource)
+		base.MetricType, base.Temporality = telemetry.MetricTypeHistogram, "cumulative"
+		return n.summaryPoints(base, data.Summary.GetDataPoints(), resource, limit)
 	default:
-		return nil, errors.New("unsupported metric instrument type")
+		return nil, metricPointCount(metric)
 	}
 }
 
-func (n *normalizer) gaugePoints(
-	base telemetry.MetricDataPoint,
-	dps []*metricspb.NumberDataPoint,
-	resource *resourcepb.Resource,
-) ([]telemetry.MetricDataPoint, error) {
-	base.MetricType = telemetry.MetricTypeGauge
-	return n.numberPoints(base, dps, resource)
+func validTemporality(value metricspb.AggregationTemporality) bool {
+	return value == metricspb.AggregationTemporality_AGGREGATION_TEMPORALITY_DELTA || value == metricspb.AggregationTemporality_AGGREGATION_TEMPORALITY_CUMULATIVE
 }
 
-func (n *normalizer) sumPoints(
-	base telemetry.MetricDataPoint,
-	dps []*metricspb.NumberDataPoint,
-	resource *resourcepb.Resource,
-	isMonotonic bool, temporality string,
-) ([]telemetry.MetricDataPoint, error) {
-	base.MetricType = telemetry.MetricTypeSum
-	base.IsMonotonic = &isMonotonic
-	base.Temporality = temporality
-	return n.numberPoints(base, dps, resource)
-}
-
-func (n *normalizer) numberPoints(
-	base telemetry.MetricDataPoint,
-	dps []*metricspb.NumberDataPoint,
-	resource *resourcepb.Resource,
-) ([]telemetry.MetricDataPoint, error) {
-	points := make([]telemetry.MetricDataPoint, 0, len(dps))
-	for _, dp := range dps {
-		attrs, attrErr := n.attributeValues(mergeAttributes(resource.GetAttributes(), dp.GetAttributes()))
-		if attrErr != nil {
-			return points, attrErr
+func (n *normalizer) numberPoints(base telemetry.MetricDataPoint, raw []*metricspb.NumberDataPoint, resource *resourcepb.Resource, limit int) ([]telemetry.MetricDataPoint, int) {
+	return collectMetricPoints(raw, limit, func(dp *metricspb.NumberDataPoint) (telemetry.MetricDataPoint, error) {
+		point, err := n.metricPoint(base, resource, dp.GetAttributes(), dp.GetStartTimeUnixNano(), dp.GetTimeUnixNano(), dp.GetFlags(), dp.GetExemplars())
+		if err != nil {
+			return point, err
 		}
-		ts := numberDataPointTimestamp(dp)
-		if ts.IsZero() {
-			continue
-		}
-		point := base
-		point.OccurredAt = ts
-		point.Attributes = attrs
-
-		var v float64
-		switch val := dp.Value.(type) {
+		var value float64
+		switch typed := dp.GetValue().(type) {
 		case *metricspb.NumberDataPoint_AsDouble:
-			if math.IsNaN(val.AsDouble) || math.IsInf(val.AsDouble, 0) {
-				continue // drop non-finite values
-			}
-			v = val.AsDouble
+			value = typed.AsDouble
 		case *metricspb.NumberDataPoint_AsInt:
-			v = float64(val.AsInt)
+			value = float64(typed.AsInt)
 		default:
-			continue
+			return point, errors.New("metric value is required")
 		}
-		point.Value = &v
-		point.ID = metricPointID(point)
-		points = append(points, point)
-	}
-	return points, nil
+		if !finite(value) || (base.IsMonotonic != nil && *base.IsMonotonic && value < 0) {
+			return point, errors.New("metric value is invalid")
+		}
+		point.Value = &value
+		return point, nil
+	})
 }

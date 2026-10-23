@@ -7,33 +7,29 @@ import (
 )
 
 type Registry struct {
-	prometheusRegistry     *prometheus.Registry
-	httpRequests           *prometheus.CounterVec
-	httpDuration           *prometheus.HistogramVec
-	databaseReady          prometheus.Gauge
-	ingestedRecords        *prometheus.CounterVec
-	rejectedRecords        *prometheus.CounterVec
-	ingestionQueue         prometheus.Gauge
-	ingestionBytes         prometheus.Gauge
-	ingestionInflight      prometheus.Gauge
-	ingestionShutdowns     *prometheus.CounterVec
-	batchDuration          prometheus.Histogram
-	storageErrors          prometheus.Counter
-	ingestionRetries       prometheus.Counter
-	admissionTimeouts      prometheus.Counter
-	otlpRequests           *prometheus.CounterVec
-	otlpDuration           *prometheus.HistogramVec
-	retentionDeleted       prometheus.Counter
-	retentionBacklog       prometheus.Gauge
-	retentionErrors        prometheus.Counter
-	retentionDuration      prometheus.Histogram
-	syslogRecords          *prometheus.CounterVec
-	syslogConnections      prometheus.Gauge
-	detectionRuns          *prometheus.CounterVec
-	detectionDuration      prometheus.Histogram
-	detectionLag           prometheus.Gauge
-	detectionCheckpointAge prometheus.Gauge
-	webhookAttempts        *prometheus.CounterVec
+	prometheusRegistry *prometheus.Registry
+	httpRequests       *prometheus.CounterVec
+	httpDuration       *prometheus.HistogramVec
+	databaseReady      prometheus.Gauge
+	ingestedRecords    *prometheus.CounterVec
+	rejectedRecords    *prometheus.CounterVec
+	ingestionQueue     prometheus.Gauge
+	ingestionBytes     prometheus.Gauge
+	ingestionInflight  prometheus.Gauge
+	ingestionShutdowns *prometheus.CounterVec
+	batchDuration      prometheus.Histogram
+	storageErrors      prometheus.Counter
+	ingestionRetries   prometheus.Counter
+	admissionTimeouts  prometheus.Counter
+	otlpRequests       *prometheus.CounterVec
+	otlpDuration       *prometheus.HistogramVec
+	retentionDeleted   prometheus.Counter
+	retentionBacklog   prometheus.Gauge
+	retentionErrors    prometheus.Counter
+	retentionDuration  prometheus.Histogram
+	detectionRuns      *prometheus.CounterVec
+	detectionDuration  prometheus.Histogram
+	webhookAttempts    *prometheus.CounterVec
 }
 
 func New(version, commit, buildTime string) *Registry {
@@ -57,7 +53,7 @@ func New(version, commit, buildTime string) *Registry {
 	ingestedRecords := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "tracepilot",
 		Name:      "ingested_records_total",
-		Help:      "OTLP records committed to PostgreSQL.",
+		Help:      "OTLP traces/logs committed to PostgreSQL; metrics accepted into the best-effort queue.",
 	}, []string{"signal"})
 	rejectedRecords := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "tracepilot",
@@ -137,23 +133,11 @@ func New(version, commit, buildTime string) *Registry {
 		Help:      "Retention cleanup duration.",
 		Buckets:   prometheus.DefBuckets,
 	})
-	syslogRecords := prometheus.NewCounterVec(prometheus.CounterOpts{
-		Namespace: "tracepilot", Name: "security_syslog_records_total", Help: "Syslog records processed by outcome and recognized format.",
-	}, []string{"outcome", "format"})
-	syslogConnections := prometheus.NewGauge(prometheus.GaugeOpts{
-		Namespace: "tracepilot", Name: "security_syslog_connections", Help: "Open Syslog TCP/TLS connections.",
-	})
 	detectionRuns := prometheus.NewCounterVec(prometheus.CounterOpts{
-		Namespace: "tracepilot", Name: "security_detection_runs_total", Help: "Security detection worker runs by outcome.",
+		Namespace: "tracepilot", Name: "incident_detection_runs_total", Help: "Observability incident detection runs by outcome.",
 	}, []string{"outcome"})
 	detectionDuration := prometheus.NewHistogram(prometheus.HistogramOpts{
-		Namespace: "tracepilot", Name: "security_detection_duration_seconds", Help: "Security detection worker evaluation duration.", Buckets: prometheus.DefBuckets,
-	})
-	detectionLag := prometheus.NewGauge(prometheus.GaugeOpts{
-		Namespace: "tracepilot", Name: "security_detection_lag_seconds", Help: "Age difference between the newest security event and the durable detection checkpoint.",
-	})
-	detectionCheckpointAge := prometheus.NewGauge(prometheus.GaugeOpts{
-		Namespace: "tracepilot", Name: "security_detection_checkpoint_age_seconds", Help: "Age of the last successful security detection checkpoint.",
+		Namespace: "tracepilot", Name: "incident_detection_duration_seconds", Help: "Observability incident detection duration.", Buckets: prometheus.DefBuckets,
 	})
 	webhookAttempts := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "tracepilot", Name: "webhook_delivery_attempts_total", Help: "Outbound webhook delivery attempts by bounded outcome.",
@@ -164,36 +148,32 @@ func New(version, commit, buildTime string) *Registry {
 		Help:      "TracePilot build and runtime information.",
 	}, []string{"version", "commit", "build_time", "go_version"})
 
-	prometheusRegistry.MustRegister(httpRequests, httpDuration, databaseReady, ingestedRecords, rejectedRecords, ingestionQueue, ingestionBytes, ingestionInflight, ingestionShutdowns, batchDuration, storageErrors, ingestionRetries, admissionTimeouts, otlpRequests, otlpDuration, retentionDeleted, retentionBacklog, retentionErrors, retentionDuration, syslogRecords, syslogConnections, detectionRuns, detectionDuration, detectionLag, detectionCheckpointAge, webhookAttempts, buildInfo)
+	prometheusRegistry.MustRegister(httpRequests, httpDuration, databaseReady, ingestedRecords, rejectedRecords, ingestionQueue, ingestionBytes, ingestionInflight, ingestionShutdowns, batchDuration, storageErrors, ingestionRetries, admissionTimeouts, otlpRequests, otlpDuration, retentionDeleted, retentionBacklog, retentionErrors, retentionDuration, detectionRuns, detectionDuration, webhookAttempts, buildInfo)
 	buildInfo.WithLabelValues(version, commit, buildTime, runtime.Version()).Set(1)
 
 	return &Registry{
-		prometheusRegistry:     prometheusRegistry,
-		httpRequests:           httpRequests,
-		httpDuration:           httpDuration,
-		databaseReady:          databaseReady,
-		ingestedRecords:        ingestedRecords,
-		rejectedRecords:        rejectedRecords,
-		ingestionQueue:         ingestionQueue,
-		ingestionBytes:         ingestionBytes,
-		ingestionInflight:      ingestionInflight,
-		ingestionShutdowns:     ingestionShutdowns,
-		batchDuration:          batchDuration,
-		storageErrors:          storageErrors,
-		ingestionRetries:       ingestionRetries,
-		admissionTimeouts:      admissionTimeouts,
-		otlpRequests:           otlpRequests,
-		otlpDuration:           otlpDuration,
-		retentionDeleted:       retentionDeleted,
-		retentionBacklog:       retentionBacklog,
-		retentionErrors:        retentionErrors,
-		retentionDuration:      retentionDuration,
-		syslogRecords:          syslogRecords,
-		syslogConnections:      syslogConnections,
-		detectionRuns:          detectionRuns,
-		detectionDuration:      detectionDuration,
-		detectionLag:           detectionLag,
-		detectionCheckpointAge: detectionCheckpointAge,
-		webhookAttempts:        webhookAttempts,
+		prometheusRegistry: prometheusRegistry,
+		httpRequests:       httpRequests,
+		httpDuration:       httpDuration,
+		databaseReady:      databaseReady,
+		ingestedRecords:    ingestedRecords,
+		rejectedRecords:    rejectedRecords,
+		ingestionQueue:     ingestionQueue,
+		ingestionBytes:     ingestionBytes,
+		ingestionInflight:  ingestionInflight,
+		ingestionShutdowns: ingestionShutdowns,
+		batchDuration:      batchDuration,
+		storageErrors:      storageErrors,
+		ingestionRetries:   ingestionRetries,
+		admissionTimeouts:  admissionTimeouts,
+		otlpRequests:       otlpRequests,
+		otlpDuration:       otlpDuration,
+		retentionDeleted:   retentionDeleted,
+		retentionBacklog:   retentionBacklog,
+		retentionErrors:    retentionErrors,
+		retentionDuration:  retentionDuration,
+		detectionRuns:      detectionRuns,
+		detectionDuration:  detectionDuration,
+		webhookAttempts:    webhookAttempts,
 	}
 }

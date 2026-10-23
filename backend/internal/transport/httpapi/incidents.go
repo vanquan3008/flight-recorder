@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 
+	incidentapp "github.com/vanquan3008/tracepilot/internal/application/incident"
 	"github.com/vanquan3008/tracepilot/internal/auth"
 	"github.com/vanquan3008/tracepilot/internal/domain/incident"
 	replaydomain "github.com/vanquan3008/tracepilot/internal/domain/replay"
@@ -175,12 +176,12 @@ func (server *Server) updateIncident(responseWriter http.ResponseWriter, request
 		writeAPIError(responseWriter, http.StatusBadRequest, "INVALID_REQUEST", "request body must contain a status")
 		return
 	}
-	if _, valid := incident.NormalizeStatus(payload.Status); !valid {
-		writeAPIError(responseWriter, http.StatusBadRequest, "INVALID_REQUEST", "incident status is invalid")
-		return
-	}
-	record, updateError := server.backend.UpdateIncidentStatus(request.Context(), principal.ProjectID, server.environmentID, request.PathValue("incidentID"), payload.Status, principal.KeyID)
+	record, updateError := server.incidentCommands.UpdateStatus(request.Context(), incidentapp.UpdateStatusCommand{
+		ProjectID: principal.ProjectID, EnvironmentID: server.environmentID, IncidentID: request.PathValue("incidentID"), Status: payload.Status, ActorKeyID: principal.KeyID,
+	})
 	switch {
+	case errors.Is(updateError, incidentapp.ErrInvalidStatus):
+		writeAPIError(responseWriter, http.StatusBadRequest, "INVALID_REQUEST", "incident status is invalid")
 	case errors.Is(updateError, incident.ErrNotFound):
 		writeAPIError(responseWriter, http.StatusNotFound, "NOT_FOUND", "incident not found")
 	case errors.Is(updateError, incident.ErrInvalidTransition):

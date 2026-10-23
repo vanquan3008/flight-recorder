@@ -31,6 +31,7 @@ func defaultConfig() Config {
 			EnvironmentName:        "development",
 			MaxRequestBytes:        4 << 20,
 			MaxRecordsPerRequest:   10_000,
+			MaxConcurrentRequests:  32,
 			MaxAttributesPerRecord: 128,
 			MaxAttributeValueBytes: 4 << 10,
 			MaxAttributeDepth:      4,
@@ -60,12 +61,6 @@ func defaultConfig() Config {
 		Retention: RetentionConfig{
 			CheckInterval: time.Hour,
 			BatchSize:     10_000,
-		},
-		Security: SecurityConfig{
-			MaxLineBytes:      64 << 10,
-			MaxConnections:    1000,
-			IdleTimeout:       30 * time.Second,
-			DetectionInterval: 5 * time.Second,
 		},
 		Notifications: NotificationsConfig{
 			PollInterval:   5 * time.Second,

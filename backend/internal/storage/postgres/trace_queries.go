@@ -10,15 +10,20 @@ import (
 
 func (database *Database) ListTraces(ctx context.Context, projectID string, filter query.TraceFilter) ([]query.TraceSummary, error) {
 	rows, queryError := database.pool.Query(ctx, `
+		WITH matching_traces AS (
+			SELECT DISTINCT trace_id FROM spans
+			WHERE project_id = $1 AND environment_id = $2 AND ($3 = '' OR service_name = $3)
+				AND ($4 = '' OR span_name = $4) AND ($5 = '' OR status_code = $5)
+				AND ($6 = '' OR trace_id = $6) AND ($7::timestamptz IS NULL OR started_at >= $7)
+				AND ($8::timestamptz IS NULL OR started_at <= $8)
+		)
 		SELECT trace_id, min(started_at), max(ended_at), max(started_at),
 			(extract(epoch FROM max(ended_at) - min(started_at)) * 1000000000)::bigint,
-			(array_agg(service_name ORDER BY started_at, event_id))[1], count(*),
+			(array_agg(service_name ORDER BY (NULLIF(parent_span_id, '') IS NULL) DESC, started_at, event_id))[1], count(*),
 			count(*) FILTER (WHERE status_code = 'ERROR')
 		FROM spans
-		WHERE project_id = $1 AND environment_id = $2 AND ($3 = '' OR service_name = $3)
-			AND ($4 = '' OR span_name = $4) AND ($5 = '' OR status_code = $5)
-			AND ($6 = '' OR trace_id = $6) AND ($7::timestamptz IS NULL OR started_at >= $7)
-			AND ($8::timestamptz IS NULL OR started_at <= $8)
+		WHERE project_id = $1 AND environment_id = $2
+			AND trace_id IN (SELECT trace_id FROM matching_traces)
 		GROUP BY trace_id
 		HAVING ($9::timestamptz IS NULL OR max(started_at) < $9 OR (max(started_at) = $9 AND trace_id < $10))
 		   AND ($11::bigint IS NULL OR (extract(epoch FROM max(ended_at) - min(started_at)) * 1000000000)::bigint >= $11)

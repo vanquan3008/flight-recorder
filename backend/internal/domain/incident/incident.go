@@ -102,6 +102,12 @@ func CanTransition(previous, next string) bool {
 }
 
 func Candidate(event telemetry.Event) bool {
+	if event.Signal == telemetry.SignalTrace && event.Status == "ERROR" {
+		return true
+	}
+	if event.Signal == telemetry.SignalLog && event.SeverityNumber >= 17 {
+		return true
+	}
 	if event.HTTPStatus >= 500 || event.Type == telemetry.EventException {
 		return true
 	}
@@ -126,7 +132,7 @@ func Title(event telemetry.Event) string {
 }
 
 func Severity(event telemetry.Event) string {
-	if strings.Contains(strings.ToUpper(event.Severity), "FATAL") {
+	if (event.Signal == telemetry.SignalLog && event.SeverityNumber >= 21) || strings.Contains(strings.ToUpper(event.Severity), "FATAL") {
 		return "CRITICAL"
 	}
 	return "ERROR"

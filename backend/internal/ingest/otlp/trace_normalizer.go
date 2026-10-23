@@ -119,7 +119,7 @@ func (normalizer *normalizer) span(resource *resourcepb.Resource, resourceSchema
 		SpanEvents:         spanEvents,
 		SpanLinks:          spanLinks,
 	}
-	event.ID = telemetry.DeterministicID(timestamp, normalizer.configuration.ProjectID, traceID, spanID)
+	event.ID = telemetry.DeterministicID(timestamp, normalizer.configuration.ProjectID, normalizer.configuration.EnvironmentID, traceID, spanID)
 	if validationError := event.Validate(); validationError != nil {
 		return telemetry.Event{}, validationError
 	}

@@ -232,6 +232,7 @@ func TestNormalizeRejectsMissingService(t *testing.T) {
 func testIngestionConfig() config.IngestionConfig {
 	return config.IngestionConfig{
 		ProjectID:              "01900000-0000-7000-8000-000000000001",
+		EnvironmentID:          "01900000-0000-7000-8000-000000000002",
 		EnvironmentName:        "development",
 		MaxRecordsPerRequest:   100,
 		MaxAttributesPerRecord: 16,
@@ -246,4 +247,38 @@ func stringKeyValue(key, value string) *commonpb.KeyValue {
 
 func intKeyValue(key string, value int64) *commonpb.KeyValue {
 	return &commonpb.KeyValue{Key: key, Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_IntValue{IntValue: value}}}
+}
+
+func TestNormalizeSpanIdentityIncludesEnvironment(t *testing.T) {
+	startedAt := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
+	resource := &resourcepb.Resource{Attributes: []*commonpb.KeyValue{stringKeyValue("service.name", "checkout")}}
+	span := &tracepb.Span{
+		TraceId:           bytes.Repeat([]byte{1}, 16),
+		SpanId:            bytes.Repeat([]byte{2}, 8),
+		Name:              "POST /checkout",
+		StartTimeUnixNano: uint64(startedAt.UnixNano()),
+		EndTimeUnixNano:   uint64(startedAt.Add(time.Millisecond).UnixNano()),
+	}
+
+	staging := testIngestionConfig()
+	staging.EnvironmentID = "01900000-0000-7000-8000-000000000003"
+	stagingNormalizer := newNormalizer(staging)
+	first, firstError := stagingNormalizer.span(resource, "", nil, "", span)
+	if firstError != nil {
+		t.Fatal(firstError)
+	}
+	retry, retryError := stagingNormalizer.span(resource, "", nil, "", span)
+	if retryError != nil {
+		t.Fatal(retryError)
+	}
+	if first.ID != retry.ID {
+		t.Fatalf("retry changed span event ID: %q != %q", first.ID, retry.ID)
+	}
+	other, otherError := newNormalizer(testIngestionConfig()).span(resource, "", nil, "", span)
+	if otherError != nil {
+		t.Fatal(otherError)
+	}
+	if first.ID == other.ID {
+		t.Fatalf("same trace and span in different environments share event ID %q", first.ID)
+	}
 }

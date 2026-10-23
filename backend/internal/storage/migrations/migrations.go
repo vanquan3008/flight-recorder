@@ -11,10 +11,8 @@ import (
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 )
 
-// Metrics and webhook delivery are part of v1. Agent fleet registration is
-// deliberately deferred until its API, heartbeat worker, and retention policy
-// exist; an unused table would only create migration and rollback risk.
-const CurrentVersion uint = 13
+// CurrentVersion is the schema version the binary expects; bump it with every new migration.
+const CurrentVersion uint = 1
 
 func EnsureCurrent(databaseURL, migrationsPath string) (runError error) {
 	migrationRunner, openError := open(databaseURL, migrationsPath)

@@ -93,12 +93,15 @@ func storeIncident(ctx context.Context, transaction pgx.Tx, ingestion config.Ing
 		ON CONFLICT DO NOTHING`, ingestion.ProjectID, incidentID, event.ID); insertError != nil {
 		return "", false, fmt.Errorf("link incident event: %w", insertError)
 	}
+	if evidenceError := storeEventEvidence(ctx, transaction, ingestion, incidentID, event); evidenceError != nil {
+		return "", false, evidenceError
+	}
 	if newIncident {
 		return incidentID, true, nil
 	}
 	if _, updateError := transaction.Exec(ctx, `
 		UPDATE incidents
-		SET last_seen_at = GREATEST(last_seen_at, $3), occurrence_count = occurrence_count + 1,
+		SET first_seen_at = LEAST(first_seen_at, $3), last_seen_at = GREATEST(last_seen_at, $3), occurrence_count = occurrence_count + 1,
 			trace_id = COALESCE($4, trace_id), request_id = COALESCE($5, request_id),
 			error_type = COALESCE($6, error_type), error_message = COALESCE($7, error_message),
 			http_status = COALESCE($8, http_status), severity = $9, updated_at = now()
@@ -108,6 +111,29 @@ func storeIncident(ctx context.Context, transaction pgx.Tx, ingestion config.Ing
 		return "", false, fmt.Errorf("update incident: %w", updateError)
 	}
 	return incidentID, false, nil
+}
+
+func storeEventEvidence(ctx context.Context, transaction pgx.Tx, ingestion config.IngestionConfig, incidentID string, event telemetry.Event) error {
+	// A detector's summary is derived evidence, not another measured error.
+	if event.Signal == "" && event.Type == telemetry.EventCustom && event.ErrorType == "OBSERVABILITY_ANOMALY" && event.Attributes["detector"] == "baseline" {
+		return nil
+	}
+	traceIDs := []string{}
+	if event.TraceID != "" {
+		traceIDs = append(traceIDs, event.TraceID)
+	}
+	evidenceID := telemetry.DeterministicID(event.Timestamp, "incident-event-evidence", incidentID, event.ID)
+	summary := event.ErrorMessage
+	if summary == "" {
+		summary = incident.Title(event)
+	}
+	if _, err := transaction.Exec(ctx, `
+		INSERT INTO incident_evidence (id,project_id,environment_id,incident_id,signal_type,entity_type,entity_id,metric_name,direction,observed_value,baseline_value,change_ratio,window_started_at,window_ended_at,trace_ids,summary)
+		VALUES ($1,$2,$3,$4,'event','service',$5,'error_event','event',1,0,1,$6,$6,$7,$8)
+		ON CONFLICT DO NOTHING`, evidenceID, ingestion.ProjectID, ingestion.EnvironmentID, incidentID, entityID("service", event.ServiceName), event.Timestamp, traceIDs, summary); err != nil {
+		return fmt.Errorf("insert event evidence: %w", err)
+	}
+	return nil
 }
 
 func (database *Database) UpdateIncidentStatus(ctx context.Context, projectID, environmentID, incidentID, requestedStatus, actorKeyID string) (incident.Incident, error) {

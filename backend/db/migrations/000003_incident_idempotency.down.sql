@@ -1,1 +1,0 @@
-DROP INDEX IF EXISTS incident_occurrences_project_event_idx;

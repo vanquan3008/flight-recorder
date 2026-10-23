@@ -1,1 +1,0 @@
-CEF:0|Acme|Edge Firewall|1.2|FW-401|Blocked outbound connection|8|src=192.0.2.10 dst=198.51.100.20 spt=51324 dpt=443 act=blocked outcome=failure msg=policy denied

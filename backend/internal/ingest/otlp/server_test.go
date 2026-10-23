@@ -131,7 +131,7 @@ func TestOTLPHTTPRejectsOversizedBody(t *testing.T) {
 	httpRequest := httptest.NewRequest(http.MethodPost, "/v1/traces", bytes.NewReader([]byte("12345")))
 	httpRequest.Header.Set("Content-Type", "application/x-protobuf")
 	responseRecorder := httptest.NewRecorder()
-	server.httpServer.Handler.ServeHTTP(responseRecorder, httpRequest)
+	_, _ = server.decodeHTTP(responseRecorder, httpRequest, &collectortracepb.ExportTraceServiceRequest{})
 	if responseRecorder.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("status = %d", responseRecorder.Code)
 	}
@@ -152,7 +152,7 @@ func TestOTLPHTTPJSONErrorsUseJSONStatus(t *testing.T) {
 	httpRequest := httptest.NewRequest(http.MethodPost, "/v1/traces", bytes.NewBufferString("not JSON"))
 	httpRequest.Header.Set("Content-Type", "application/json")
 	responseRecorder := httptest.NewRecorder()
-	server.httpServer.Handler.ServeHTTP(responseRecorder, httpRequest)
+	_, _ = server.decodeHTTP(responseRecorder, httpRequest, &collectortracepb.ExportTraceServiceRequest{})
 	if responseRecorder.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d", responseRecorder.Code)
 	}

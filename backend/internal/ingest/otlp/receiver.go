@@ -31,6 +31,11 @@ type Receiver struct {
 	metricsPipeline MetricsSubmitter
 	metrics         *metrics.Registry
 	authenticate    func(context.Context, string) (auth.Principal, error)
+	// slots bounds requests that are decoding, normalizing, or waiting on the
+	// pipeline. Without it every concurrent request holds its decoded payload
+	// plus per-record metadata, so memory grows with client concurrency instead
+	// of staying under the configured budget. nil means unlimited.
+	slots chan struct{}
 }
 
 func NewReceiver(
@@ -40,7 +45,12 @@ func NewReceiver(
 	metricRegistry *metrics.Registry,
 	authenticate func(context.Context, string) (auth.Principal, error),
 ) *Receiver {
+	var slots chan struct{}
+	if configuration.MaxConcurrentRequests > 0 {
+		slots = make(chan struct{}, configuration.MaxConcurrentRequests)
+	}
 	return &Receiver{
+		slots:           slots,
 		normalizer:      newNormalizer(configuration),
 		pipeline:        ingestionPipeline,
 		metricsPipeline: metricsPipeline,
@@ -49,13 +59,30 @@ func NewReceiver(
 	}
 }
 
+// admit reserves a request slot without waiting. A rejected request is
+// retryable: nothing was decoded or acknowledged on its behalf.
+func (receiver *Receiver) admit() (release func(), admitted bool) {
+	if receiver.slots == nil {
+		return func() {}, true
+	}
+	select {
+	case receiver.slots <- struct{}{}:
+		return func() { <-receiver.slots }, true
+	default:
+		return nil, false
+	}
+}
+
 func (receiver *Receiver) authorize(ctx context.Context, rawKey string) error {
 	if receiver.authenticate == nil {
 		return nil
 	}
 	principal, authError := receiver.authenticate(ctx, rawKey)
-	if authError != nil || principal.ProjectID != receiver.normalizer.configuration.ProjectID || !principal.HasScope("ingest") {
-		return errors.New("OTLP authentication failed")
+	if authError != nil {
+		return authError
+	}
+	if principal.ProjectID != receiver.normalizer.configuration.ProjectID || !principal.HasScope("ingest") {
+		return auth.ErrUnauthorized
 	}
 	return nil
 }
@@ -119,9 +146,14 @@ func (service *traceService) Export(ctx context.Context, request *collectortrace
 		}
 		service.receiver.metrics.ObserveOTLPRequest("grpc", "traces", outcome, time.Since(startedAt))
 	}()
-	if authError := service.receiver.authorize(ctx, grpcAPIKey(ctx)); authError != nil {
-		return nil, status.Error(codes.Unauthenticated, "OTLP authentication failed")
+	if authError := service.receiver.authorizeGRPC(ctx); authError != nil {
+		return nil, authError
 	}
+	release, admitError := service.receiver.admitGRPC()
+	if admitError != nil {
+		return nil, admitError
+	}
+	defer release()
 	response, exportError := service.receiver.exportTraces(ctx, request)
 	if exportError != nil {
 		return nil, status.Error(codes.Unavailable, exportError.Error())
@@ -145,9 +177,14 @@ func (service *logsService) Export(ctx context.Context, request *collectorlogspb
 		}
 		service.receiver.metrics.ObserveOTLPRequest("grpc", "logs", outcome, time.Since(startedAt))
 	}()
-	if authError := service.receiver.authorize(ctx, grpcAPIKey(ctx)); authError != nil {
-		return nil, status.Error(codes.Unauthenticated, "OTLP authentication failed")
+	if authError := service.receiver.authorizeGRPC(ctx); authError != nil {
+		return nil, authError
 	}
+	release, admitError := service.receiver.admitGRPC()
+	if admitError != nil {
+		return nil, admitError
+	}
+	defer release()
 	response, exportError := service.receiver.exportLogs(ctx, request)
 	if exportError != nil {
 		return nil, status.Error(codes.Unavailable, exportError.Error())
@@ -162,8 +199,9 @@ func (receiver *Receiver) exportMetrics(ctx context.Context, request *collectorm
 		return &collectormetricspb.ExportMetricsServiceResponse{}, nil
 	}
 	points, rejected := receiver.normalizer.metrics(request.GetResourceMetrics())
-	persisted, submitError := receiver.metricsPipeline.SubmitMetrics(ctx, points)
-	receiver.metrics.ObserveIngested("metrics", persisted)
+	accepted, submitError := receiver.metricsPipeline.SubmitMetrics(ctx, points)
+	// Metrics acknowledge admission; their asynchronous store can still fail.
+	receiver.metrics.ObserveIngested("metrics", accepted)
 	if rejected > 0 {
 		receiver.metrics.ObserveRejected("metrics", "validation", rejected)
 	}
@@ -196,9 +234,14 @@ func (service *metricsService) Export(ctx context.Context, request *collectormet
 		}
 		service.receiver.metrics.ObserveOTLPRequest("grpc", "metrics", outcome, time.Since(startedAt))
 	}()
-	if authError := service.receiver.authorize(ctx, grpcAPIKey(ctx)); authError != nil {
-		return nil, status.Error(codes.Unauthenticated, "OTLP authentication failed")
+	if authError := service.receiver.authorizeGRPC(ctx); authError != nil {
+		return nil, authError
 	}
+	release, admitError := service.receiver.admitGRPC()
+	if admitError != nil {
+		return nil, admitError
+	}
+	defer release()
 	response, exportError := service.receiver.exportMetrics(ctx, request)
 	if exportError != nil {
 		return nil, status.Error(codes.Unavailable, exportError.Error())

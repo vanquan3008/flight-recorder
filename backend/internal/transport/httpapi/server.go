@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	incidentapp "github.com/vanquan3008/tracepilot/internal/application/incident"
 	"github.com/vanquan3008/tracepilot/internal/config"
 	"github.com/vanquan3008/tracepilot/internal/observability/metrics"
 	"github.com/vanquan3008/tracepilot/internal/webui"
@@ -27,6 +28,7 @@ type Server struct {
 	ready                   atomic.Bool
 	shutdownTimeout         time.Duration
 	backend                 Backend
+	incidentCommands        *incidentapp.Service
 	replay                  ReplayRunner
 	replayMaxRequestBytes   int64
 	allowedOrigins          map[string]struct{}
@@ -52,6 +54,7 @@ func New(configuration config.Config, logger *slog.Logger, readinessCheck func(c
 		maxBodyBytes:            configuration.HTTP.ManagementMaxBodyBytes,
 		shutdownTimeout:         configuration.ShutdownTimeout,
 		backend:                 backend,
+		incidentCommands:        incidentapp.New(backend),
 		replay:                  replayRunner,
 		replayMaxRequestBytes:   configuration.Replay.MaxRequestBytes,
 		allowedOrigins:          make(map[string]struct{}, len(configuration.HTTP.AllowedOrigins)),

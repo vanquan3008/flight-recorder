@@ -35,12 +35,12 @@ func enqueueWebhookDeliveries(ctx context.Context, transaction pgx.Tx, projectID
 	if queryError != nil {
 		return fmt.Errorf("list transaction webhooks: %w", queryError)
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var webhookID string
-		if scanError := rows.Scan(&webhookID); scanError != nil {
-			return fmt.Errorf("scan transaction webhook: %w", scanError)
-		}
+	// CollectRows closes the result before another command uses this transaction.
+	webhookIDs, collectError := pgx.CollectRows(rows, pgx.RowTo[string])
+	if collectError != nil {
+		return fmt.Errorf("scan transaction webhooks: %w", collectError)
+	}
+	for _, webhookID := range webhookIDs {
 		deliveryID := webhookDeliveryID(projectID, webhookID, eventType, encoded)
 		if _, insertError := transaction.Exec(ctx, `
 			INSERT INTO webhook_deliveries (id,project_id,webhook_id,event_type,payload,status,attempt,max_attempts,next_attempt_at,created_at,updated_at)
@@ -49,7 +49,7 @@ func enqueueWebhookDeliveries(ctx context.Context, transaction pgx.Tx, projectID
 			return fmt.Errorf("enqueue transaction webhook: %w", insertError)
 		}
 	}
-	return rows.Err()
+	return nil
 }
 
 // RecordDeliveryAttempt makes a successful delivery terminal and puts a
@@ -83,13 +83,15 @@ func (database *Database) ClaimDueDeliveries(ctx context.Context, limit int) ([]
 		return nil, fmt.Errorf("begin claim webhook deliveries: %w", beginError)
 	}
 	defer func() { _ = transaction.Rollback(ctx) }()
-	if _, resetError := transaction.Exec(ctx, `UPDATE webhook_deliveries SET status='pending',next_attempt_at=now() WHERE status='sending' AND updated_at < now() - interval '1 minute'`); resetError != nil {
+	// Requests are capped at five minutes; leave a minute to record their result.
+	if _, resetError := transaction.Exec(ctx, `UPDATE webhook_deliveries SET status='pending',next_attempt_at=now() WHERE status='sending' AND updated_at < now() - interval '6 minutes'`); resetError != nil {
 		return nil, fmt.Errorf("reset stale webhook leases: %w", resetError)
 	}
 	rows, queryError := transaction.Query(ctx, `
 		WITH claim AS (
 			SELECT d.id FROM webhook_deliveries d
 			WHERE d.status='pending' AND d.next_attempt_at <= now()
+			  AND EXISTS (SELECT 1 FROM webhooks w WHERE w.project_id=d.project_id AND w.id=d.webhook_id AND w.enabled=true)
 			ORDER BY d.next_attempt_at,d.created_at,d.id FOR UPDATE SKIP LOCKED LIMIT $1
 		)
 		UPDATE webhook_deliveries d SET status='sending',updated_at=now()

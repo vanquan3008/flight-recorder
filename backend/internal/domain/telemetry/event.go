@@ -6,8 +6,6 @@ import (
 	"errors"
 	"strings"
 	"time"
-
-	"github.com/vanquan3008/tracepilot/internal/domain/security"
 )
 
 type EventType string
@@ -73,7 +71,6 @@ type Event struct {
 	SeverityNumber    int32
 	LogBody           any
 	LogEventName      string
-	Security          *security.Event
 }
 
 type SpanEvent struct {

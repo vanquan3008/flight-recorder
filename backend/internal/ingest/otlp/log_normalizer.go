@@ -56,8 +56,8 @@ func (normalizer *normalizer) logRecord(resource *resourcepb.Resource, resourceS
 	if timestampNanos == 0 {
 		timestampNanos = record.GetObservedTimeUnixNano()
 	}
-	if timestampNanos == 0 || timestampNanos > maxSignedNanoseconds || !validIdentifier(record.GetTraceId(), 16, true) || !validIdentifier(record.GetSpanId(), 8, true) {
-		return telemetry.Event{}, errors.New("log identity or timestamp is invalid")
+	if timestampNanos == 0 || timestampNanos > maxSignedNanoseconds || record.GetObservedTimeUnixNano() > maxSignedNanoseconds || record.GetSeverityNumber() < 0 || record.GetSeverityNumber() > logspb.SeverityNumber_SEVERITY_NUMBER_FATAL4 || !validIdentifier(record.GetTraceId(), 16, true) || !validIdentifier(record.GetSpanId(), 8, true) {
+		return telemetry.Event{}, errors.New("log identity, severity or timestamp is invalid")
 	}
 	timestamp := time.Unix(0, int64(timestampNanos)).UTC()
 	traceID := hex.EncodeToString(record.GetTraceId())
@@ -105,12 +105,13 @@ func (normalizer *normalizer) logRecord(resource *resourcepb.Resource, resourceS
 		LogBody:            body,
 		LogEventName:       record.GetEventName(),
 	}
-	identityAttributes, _ := json.Marshal(attributes.values)
+	identityAttributes, _ := json.Marshal([]any{resourceAttributes, scopeAttributes, recordAttributes, body})
 	// ponytail: OTLP logs have no universal source ID, so exact duplicates at
 	// one timestamp collapse; include a source ID here if the protocol adds one.
 	event.ID = telemetry.DeterministicID(
 		timestamp,
 		normalizer.configuration.ProjectID,
+		normalizer.configuration.EnvironmentID,
 		event.ServiceName,
 		resourceSchemaURL,
 		scope.GetName(),

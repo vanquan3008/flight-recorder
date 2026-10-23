@@ -7,7 +7,8 @@ export function App() {
   const [queryClient] = useState(() => new QueryClient({
     defaultOptions: {
       queries: {
-        retry: (count, error) => !(error instanceof Error && "status" in error && (error as { status: number }).status < 500) && count < 1,
+        // Client errors and 501 (feature disabled) are permanent; retry only transient server/network failures once.
+        retry: (count, error) => !(error instanceof Error && "status" in error && ((error as { status: number }).status < 500 || (error as { status: number }).status === 501)) && count < 1,
         staleTime: 15_000,
       },
     },
