@@ -5,115 +5,115 @@
 package sqlc
 
 import (
-	"github.com/jackc/pgx/v5/pgtype"
+	"time"
 )
 
-type ApiKey struct {
-	ID        pgtype.UUID
-	ProjectID pgtype.UUID
+type APIKey struct {
+	ID        string
+	ProjectID string
 	Name      string
 	KeyHash   []byte
 	Scopes    []string
-	ExpiresAt pgtype.Timestamptz
-	CreatedAt pgtype.Timestamptz
-	RevokedAt pgtype.Timestamptz
+	ExpiresAt *time.Time
+	CreatedAt time.Time
+	RevokedAt *time.Time
 }
 
-type ApiKeyEvent struct {
-	ID         pgtype.UUID
-	ProjectID  pgtype.UUID
-	ApiKeyID   pgtype.UUID
-	ActorKeyID pgtype.UUID
+type APIKeyEvent struct {
+	ID         string
+	ProjectID  string
+	APIKeyID   string
+	ActorKeyID string
 	Action     string
-	CreatedAt  pgtype.Timestamptz
+	CreatedAt  time.Time
 }
 
 type Environment struct {
-	ID        pgtype.UUID
-	ProjectID pgtype.UUID
+	ID        string
+	ProjectID string
 	Name      string
-	CreatedAt pgtype.Timestamptz
+	CreatedAt time.Time
 }
 
 type Event struct {
-	ID             pgtype.UUID
-	ProjectID      pgtype.UUID
-	EnvironmentID  pgtype.UUID
+	ID             string
+	ProjectID      string
+	EnvironmentID  string
 	ServiceName    string
-	ServiceVersion pgtype.Text
-	TraceID        pgtype.Text
-	SpanID         pgtype.Text
-	ParentSpanID   pgtype.Text
-	RequestID      pgtype.Text
+	ServiceVersion *string
+	TraceID        *string
+	SpanID         *string
+	ParentSpanID   *string
+	RequestID      *string
 	EventType      string
-	OccurredAt     pgtype.Timestamptz
-	DurationNs     pgtype.Int8
-	Severity       pgtype.Text
-	Status         pgtype.Text
-	HttpStatus     pgtype.Int4
-	Operation      pgtype.Text
-	ErrorType      pgtype.Text
-	ErrorMessage   pgtype.Text
+	OccurredAt     time.Time
+	DurationNS     *int64
+	Severity       *string
+	Status         *string
+	HTTPStatus     *int32
+	Operation      *string
+	ErrorType      *string
+	ErrorMessage   *string
 	Attributes     []byte
-	IngestedAt     pgtype.Timestamptz
+	IngestedAt     time.Time
 }
 
 type EventsDefault struct {
-	ID             pgtype.UUID
-	ProjectID      pgtype.UUID
-	EnvironmentID  pgtype.UUID
+	ID             string
+	ProjectID      string
+	EnvironmentID  string
 	ServiceName    string
-	ServiceVersion pgtype.Text
-	TraceID        pgtype.Text
-	SpanID         pgtype.Text
-	ParentSpanID   pgtype.Text
-	RequestID      pgtype.Text
+	ServiceVersion *string
+	TraceID        *string
+	SpanID         *string
+	ParentSpanID   *string
+	RequestID      *string
 	EventType      string
-	OccurredAt     pgtype.Timestamptz
-	DurationNs     pgtype.Int8
-	Severity       pgtype.Text
-	Status         pgtype.Text
-	HttpStatus     pgtype.Int4
-	Operation      pgtype.Text
-	ErrorType      pgtype.Text
-	ErrorMessage   pgtype.Text
+	OccurredAt     time.Time
+	DurationNS     *int64
+	Severity       *string
+	Status         *string
+	HTTPStatus     *int32
+	Operation      *string
+	ErrorType      *string
+	ErrorMessage   *string
 	Attributes     []byte
-	IngestedAt     pgtype.Timestamptz
+	IngestedAt     time.Time
 }
 
 type Incident struct {
-	ID              pgtype.UUID
-	ProjectID       pgtype.UUID
-	EnvironmentID   pgtype.UUID
+	ID              string
+	ProjectID       string
+	EnvironmentID   string
 	PrimaryService  string
-	TraceID         pgtype.Text
-	RequestID       pgtype.Text
+	TraceID         *string
+	RequestID       *string
 	Fingerprint     string
 	Title           string
-	ErrorType       pgtype.Text
-	ErrorMessage    pgtype.Text
-	HttpStatus      pgtype.Int4
+	ErrorType       *string
+	ErrorMessage    *string
+	HTTPStatus      *int32
 	Severity        string
 	Status          string
-	FirstSeenAt     pgtype.Timestamptz
-	LastSeenAt      pgtype.Timestamptz
+	FirstSeenAt     time.Time
+	LastSeenAt      time.Time
 	OccurrenceCount int64
-	CreatedAt       pgtype.Timestamptz
-	UpdatedAt       pgtype.Timestamptz
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 }
 
 type IncidentEvent struct {
-	ProjectID  pgtype.UUID
-	IncidentID pgtype.UUID
-	EventID    pgtype.UUID
-	CreatedAt  pgtype.Timestamptz
+	ProjectID  string
+	IncidentID string
+	EventID    string
+	CreatedAt  time.Time
 }
 
 type IncidentEvidence struct {
-	ID              pgtype.UUID
-	ProjectID       pgtype.UUID
-	EnvironmentID   pgtype.UUID
-	IncidentID      pgtype.UUID
+	ID              string
+	ProjectID       string
+	EnvironmentID   string
+	IncidentID      string
 	SignalType      string
 	EntityType      string
 	EntityID        string
@@ -122,195 +122,195 @@ type IncidentEvidence struct {
 	ObservedValue   float64
 	BaselineValue   float64
 	ChangeRatio     float64
-	WindowStartedAt pgtype.Timestamptz
-	WindowEndedAt   pgtype.Timestamptz
-	TraceIds        []string
+	WindowStartedAt time.Time
+	WindowEndedAt   time.Time
+	TraceIDs        []string
 	Summary         string
-	CreatedAt       pgtype.Timestamptz
+	CreatedAt       time.Time
 	SeriesID        string
 }
 
 type IncidentOccurrence struct {
-	ID         pgtype.UUID
-	ProjectID  pgtype.UUID
-	IncidentID pgtype.UUID
-	EventID    pgtype.UUID
-	OccurredAt pgtype.Timestamptz
-	CreatedAt  pgtype.Timestamptz
+	ID         string
+	ProjectID  string
+	IncidentID string
+	EventID    string
+	OccurredAt time.Time
+	CreatedAt  time.Time
 }
 
 type IncidentStatusChange struct {
-	ID             pgtype.UUID
-	ProjectID      pgtype.UUID
-	IncidentID     pgtype.UUID
+	ID             string
+	ProjectID      string
+	IncidentID     string
 	PreviousStatus string
 	Status         string
-	ActorKeyID     pgtype.UUID
-	ChangedAt      pgtype.Timestamptz
+	ActorKeyID     string
+	ChangedAt      time.Time
 }
 
 type Log struct {
-	EventID                pgtype.UUID
-	ProjectID              pgtype.UUID
-	EnvironmentID          pgtype.UUID
-	OccurredAt             pgtype.Timestamptz
-	ObservedAt             pgtype.Timestamptz
-	TraceID                pgtype.Text
-	SpanID                 pgtype.Text
+	EventID                string
+	ProjectID              string
+	EnvironmentID          string
+	OccurredAt             time.Time
+	ObservedAt             *time.Time
+	TraceID                *string
+	SpanID                 *string
 	TraceFlags             int64
 	SeverityNumber         int32
 	SeverityText           string
 	Body                   []byte
 	EventName              string
 	ServiceName            string
-	ServiceVersion         pgtype.Text
-	ResourceSchemaUrl      string
+	ServiceVersion         *string
+	ResourceSchemaURL      string
 	ResourceAttributes     []byte
 	ScopeName              string
 	ScopeVersion           string
-	ScopeSchemaUrl         string
+	ScopeSchemaURL         string
 	ScopeAttributes        []byte
 	LogAttributes          []byte
 	DroppedAttributesCount int32
 }
 
 type LogsDefault struct {
-	EventID                pgtype.UUID
-	ProjectID              pgtype.UUID
-	EnvironmentID          pgtype.UUID
-	OccurredAt             pgtype.Timestamptz
-	ObservedAt             pgtype.Timestamptz
-	TraceID                pgtype.Text
-	SpanID                 pgtype.Text
+	EventID                string
+	ProjectID              string
+	EnvironmentID          string
+	OccurredAt             time.Time
+	ObservedAt             *time.Time
+	TraceID                *string
+	SpanID                 *string
 	TraceFlags             int64
 	SeverityNumber         int32
 	SeverityText           string
 	Body                   []byte
 	EventName              string
 	ServiceName            string
-	ServiceVersion         pgtype.Text
-	ResourceSchemaUrl      string
+	ServiceVersion         *string
+	ResourceSchemaURL      string
 	ResourceAttributes     []byte
 	ScopeName              string
 	ScopeVersion           string
-	ScopeSchemaUrl         string
+	ScopeSchemaURL         string
 	ScopeAttributes        []byte
 	LogAttributes          []byte
 	DroppedAttributesCount int32
 }
 
 type MetricDataPoint struct {
-	ID                 pgtype.UUID
-	ProjectID          pgtype.UUID
-	EnvironmentID      pgtype.UUID
+	ID                 string
+	ProjectID          string
+	EnvironmentID      string
 	MetricName         string
 	MetricUnit         string
 	MetricType         string
 	ServiceName        string
-	ServiceVersion     pgtype.Text
-	OccurredAt         pgtype.Timestamptz
-	Value              pgtype.Float8
-	HistCount          pgtype.Int8
-	HistSum            pgtype.Float8
-	HistMin            pgtype.Float8
-	HistMax            pgtype.Float8
+	ServiceVersion     *string
+	OccurredAt         time.Time
+	Value              *float64
+	HistCount          *int64
+	HistSum            *float64
+	HistMin            *float64
+	HistMax            *float64
 	HistBuckets        []byte
 	Temporality        string
-	IsMonotonic        pgtype.Bool
+	IsMonotonic        *bool
 	Attributes         []byte
 	ResourceAttributes []byte
 	ScopeName          string
 	ScopeVersion       string
-	IngestedAt         pgtype.Timestamptz
+	IngestedAt         time.Time
 	Exemplars          []byte
-	StartedAt          pgtype.Timestamptz
+	StartedAt          *time.Time
 	Flags              int64
 	ScopeAttributes    []byte
 }
 
 type MetricDataPointsDefault struct {
-	ID                 pgtype.UUID
-	ProjectID          pgtype.UUID
-	EnvironmentID      pgtype.UUID
+	ID                 string
+	ProjectID          string
+	EnvironmentID      string
 	MetricName         string
 	MetricUnit         string
 	MetricType         string
 	ServiceName        string
-	ServiceVersion     pgtype.Text
-	OccurredAt         pgtype.Timestamptz
-	Value              pgtype.Float8
-	HistCount          pgtype.Int8
-	HistSum            pgtype.Float8
-	HistMin            pgtype.Float8
-	HistMax            pgtype.Float8
+	ServiceVersion     *string
+	OccurredAt         time.Time
+	Value              *float64
+	HistCount          *int64
+	HistSum            *float64
+	HistMin            *float64
+	HistMax            *float64
 	HistBuckets        []byte
 	Temporality        string
-	IsMonotonic        pgtype.Bool
+	IsMonotonic        *bool
 	Attributes         []byte
 	ResourceAttributes []byte
 	ScopeName          string
 	ScopeVersion       string
-	IngestedAt         pgtype.Timestamptz
+	IngestedAt         time.Time
 	Exemplars          []byte
-	StartedAt          pgtype.Timestamptz
+	StartedAt          *time.Time
 	Flags              int64
 	ScopeAttributes    []byte
 }
 
 type Project struct {
-	ID        pgtype.UUID
+	ID        string
 	Slug      string
 	Name      string
-	CreatedAt pgtype.Timestamptz
-	UpdatedAt pgtype.Timestamptz
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 type ReplayExecution struct {
-	ID          pgtype.UUID
-	ProjectID   pgtype.UUID
-	IncidentID  pgtype.UUID
+	ID          string
+	ProjectID   string
+	IncidentID  string
 	Target      string
 	Status      string
-	StartedAt   pgtype.Timestamptz
-	CompletedAt pgtype.Timestamptz
-	DurationNs  pgtype.Int8
-	HttpStatus  pgtype.Int4
+	StartedAt   *time.Time
+	CompletedAt *time.Time
+	DurationNS  *int64
+	HTTPStatus  *int32
 	Comparison  []byte
 	CreatedBy   string
-	CreatedAt   pgtype.Timestamptz
+	CreatedAt   time.Time
 }
 
 type Service struct {
-	ID            pgtype.UUID
-	ProjectID     pgtype.UUID
-	EnvironmentID pgtype.UUID
+	ID            string
+	ProjectID     string
+	EnvironmentID string
 	Name          string
-	CreatedAt     pgtype.Timestamptz
-	UpdatedAt     pgtype.Timestamptz
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }
 
 type Span struct {
-	EventID                pgtype.UUID
-	ProjectID              pgtype.UUID
-	EnvironmentID          pgtype.UUID
+	EventID                string
+	ProjectID              string
+	EnvironmentID          string
 	TraceID                string
 	SpanID                 string
-	ParentSpanID           pgtype.Text
+	ParentSpanID           *string
 	TraceState             string
 	SpanName               string
 	SpanKind               int32
-	StartedAt              pgtype.Timestamptz
-	EndedAt                pgtype.Timestamptz
+	StartedAt              time.Time
+	EndedAt                time.Time
 	StatusCode             string
 	StatusMessage          string
 	Flags                  int64
 	ServiceName            string
-	ServiceVersion         pgtype.Text
-	ResourceSchemaUrl      string
+	ServiceVersion         *string
+	ResourceSchemaURL      string
 	ResourceAttributes     []byte
 	ScopeName              string
 	ScopeVersion           string
-	ScopeSchemaUrl         string
+	ScopeSchemaURL         string
 	ScopeAttributes        []byte
 	SpanAttributes         []byte
 	SpanEvents             []byte
@@ -321,27 +321,27 @@ type Span struct {
 }
 
 type SpansDefault struct {
-	EventID                pgtype.UUID
-	ProjectID              pgtype.UUID
-	EnvironmentID          pgtype.UUID
+	EventID                string
+	ProjectID              string
+	EnvironmentID          string
 	TraceID                string
 	SpanID                 string
-	ParentSpanID           pgtype.Text
+	ParentSpanID           *string
 	TraceState             string
 	SpanName               string
 	SpanKind               int32
-	StartedAt              pgtype.Timestamptz
-	EndedAt                pgtype.Timestamptz
+	StartedAt              time.Time
+	EndedAt                time.Time
 	StatusCode             string
 	StatusMessage          string
 	Flags                  int64
 	ServiceName            string
-	ServiceVersion         pgtype.Text
-	ResourceSchemaUrl      string
+	ServiceVersion         *string
+	ResourceSchemaURL      string
 	ResourceAttributes     []byte
 	ScopeName              string
 	ScopeVersion           string
-	ScopeSchemaUrl         string
+	ScopeSchemaURL         string
 	ScopeAttributes        []byte
 	SpanAttributes         []byte
 	SpanEvents             []byte
@@ -352,29 +352,29 @@ type SpansDefault struct {
 }
 
 type Webhook struct {
-	ID        pgtype.UUID
-	ProjectID pgtype.UUID
+	ID        string
+	ProjectID string
 	Name      string
-	Url       string
+	URL       string
 	Secret    string
 	Events    []string
 	Enabled   bool
-	CreatedAt pgtype.Timestamptz
-	UpdatedAt pgtype.Timestamptz
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 type WebhookDelivery struct {
-	ID            pgtype.UUID
-	ProjectID     pgtype.UUID
-	WebhookID     pgtype.UUID
+	ID            string
+	ProjectID     string
+	WebhookID     string
 	EventType     string
 	Payload       []byte
 	Status        string
 	Attempt       int32
 	MaxAttempts   int32
-	HttpStatus    pgtype.Int4
-	LastError     pgtype.Text
-	NextAttemptAt pgtype.Timestamptz
-	CreatedAt     pgtype.Timestamptz
-	UpdatedAt     pgtype.Timestamptz
+	HTTPStatus    *int32
+	LastError     *string
+	NextAttemptAt time.Time
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }
