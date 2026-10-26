@@ -98,6 +98,10 @@ jobs:
         run: make size-check
       - name: Vet
         run: make vet
+      - name: Load generator
+        run: |
+          go vet scripts/loadgen/main.go scripts/loadgen/report.go
+          go test scripts/loadgen/main.go scripts/loadgen/report.go scripts/loadgen/report_test.go
       - name: Staticcheck
         uses: dominikh/staticcheck-action@672a31696676d1592844bf0164b3bbfd855a4d50 # v1.4.1
         with:
