@@ -57,3 +57,4 @@
   .wf-service { display: none; }
   .wf-axis { top: 116px; }
 }
+.trace-truncated { margin: 0 0 14px; padding: 12px 14px; border: 1px solid var(--warning); border-radius: 10px; background: var(--warn-bg); color: var(--warn-fg); }

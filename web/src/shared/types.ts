@@ -49,7 +49,8 @@ export type Span = {
   links: unknown;
 };
 
-export type TraceDetail = { trace_id: string; spans: Span[] };
+/** One page of a trace; next_cursor is present while more spans follow. */
+export type TraceDetail = { trace_id: string; spans: Span[]; next_cursor?: string };
 
 export type LogRecord = {
   event_id: string;
