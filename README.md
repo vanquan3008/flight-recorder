@@ -6,7 +6,8 @@ service topology, and ranks RCA hypotheses with inspectable evidence.
 
 **Status: beta.** Production acceptance requires the checks in
 [Operations](docs/OPERATIONS.md). Traces/logs acknowledge committed PostgreSQL
-transactions. Metrics acknowledge queue admission and remain best-effort.
+transactions, and so do OTLP metrics; only TracePilot's own Prometheus metrics may lose
+points on a crash.
 
 ## Run locally
 
@@ -83,16 +84,18 @@ The guides are written in Vietnamese for the repository owner.
 
 ## Production limits
 
-- The current schema is baseline 000001_init, version 1. It does not upgrade
-  databases using the former migration history. Preserve existing data and plan
+- The current schema is version 2: baseline 000001_init plus
+  000002_dependency_functions. Run `migrate up` before starting this release.
+  The baseline does not upgrade databases using the former migration history. Preserve existing data and plan
   a tested data migration before switching such a database.
 - Configure authenticated TLS listeners, PostgreSQL verify-full with a trusted
   CA, private binds, an immutable image digest, and an explicit data policy.
-- Metrics can be lost after ACK on storage failure. Byte budgets are estimates
-  per pipeline; they do not cap total process RSS.
+- Byte budgets are estimates per pipeline; they do not cap total process RSS.
 - Key-based attribute redaction does not remove every secret from free text.
-- Telemetry retention defaults to disabled. Incident/evidence/audit/delivery
-  history needs a separate policy. No production throughput SLO is certified.
+- Retention is on by default: telemetry 7 days, incidents 90 days, audit 180 days,
+  finished webhook deliveries 30 days (see Operations before upgrading an existing
+  database). Aggregate read endpoints scan the span window and do not meet the
+  200 ms target at volume; no production throughput SLO is certified.
 
 Run the production acceptance drills on staging before admitting real traffic.
 License: [MIT](LICENSE).

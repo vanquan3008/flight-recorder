@@ -13,9 +13,9 @@ Trạng thái và lỗi cụ thể ở [REVIEW.md](REVIEW.md).
 - Chỉ tách tiến trình khi có yêu cầu hoặc số đo chứng minh. Phạm vi hiện tại chưa cần kiến trúc nhiều khách hàng.
 
 Kiến trúc và luồng chính đi đúng hướng, nhưng chưa đủ bằng chứng để kết luận
-production-ready. Trace/log ACK sau commit; metrics ACK sau queue admission và
-vẫn có thể mất sau ACK khi storage lỗi. Peak tải, SLO, RPO/RTO, retention từng
-nhóm và tình trạng DB cũ còn cần chốt trước nghiệm thu; không tự đặt TTL để xóa dữ liệu.
+production-ready. Trace, log và OTLP metrics đều ACK sau commit (metrics từ 24/10/2026).
+Peak tải, SLO, RPO/RTO và tình trạng
+DB cũ còn cần chốt trước nghiệm thu; retention đã chốt 7/90/180/30 ngày.
 
 ## Thứ tự thực hiện và điều kiện hoàn thành
 
@@ -36,7 +36,7 @@ tiết tiếp tục nằm ở [OPERATIONS.md](OPERATIONS.md), không tạo thêm
 | --- | --- |
 | `cmd/tracepilot` | Config, wiring, startup/shutdown; không thêm quy tắc nghiệp vụ vào CLI. |
 | `internal/domain` | Model, fingerprint, status transition, detection policy và RCA ranking thuần; test không cần DB/runtime. |
-| `internal/application` | Điều phối incident, intelligence, notification, retention và replay qua interface nhỏ gần consumer. Đưa việc gọi ba nhóm detector, gom evidence theo service và điều phối lưu khỏi `storage/postgres/analysis_detection.go`. |
+| `internal/application` | Điều phối incident, intelligence, notification, retention và replay qua interface nhỏ gần consumer. Việc gọi ba nhóm detector, gom evidence theo service và điều phối lưu nằm ở `application/detection`; `storage/postgres/analytics` chỉ còn SQL và transaction. |
 | `internal/ingest` | OTLP HTTP/gRPC, validation, normalization, redaction, admission, queue và ACK; giữ regression retry, partial rejection và shutdown. |
 | `internal/transport/httpapi` | Auth/scope, parse request, response/error contract và OpenAPI; server vẫn quyết định quyền truy cập. |
 | `internal/storage` | SQL, transaction, migration, partition và persistence; giữ atomic event/incident/evidence/outbox. |
@@ -76,9 +76,31 @@ nhiệm, không bọc mọi query bằng một lớp service chuyển tiếp.
 Còn lại của đợt 3: duyệt màn với dữ liệu thật đại diện và manual accessibility (zoom 200%,
 screen reader, contrast).
 
-Chờ chủ repo chốt, chưa triển khai: incident reopen (cần migration cho `actor_key_id` của
+Đợt chất lượng tín hiệu ingest (24/10/2026, chi tiết ở REVIEW #11–13): fingerprint chuẩn hóa
+message, ghi incident gom theo fingerprint, cô lập event PostgreSQL từ chối khỏi batch. Tiếp
+theo, theo thứ tự: load test kịch bản error storm để đo trước/sau; EXPLAIN `ListTraces` trên dữ
+liệu đại diện rồi thêm điều kiện thời gian cho lượt quét thứ hai. Đã làm: `GetTrace` phân
+trang (500 span/trang, UI đọc tối đa 5.000 và báo khi cắt).
+
+Đã chốt và triển khai (REVIEW, "Đợt quyết định production"): OTLP metrics ACK sau commit;
+retention 7/90/180/30 ngày; trusted proxy cấu hình được; trace phân trang; test đa replica;
+`scripts/loadgen` và baseline ban đầu.
+
+Còn chờ chủ repo chốt, chưa triển khai: incident reopen (cần migration cho `actor_key_id` của
 status change để ghi actor hệ thống, đổi semantics webhook), server-side redaction free-text
-(cần policy/fixture), TTL retention từng nhóm, metrics durability, SLO/peak, DB cũ.
+(cần policy/fixture), DB cũ, CIDR proxy của hạ tầng thật, mục tiêu REST cho endpoint tổng hợp.
+
+### Việc tiếp theo theo ưu tiên
+
+1. **Rollup cho endpoint tổng hợp** (services, topology, danh sách trace, performance): baseline cho thấy
+   chúng quét cả cửa sổ span nên không đạt p95 <200 ms ở 136k span. Cần quyết định: bảng tổng hợp theo
+   phút do job nền cập nhật (tăng độ trễ dữ liệu), hoặc chấp nhận mục tiêu cao hơn cho nhóm này.
+2. Đo lại trên Linux/staging với PostgreSQL tách máy: kết quả cổng truy vấn, `flush_interval` 50 ms,
+   `max_concurrent_requests` của OTLP (503 khi ACK chậm đột ngột), pool DB; chốt SLO thật.
+3. Metric cho outbox (số chờ, tuổi lâu nhất) và thời gian chờ trong queue ingest.
+4. Giới hạn stream đồng thời của gRPC; cân nhắc cache xác thực ngắn hạn (revoke ≤10s) nếu số đo cho thấy
+   truy vấn xác thực là điểm nghẽn (chưa có bằng chứng).
+5. Rate limit dùng chung nhiều replica (hiện theo từng tiến trình): ưu tiên đặt ở reverse proxy.
 
 ## Nền tảng đã có trước kế hoạch này
 

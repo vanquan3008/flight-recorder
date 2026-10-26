@@ -16,9 +16,9 @@ Các giá trị do chủ repo chốt, không suy ra từ default:
 | Image | Digest cố định, chạy nonroot, healthcheck đạt | Preflight bước 2, 5 |
 | Dữ liệu | DB mới hoặc đường data migration đã kiểm chứng cho DB cũ | Preflight bước 1 |
 | Phục hồi | RPO/RTO đã chốt; restore thử vào DB riêng đạt | Chứng minh dữ liệu |
-| Retention | max_age và dung lượng đĩa từng nhóm dữ liệu | Retention |
+| Retention | Bốn max_age đã xem lại; xem trước lượng sẽ bị xóa; dung lượng đĩa | Retention |
 | Tải | Peak, p95/p99, RSS đo trên cardinality đại diện | Tải và giới hạn bộ nhớ |
-| Metrics | Chấp nhận best-effort sau ACK hoặc chọn phương pháp bền vững | [ROADMAP](ROADMAP.md) |
+| Metrics | OTLP metrics ACK sau commit như trace/log (không còn best-effort) | Tải và giới hạn bộ nhớ |
 | Bảo mật | TLS verify-full, key tối thiểu quyền, bootstrap đã revoke | Preflight bước 4–6 |
 | Rollback | Image cũ tương thích schema hiện tại; migrate down không dùng | Chứng minh dữ liệu |
 
@@ -30,8 +30,8 @@ Các giá trị do chủ repo chốt, không suy ra từ default:
    COMPOSE_PROFILES= để tắt PostgreSQL local, TRACEPILOT_PRODUCTION=true,
    TRACEPILOT_IMAGE thành release digest và DATABASE_URL thành DB riêng.
    Dùng bootstrap key riêng đủ mạnh; tạo key ingest/read riêng theo nhiệm vụ.
-3. Chọn retention max_age và dung lượng đĩa theo volume thực. Giá trị 0s mặc định
-   tắt xóa tự động; không được suy ra DB có dung lượng hữu hạn nhờ defaults.
+3. Xem lại bốn giá trị retention (mục Retention) và dung lượng đĩa theo volume thực.
+   Mặc định đã bật xóa tự động; 0s trên một nhóm giữ nhóm đó mãi.
 4. PostgreSQL dùng sslmode=verify-full và hostname khớp certificate. Với CA riêng,
    mount CA read-only trong container và đặt sslrootcert tới đường dẫn đó.
    Validator hiện vẫn chấp nhận require/verify-ca; đó không thay thế việc chọn
@@ -67,7 +67,7 @@ Trước release, chạy trên staging có thể bỏ đi và lưu evidence theo
 
 | Drill | Điều kiện đạt |
 | --- | --- |
-| Schema | Baseline up/down/up và integration suite pass trên DB sạch; startup từ chối schema dirty/sai version. Down baseline xóa schema. |
+| Schema | Up → down 1 → up (000002 gỡ rồi tạo lại ba hàm dependency, dữ liệu giữ nguyên) và integration suite pass trên DB sạch; startup từ chối schema dirty/sai version. Down tiếp xuống baseline xóa schema. |
 | Restore | Backup phục hồi vào DB khác; so row counts, scope, sample trace/log/incident/evidence/metrics/outbox; start server trên DB restore rồi kiểm tra readiness/API. |
 | Auth/storage outage | Ngắt DB test, OTLP trả retryable, không ACK trước commit; reconnect, retry cùng payload không tăng unique rows. |
 | Shutdown | Gửi tải và SIGTERM; ACK chỉ cho dữ liệu commit, không vượt grace, không panic/deadlock; exporter phục hồi phần chưa ACK. |
@@ -77,7 +77,9 @@ Trước release, chạy trên staging có thể bỏ đi và lưu evidence theo
 Dùng pg_dump/pg_restore hoặc backup/PITR của managed database; định kỳ thực sự
 restore vào DB riêng. Chốt RPO (mức dữ liệu được phép mất) và RTO (thời gian
 khôi phục) trước khi triển khai. Chỉ rollback image nếu schema tương thích;
-migrate down không phải cách rollback production.
+migrate down không phải cách rollback production. Ngoại lệ đã kiểm chứng: image
+trước version 2 yêu cầu schema version 1, nên rollback về đó cần `migrate down 1`;
+bước này chỉ gỡ ba hàm của 000002, không chạm dữ liệu.
 
 Wrapper migration destructive có guard, chỉ dành cho disposable DB:
 
@@ -106,16 +108,76 @@ counter storage với expected count trên DB test; partial rejection là failur
 Retry/idempotency cần drill riêng gửi lại chính payload cũ.
 
 Queue byte budget là ước lượng và áp dụng riêng cho events/metrics. Nó không
-giới hạn tổng RSS; đặc biệt gRPC decode xảy ra trước admission handler. Metrics
-best-effort có thể mất sau ACK khi DB lỗi. Nếu yêu cầu metrics bền vững, chọn
-phương pháp trong roadmap trước khi dùng chúng làm nguồn duy nhất cho SLO.
+giới hạn tổng RSS; đặc biệt gRPC decode xảy ra trước admission handler. OTLP
+metrics ACK sau commit giống trace/log: lỗi DB trả 503/Unavailable để exporter
+gửi lại, điểm lưu được không bị mất sau ACK. Chỉ metrics Prometheus của chính
+TracePilot (`/metrics`) nằm trong bộ nhớ và mất khi tiến trình chết.
+
+Đo baseline bằng `scripts/loadgen` (tốc độ cố định, ingest và đọc tách riêng):
+
+```powershell
+go build -o loadgen.exe ./scripts/loadgen/main.go ./scripts/loadgen/report.go
+./loadgen.exe -api-key $env:KEY -spans-per-second 1000 -spans-per-request 100 -duration 30s
+./loadgen.exe -api-key $env:KEY -reads-per-second 100 -duration 30s
+./loadgen.exe -api-key $env:KEY -spans-per-second 1000 -reads-per-second 100   # chia sẻ tài nguyên
+```
+
+Rate limit mặc định (120 request/phút mỗi IP) thấp hơn tải đo; nâng
+`TRACEPILOT_HTTP_RATE_LIMIT_REQUESTS` chỉ cho phiên đo trên staging. Kết quả đã
+đo và giới hạn môi trường ở [REVIEW](REVIEW.md).
+
+API quản trị chạy tối đa `TRACEPILOT_HTTP_MAX_CONCURRENT_QUERIES` (4) request cùng
+lúc, mỗi request tối đa `TRACEPILOT_HTTP_REQUEST_TIMEOUT` (20s); phần vượt trả
+503 + Retry-After, quá hạn trả 504. Hai giá trị này chia pool DB giữa đọc với
+ingest và worker; chỉnh theo số core của PostgreSQL.
 
 ## Retention, thông báo và cảnh báo
 
-Retention telemetry dùng ngày UTC và có thể giữ thêm gần một ngày ở cutoff.
-Incident/evidence/audit/delivery history chưa có TTL riêng, vẫn tăng dù telemetry
-được dọn. UI có thể gặp evidence tham chiếu trace đã hết hạn.
-Chốt policy cho từng nhóm trước khi cam kết thời hạn lưu hoặc dung lượng DB.
+Retention chạy theo nhóm, mỗi nhóm một max_age; `0s` giữ nhóm đó mãi:
+
+| Nhóm | Biến | Mặc định | Xóa gì |
+| --- | --- | --- | --- |
+| Telemetry thô | `TRACEPILOT_RETENTION_MAX_AGE` | 168h (7 ngày) | events, spans, logs, metric points (drop partition theo ngày) |
+| Incident | `TRACEPILOT_RETENTION_INCIDENT_MAX_AGE` | 2160h (90 ngày) | incident RESOLVED/IGNORED không hoạt động, kèm evidence, occurrence, lịch sử trạng thái, replay result |
+| Audit | `TRACEPILOT_RETENTION_AUDIT_MAX_AGE` | 4320h (180 ngày) | API key audit events |
+| Webhook delivery | `TRACEPILOT_RETENTION_DELIVERY_MAX_AGE` | 720h (30 ngày) | delivery đã succeeded/failed |
+
+Giữ lại luôn: incident OPEN/INVESTIGATING (dù cũ), incident vừa hoạt động trong
+cửa sổ, delivery pending/sending. Telemetry dùng ngày UTC nên có thể giữ thêm gần
+một ngày. Evidence còn tham chiếu trace đã hết hạn; UI báo "trace không còn".
+Lịch sử đổi trạng thái là một phần của incident nên sống cùng incident (≥90 ngày),
+ngắn hơn audit key 180 ngày; muốn 180 ngày cho nó cần migration bỏ cascade.
+
+**Trước khi nâng cấp DB đã có dữ liệu**, bản này bật xóa ở chu kỳ đầu tiên. Xem
+trước lượng sẽ bị xóa (chỉ đọc):
+
+```sql
+SELECT (SELECT count(*) FROM events WHERE occurred_at < now() - interval '7 days') AS events,
+       (SELECT count(*) FROM incidents WHERE status IN ('RESOLVED','IGNORED') AND last_seen_at < now() - interval '90 days' AND updated_at < now() - interval '90 days') AS incidents,
+       (SELECT count(*) FROM api_key_events WHERE created_at < now() - interval '180 days') AS audit,
+       (SELECT count(*) FROM webhook_deliveries WHERE status IN ('succeeded','failed') AND updated_at < now() - interval '30 days') AS deliveries;
+```
+
+Muốn giữ như cũ, đặt các biến trên về `0s` trước khi khởi động.
+
+## Nhiều replica
+
+Thiết kế cho nhiều replica dùng chung PostgreSQL, không cần leader election; mỗi
+bất biến dựa vào ràng buộc hoặc thao tác nguyên tử của PostgreSQL và có test
+(`replicas_integration_test.go`, `idempotent_inserts_integration_test.go`):
+ingest trùng được chống bằng ID tất định + `ON CONFLICT DO NOTHING`; outbox claim
+bằng `FOR UPDATE SKIP LOCKED` và lease 6 phút nên crash được nhận lại; detection
+cùng cửa sổ phút tạo một incident; tạo partition và provisioning lúc khởi động
+tuần tự hóa bằng advisory lock theo transaction. Cần lưu ý:
+
+- Tổng connection = số replica x `database.max_connections` (mặc định 20) phải nhỏ
+  hơn `max_connections` của PostgreSQL.
+- Rate limit và giới hạn truy vấn đồng thời tính theo từng tiến trình, nên giới
+  hạn toàn hệ thống là N lần. Cần giới hạn chung thì đặt ở reverse proxy.
+- Phía sau reverse proxy, khai báo `TRACEPILOT_HTTP_TRUSTED_PROXIES` (CIDR hoặc IP
+  của proxy). Để trống thì `X-Forwarded-For` bị bỏ qua; khi khai báo, địa chỉ client
+  lấy từ phải sang, bỏ qua các proxy tin cậy. Không có cache xác thực: key bị
+  revoke/rotate có hiệu lực ngay trên mọi replica.
 
 Webhook chỉ bật khi cần, kèm encryption key ngẫu nhiên 32 byte hex/base64 từ
 secret manager. URL phải HTTPS; worker kiểm tra DNS/IP, chặn private/metadata

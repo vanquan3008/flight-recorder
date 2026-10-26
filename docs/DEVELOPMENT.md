@@ -83,12 +83,31 @@ go -C backend test ./...
 
 Baseline down/up xóa schema: chỉ dùng scripts/upgrade-rollback-drill.ps1 có
 guard trên DB disposable. Không dùng migrate down để rollback application.
-Schema hiện là version 1; không có migration 014/015.
+Schema hiện là version 2 (000001 baseline, 000002 hàm dependency). Down 1 chỉ
+gỡ hàm của 000002; down tiếp mới xóa schema baseline.
 
-SQLC source: backend/db/queries; generated: internal/storage/postgres/sqlc.
+Viết SQL mới trong backend/db/queries/<chức năng>.sql (tham số `@tên`, filter
+tùy chọn `sqlc.narg(tên)`), sinh lại code rồi gọi hàm sinh ra từ store. Không
+truyền chuỗi SQL vào Exec/Query trong Go: architecture test sẽ báo lỗi, trừ các
+ngoại lệ có lý do ghi trong storage_sql_test.go. Cấu hình kiểu Go nằm ở
+backend/sqlc.yaml. Generated: internal/storage/postgres/sqlc.
 Chạy make sqlc-check với Docker, hoặc generator cùng version ghim trong Makefile.
 Không sửa generated code bằng tay. Commit UI source và embedded dist tương ứng.
 CI kiểm tra SQLC và assets khớp source.
+
+## Công cụ tải
+
+`scripts/loadgen` (Go, chỉ stdlib, nằm ngoài module backend) phát OTLP trace và đọc API
+với tốc độ cố định rồi in p50/p95/p99, lỗi theo mã trạng thái và số đọc từ `/metrics`
+(queue, pool DB, từ chối). Build và kiểm tra bằng đối số file:
+
+```powershell
+go vet scripts/loadgen/main.go scripts/loadgen/report.go
+go test scripts/loadgen/main.go scripts/loadgen/report.go scripts/loadgen/report_test.go
+go run scripts/loadgen/main.go scripts/loadgen/report.go -help
+```
+
+Cách đo và các giới hạn của môi trường ở [OPERATIONS](OPERATIONS.md) và [REVIEW](REVIEW.md).
 
 ## Browser smoke
 
