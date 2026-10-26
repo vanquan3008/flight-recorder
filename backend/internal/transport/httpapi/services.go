@@ -1,41 +1,40 @@
 package httpapi
 
-import "net/http"
+import (
+	"net/http"
 
-func (server *Server) listServices(responseWriter http.ResponseWriter, request *http.Request) {
-	principal, ok := server.authenticateRead(responseWriter, request)
-	if !ok {
+	"github.com/vanquan3008/tracepilot/internal/auth"
+)
+
+func (server *Server) listServices(responseWriter http.ResponseWriter, request *http.Request, principal auth.Principal) {
+	from, fromError := parseTime(request.URL.Query().Get("from"))
+	if fromError != nil {
+		writeInvalidQuery(responseWriter, fromError)
 		return
 	}
-	from, fromError := parseTime(request.URL.Query().Get("from"))
 	to, toError := parseTime(request.URL.Query().Get("to"))
-	if fromError != nil || toError != nil {
-		writeAPIError(responseWriter, http.StatusBadRequest, "INVALID_QUERY", "time filters must use RFC3339")
+	if toError != nil {
+		writeInvalidQuery(responseWriter, toError)
 		return
 	}
 	if rangeError := validateTimeRange(from, to); rangeError != nil {
-		writeAPIError(responseWriter, http.StatusBadRequest, "INVALID_QUERY", rangeError.Error())
+		writeInvalidQuery(responseWriter, rangeError)
 		return
 	}
 	services, queryError := server.backend.ListServices(request.Context(), principal.ProjectID, server.environmentID, from, to)
 	if queryError != nil {
-		server.logger.Error("list services", "error", queryError)
-		writeAPIError(responseWriter, http.StatusInternalServerError, "INTERNAL_ERROR", "internal server error")
+		server.writeInternalError(responseWriter, "list services", queryError)
 		return
 	}
 	writeJSONValue(responseWriter, http.StatusOK, map[string]any{"data": services})
 }
 
-func (server *Server) listServiceDependencies(responseWriter http.ResponseWriter, request *http.Request) {
-	principal, ok := server.authenticateRead(responseWriter, request)
-	if !ok {
-		return
-	}
-	dependencies, queryError := server.backend.ListServiceDependencies(request.Context(), principal.ProjectID, server.environmentID, request.PathValue("service"))
+func (server *Server) listServiceDependencies(responseWriter http.ResponseWriter, request *http.Request, principal auth.Principal) {
+	service := request.PathValue("service")
+	dependencies, queryError := server.backend.ListServiceDependencies(request.Context(), principal.ProjectID, server.environmentID, service)
 	if queryError != nil {
-		server.logger.Error("list service dependencies", "error", queryError)
-		writeAPIError(responseWriter, http.StatusInternalServerError, "INTERNAL_ERROR", "internal server error")
+		server.writeInternalError(responseWriter, "list service dependencies", queryError)
 		return
 	}
-	writeJSONValue(responseWriter, http.StatusOK, map[string]any{"service": request.PathValue("service"), "dependencies": dependencies})
+	writeJSONValue(responseWriter, http.StatusOK, map[string]any{"service": service, "dependencies": dependencies})
 }

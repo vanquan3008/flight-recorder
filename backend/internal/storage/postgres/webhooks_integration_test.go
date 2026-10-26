@@ -50,7 +50,7 @@ func TestWebhookEncryptionAndDurableClaimIntegration(t *testing.T) {
 		t.Fatalf("secret is not encrypted: %q", stored)
 	}
 	payload := []byte(`{"event":"incident.opened","payload":{"id":"one"}}`)
-	deliveryID := webhookDeliveryID(projectID, issued.ID, "incident.opened", payload)
+	deliveryID := telemetry.DeterministicID(time.Now().UTC(), "webhook-integration-delivery", runID)
 	if _, err := database.pool.Exec(context.Background(), `INSERT INTO webhook_deliveries (id,project_id,webhook_id,event_type,payload,status,attempt,max_attempts,next_attempt_at,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,'pending',0,3,now(),now(),now()) ON CONFLICT (project_id,id) DO NOTHING`, deliveryID, projectID, issued.ID, "incident.opened", json.RawMessage(payload)); err != nil {
 		t.Fatal(err)
 	}

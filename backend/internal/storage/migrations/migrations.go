@@ -12,7 +12,7 @@ import (
 )
 
 // CurrentVersion is the schema version the binary expects; bump it with every new migration.
-const CurrentVersion uint = 1
+const CurrentVersion uint = 2
 
 func EnsureCurrent(databaseURL, migrationsPath string) (runError error) {
 	migrationRunner, openError := open(databaseURL, migrationsPath)

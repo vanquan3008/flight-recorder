@@ -161,8 +161,19 @@ func (normalizer *normalizer) validateText(values ...string) error {
 		if len(value) > normalizer.configuration.MaxAttributeValueBytes {
 			return errors.New("record text exceeds limit")
 		}
+		if containsNUL(value) {
+			return errNULText
+		}
 	}
 	return nil
+}
+
+// errNULText rejects one record up front: PostgreSQL text and jsonb cannot hold
+// U+0000, and a stored batch containing it would fail for every record in it.
+var errNULText = errors.New("record text contains a NUL character")
+
+func containsNUL(value string) bool {
+	return strings.IndexByte(value, 0) >= 0
 }
 
 func spanEventType(span *tracepb.Span, attributes map[string]any) telemetry.EventType {

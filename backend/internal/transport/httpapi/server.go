@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"sync/atomic"
 	"time"
 
@@ -32,6 +33,9 @@ type Server struct {
 	replay                  ReplayRunner
 	replayMaxRequestBytes   int64
 	allowedOrigins          map[string]struct{}
+	trustedProxies          []netip.Prefix
+	queryGate               chan struct{}
+	requestTimeout          time.Duration
 	corsAllowedMethods      string
 	metricsRequireAuth      bool
 	rateLimiter             *requestRateLimiter
@@ -79,6 +83,12 @@ func New(configuration config.Config, logger *slog.Logger, readinessCheck func(c
 	}
 	for _, origin := range configuration.HTTP.AllowedOrigins {
 		server.allowedOrigins[origin] = struct{}{}
+	}
+	server.trustedProxies = configuration.HTTP.TrustedProxyPrefixes()
+	server.queryGate = make(chan struct{}, positiveOr(configuration.HTTP.MaxConcurrentQueries, defaultConcurrentQueries))
+	server.requestTimeout = configuration.HTTP.RequestTimeout
+	if server.requestTimeout <= 0 {
+		server.requestTimeout = defaultRequestTimeout
 	}
 	router := http.NewServeMux()
 	router.Handle("GET /", webui.New())

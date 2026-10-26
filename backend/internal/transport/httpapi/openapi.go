@@ -166,6 +166,11 @@ func openAPIQueryParameters(operationID string) []map[string]any {
 		)
 	case "listServices":
 		return openAPITimeParameters()
+	case "getTrace":
+		return []map[string]any{
+			{"name": "limit", "in": "query", "description": "Spans per page; next_cursor is present while more follow.", "schema": map[string]any{"type": "integer", "minimum": 1, "maximum": maxTraceSpansPerPage}},
+			openAPIStringParameter("cursor"),
+		}
 	case "getRequestPerformance":
 		return combineOpenAPIParameters(openAPIPageParameters()[:1], openAPITimeParameters(), openAPIStringParameters("service", "endpoint"))
 	case "listIncidentOccurrences", "listIncidentEvents", "listIncidentStatusChanges", "listReplayExecutions", "listAPIKeys", "listAPIKeyEvents", "listWebhooks", "listWebhookDeliveries":

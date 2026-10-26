@@ -10,10 +10,6 @@ import (
 
 const apiKeyHeader = "X-API-Key"
 
-func (server *Server) authenticateRead(responseWriter http.ResponseWriter, request *http.Request) (auth.Principal, bool) {
-	return server.authenticateScope(responseWriter, request, "read")
-}
-
 func (server *Server) authenticateScope(responseWriter http.ResponseWriter, request *http.Request, scope string) (auth.Principal, bool) {
 	rawKey := strings.TrimSpace(request.Header.Get(apiKeyHeader))
 	if rawKey == "" {
@@ -28,8 +24,7 @@ func (server *Server) authenticateScope(responseWriter http.ResponseWriter, requ
 		return auth.Principal{}, false
 	}
 	if authError != nil {
-		server.logger.Error("authenticate query request", "error", authError)
-		writeAPIError(responseWriter, http.StatusInternalServerError, "INTERNAL_ERROR", "internal server error")
+		server.writeInternalError(responseWriter, "authenticate API key", authError)
 		return auth.Principal{}, false
 	}
 	if !principal.HasScope(scope) {

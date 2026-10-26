@@ -16,13 +16,16 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+// Submitter stores trace and log events. It returns the committed count, the
+// count storage rejected as invalid, and an error for retryable failures.
 type Submitter interface {
-	Submit(context.Context, []telemetry.Event) (int, error)
+	Submit(context.Context, []telemetry.Event) (persisted, rejected int, err error)
 }
 
-// MetricsSubmitter accepts metric data points from the OTLP metrics pipeline.
+// MetricsSubmitter stores metric data points. It returns the committed count,
+// the count storage rejected as invalid, and an error for retryable failures.
 type MetricsSubmitter interface {
-	SubmitMetrics(context.Context, []telemetry.MetricDataPoint) (int, error)
+	SubmitMetrics(context.Context, []telemetry.MetricDataPoint) (persisted, rejected int, err error)
 }
 
 type Receiver struct {
@@ -89,21 +92,18 @@ func (receiver *Receiver) authorize(ctx context.Context, rawKey string) error {
 
 func (receiver *Receiver) exportTraces(ctx context.Context, request *collectortracepb.ExportTraceServiceRequest) (*collectortracepb.ExportTraceServiceResponse, error) {
 	events, rejected := receiver.normalizer.traces(request.GetResourceSpans())
-	persisted, submitError := receiver.pipeline.Submit(ctx, events)
-	receiver.metrics.ObserveIngested("traces", persisted)
-	if rejected > 0 {
-		receiver.metrics.ObserveRejected("traces", "validation", rejected)
-	}
+	persisted, invalid, submitError := receiver.pipeline.Submit(ctx, events)
+	receiver.observeOutcome("traces", persisted, rejected, invalid)
 	if submitError != nil {
 		// Partial success tells an OTLP client not to retry. Storage and admission
 		// failures are temporary, so fail the whole request and rely on stable IDs.
 		return nil, errors.New("trace ingestion unavailable")
 	}
 	response := &collectortracepb.ExportTraceServiceResponse{}
-	if rejected > 0 {
+	if rejected+invalid > 0 {
 		response.PartialSuccess = &collectortracepb.ExportTracePartialSuccess{
-			RejectedSpans: int64(rejected),
-			ErrorMessage:  "one or more spans were rejected by validated ingestion limits",
+			RejectedSpans: int64(rejected + invalid),
+			ErrorMessage:  rejectionMessage("spans", invalid),
 		}
 	}
 	return response, nil
@@ -111,23 +111,39 @@ func (receiver *Receiver) exportTraces(ctx context.Context, request *collectortr
 
 func (receiver *Receiver) exportLogs(ctx context.Context, request *collectorlogspb.ExportLogsServiceRequest) (*collectorlogspb.ExportLogsServiceResponse, error) {
 	events, rejected := receiver.normalizer.logs(request.GetResourceLogs())
-	persisted, submitError := receiver.pipeline.Submit(ctx, events)
-	receiver.metrics.ObserveIngested("logs", persisted)
-	if rejected > 0 {
-		receiver.metrics.ObserveRejected("logs", "validation", rejected)
-	}
+	persisted, invalid, submitError := receiver.pipeline.Submit(ctx, events)
+	receiver.observeOutcome("logs", persisted, rejected, invalid)
 	if submitError != nil {
 		// See trace export: temporary failures must remain retryable.
 		return nil, errors.New("log ingestion unavailable")
 	}
 	response := &collectorlogspb.ExportLogsServiceResponse{}
-	if rejected > 0 {
+	if rejected+invalid > 0 {
 		response.PartialSuccess = &collectorlogspb.ExportLogsPartialSuccess{
-			RejectedLogRecords: int64(rejected),
-			ErrorMessage:       "one or more log records were rejected by validated ingestion limits",
+			RejectedLogRecords: int64(rejected + invalid),
+			ErrorMessage:       rejectionMessage("log records", invalid),
 		}
 	}
 	return response, nil
+}
+
+// observeOutcome records committed events, records rejected by validation
+// before queueing, and records storage rejected as invalid after queueing.
+func (receiver *Receiver) observeOutcome(signal string, persisted, rejected, invalid int) {
+	receiver.metrics.ObserveIngested(signal, persisted)
+	if rejected > 0 {
+		receiver.metrics.ObserveRejected(signal, "validation", rejected)
+	}
+	if invalid > 0 {
+		receiver.metrics.ObserveRejected(signal, "invalid", invalid)
+	}
+}
+
+func rejectionMessage(records string, invalid int) string {
+	if invalid > 0 {
+		return "one or more " + records + " were rejected as invalid and must not be retried"
+	}
+	return "one or more " + records + " were rejected by validated ingestion limits"
 }
 
 type traceService struct {
@@ -199,20 +215,16 @@ func (receiver *Receiver) exportMetrics(ctx context.Context, request *collectorm
 		return &collectormetricspb.ExportMetricsServiceResponse{}, nil
 	}
 	points, rejected := receiver.normalizer.metrics(request.GetResourceMetrics())
-	accepted, submitError := receiver.metricsPipeline.SubmitMetrics(ctx, points)
-	// Metrics acknowledge admission; their asynchronous store can still fail.
-	receiver.metrics.ObserveIngested("metrics", accepted)
-	if rejected > 0 {
-		receiver.metrics.ObserveRejected("metrics", "validation", rejected)
-	}
+	persisted, invalid, submitError := receiver.metricsPipeline.SubmitMetrics(ctx, points)
+	receiver.observeOutcome("metrics", persisted, rejected, invalid)
 	if submitError != nil {
 		return nil, errors.New("metrics ingestion unavailable")
 	}
 	response := &collectormetricspb.ExportMetricsServiceResponse{}
-	if rejected > 0 {
+	if rejected+invalid > 0 {
 		response.PartialSuccess = &collectormetricspb.ExportMetricsPartialSuccess{
-			RejectedDataPoints: int64(rejected),
-			ErrorMessage:       "one or more data points were rejected by validated ingestion limits",
+			RejectedDataPoints: int64(rejected + invalid),
+			ErrorMessage:       rejectionMessage("data points", invalid),
 		}
 	}
 	return response, nil

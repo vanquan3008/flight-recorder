@@ -10,6 +10,7 @@ import (
 
 	"github.com/vanquan3008/tracepilot/internal/config"
 	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
+	"github.com/vanquan3008/tracepilot/internal/query"
 )
 
 func TestSQLCServiceAndTraceQueriesIntegration(t *testing.T) {
@@ -68,7 +69,7 @@ func TestSQLCServiceAndTraceQueriesIntegration(t *testing.T) {
 		t.Fatalf("ListServiceDependencies() = %#v, %v", dependencies, dependencyError)
 	}
 
-	spans, traceError := database.GetTrace(context.Background(), ingestion.ProjectID, ingestion.EnvironmentID, events[0].TraceID)
+	spans, _, traceError := database.GetTrace(context.Background(), ingestion.ProjectID, ingestion.EnvironmentID, events[0].TraceID, query.SpanPage{Limit: 100, MaxBytes: 1 << 20})
 	if traceError != nil || len(spans) != 2 {
 		t.Fatalf("GetTrace() = %#v, %v", spans, traceError)
 	}

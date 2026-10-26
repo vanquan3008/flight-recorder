@@ -4,17 +4,14 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/vanquan3008/tracepilot/internal/auth"
 	"github.com/vanquan3008/tracepilot/internal/query"
 )
 
-func (server *Server) requestPerformance(responseWriter http.ResponseWriter, request *http.Request) {
-	principal, ok := server.authenticateRead(responseWriter, request)
-	if !ok {
-		return
-	}
+func (server *Server) requestPerformance(responseWriter http.ResponseWriter, request *http.Request, principal auth.Principal) {
 	parsed, err := parseAnalysisFilter(request)
 	if err != nil {
-		writeAPIError(responseWriter, http.StatusBadRequest, "INVALID_QUERY", err.Error())
+		writeInvalidQuery(responseWriter, err)
 		return
 	}
 	filter := query.PerformanceFilter{
@@ -22,7 +19,7 @@ func (server *Server) requestPerformance(responseWriter http.ResponseWriter, req
 		From: parsed.From, To: parsed.To, Limit: parsed.Limit,
 	}
 	if err := filter.Validate(); err != nil {
-		writeAPIError(responseWriter, http.StatusBadRequest, "INVALID_QUERY", err.Error())
+		writeInvalidQuery(responseWriter, err)
 		return
 	}
 	backend, ok := server.backend.(PerformanceBackend)
@@ -32,8 +29,7 @@ func (server *Server) requestPerformance(responseWriter http.ResponseWriter, req
 	}
 	result, err := backend.RequestPerformance(request.Context(), principal.ProjectID, filter)
 	if err != nil {
-		server.logger.Error("request performance", "error", err)
-		writeAPIError(responseWriter, http.StatusInternalServerError, "INTERNAL_ERROR", "internal server error")
+		server.writeInternalError(responseWriter, "request performance", err)
 		return
 	}
 	writeJSONValue(responseWriter, http.StatusOK, result)

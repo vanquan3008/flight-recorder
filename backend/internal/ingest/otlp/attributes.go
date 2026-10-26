@@ -49,6 +49,9 @@ func (builder *attributeBuilder) addSynthetic(key string, value any) error {
 	if key == "" || len(key) > builder.normalizer.configuration.MaxAttributeValueBytes {
 		return errors.New("attribute key is empty or too long")
 	}
+	if containsNUL(key) {
+		return errNULText
+	}
 	if builder.normalizer.redacts(key) {
 		value = "[REDACTED]"
 	}
@@ -73,6 +76,9 @@ func (builder *attributeBuilder) value(value *commonpb.AnyValue, depth int) (any
 	case *commonpb.AnyValue_StringValue:
 		if len(typedValue.StringValue) > builder.normalizer.configuration.MaxAttributeValueBytes {
 			return nil, errors.New("attribute string exceeds limit")
+		}
+		if containsNUL(typedValue.StringValue) {
+			return nil, errNULText
 		}
 		return typedValue.StringValue, nil
 	case *commonpb.AnyValue_BoolValue:
@@ -113,6 +119,9 @@ func (builder *attributeBuilder) value(value *commonpb.AnyValue, depth int) (any
 			key := strings.TrimSpace(nested.GetKey())
 			if key == "" || len(key) > builder.normalizer.configuration.MaxAttributeValueBytes {
 				return nil, errors.New("attribute key is empty or too long")
+			}
+			if containsNUL(key) {
+				return nil, errNULText
 			}
 			if builder.normalizer.redacts(key) {
 				result[key] = "[REDACTED]"

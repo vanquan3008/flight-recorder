@@ -7,14 +7,12 @@ import (
 
 	"github.com/vanquan3008/tracepilot/internal/application/replay"
 	"github.com/vanquan3008/tracepilot/internal/application/replay/capture"
+	"github.com/vanquan3008/tracepilot/internal/auth"
 )
 
-func (server *Server) replayIncident(responseWriter http.ResponseWriter, request *http.Request) {
-	principal, ok := server.authenticateScope(responseWriter, request, "replay")
-	if !ok {
-		return
-	}
-	if !requireUUID(responseWriter, request.PathValue("incidentID")) {
+func (server *Server) replayIncident(responseWriter http.ResponseWriter, request *http.Request, principal auth.Principal) {
+	incidentID := request.PathValue("incidentID")
+	if !requireUUID(responseWriter, incidentID) {
 		return
 	}
 	var payload struct {
@@ -37,16 +35,15 @@ func (server *Server) replayIncident(responseWriter http.ResponseWriter, request
 		return
 	}
 	outcome, runError := server.replay.Run(request.Context(), replay.Command{
-		ProjectID: principal.ProjectID, EnvironmentID: server.environmentID, IncidentID: request.PathValue("incidentID"),
+		ProjectID: principal.ProjectID, EnvironmentID: server.environmentID, IncidentID: incidentID,
 		ActorKeyID: principal.KeyID, RequestID: request.Header.Get(requestIDHeader), Request: captured,
 	})
 	if errors.Is(runError, replay.ErrIncidentNotFound) {
-		writeAPIError(responseWriter, http.StatusNotFound, "NOT_FOUND", "incident not found")
+		writeNotFound(responseWriter, "incident")
 		return
 	}
 	if runError != nil {
-		server.logger.Error("run replay", "error", runError)
-		writeAPIError(responseWriter, http.StatusInternalServerError, "INTERNAL_ERROR", "internal server error")
+		server.writeInternalError(responseWriter, "run replay", runError)
 		return
 	}
 	writeJSONValue(responseWriter, http.StatusCreated, outcome)
