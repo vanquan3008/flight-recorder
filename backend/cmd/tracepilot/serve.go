@@ -74,6 +74,7 @@ func runServer(arguments []string) int {
 	}
 
 	selfMetrics := metrics.New(version, commit, buildTime)
+	selfMetrics.WatchPool(database.PoolSnapshot)
 	ingestionPipeline := buildIngestionPipeline(cfg, database, selfMetrics)
 	ingestionPipeline.Start()
 
@@ -107,9 +108,13 @@ func runServer(arguments []string) int {
 	}
 	group.Go(func() error { return runPartitionMaintenance(runtimeCtx, logger, database) })
 
-	if cfg.Retention.MaxAge > 0 {
+	policy := retention.Policy{
+		Telemetry: cfg.Retention.MaxAge, Incidents: cfg.Retention.IncidentMaxAge,
+		Audit: cfg.Retention.AuditMaxAge, Deliveries: cfg.Retention.DeliveryMaxAge,
+	}
+	if policy.Enabled() {
 		group.Go(func() error {
-			return retention.Run(runtimeCtx, logger, database, selfMetrics, cfg.Retention.MaxAge, cfg.Retention.CheckInterval, cfg.Retention.BatchSize)
+			return retention.Run(runtimeCtx, logger, database, selfMetrics, policy, cfg.Retention.CheckInterval, cfg.Retention.BatchSize)
 		})
 	}
 
