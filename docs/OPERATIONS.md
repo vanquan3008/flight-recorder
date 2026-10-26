@@ -1,120 +1,132 @@
-# TracePilot operations runbook
+# Điều kiện vận hành production
 
-This runbook is the production companion to [DEVELOPMENT.md](DEVELOPMENT.md).
-The first production topology is one immutable TracePilot image, a private
-managed PostgreSQL database, and a TLS reverse proxy. PostgreSQL is never
-published by the production Compose file.
+Mục tiêu hiện tại: một TracePilot replica, PostgreSQL riêng trên mạng tin cậy,
+TLS cho management/OTLP và database, image cố định bằng digest.
+Đây là runbook nghiệm thu, không phải tuyên bố source đã được chứng nhận production.
+Kết quả kiểm tra ở [REVIEW.md](REVIEW.md); ưu tiên ở [ROADMAP.md](ROADMAP.md).
 
-## Deploy and verify
+## Checklist trước khi mở traffic
 
-1. Copy `deploy/.env.production.example` to a secret-manager controlled file.
-2. Replace the image with a release digest, database URL, bootstrap key, TLS
-   directory, and trusted-network listener binds.
-3. Run `tracepilot migrate up` as a one-shot job, then start the image.
-4. Require `/health/ready` before sending traffic and check `/metrics` with the
-   read scope. Confirm the database schema version equals the binary's version.
+Chỉ mở traffic khi mọi dòng có evidence trên commit/image digest sẽ phát hành.
+Các giá trị do chủ repo chốt, không suy ra từ default:
 
-When direct Syslog is enabled, mount a CA that signs sender certificates as
-`ca.crt`; production configuration rejects Syslog without TLS and client-CA
-verification. Before a rotation, run `scripts/cert-check.ps1` for expiry, SAN
-and issuer-chain evidence, then restart/roll the replica so the new key pair is
-loaded.
+| Hạng mục | Cần có | Ở đâu |
+| --- | --- | --- |
+| Gate tự động | CI xanh trên commit release (web, lint, test + E2E, docker) | [CI](../.github/workflows/ci.yml) |
+| Image | Digest cố định, chạy nonroot, healthcheck đạt | Preflight bước 2, 5 |
+| Dữ liệu | DB mới hoặc đường data migration đã kiểm chứng cho DB cũ | Preflight bước 1 |
+| Phục hồi | RPO/RTO đã chốt; restore thử vào DB riêng đạt | Chứng minh dữ liệu |
+| Retention | max_age và dung lượng đĩa từng nhóm dữ liệu | Retention |
+| Tải | Peak, p95/p99, RSS đo trên cardinality đại diện | Tải và giới hạn bộ nhớ |
+| Metrics | Chấp nhận best-effort sau ACK hoặc chọn phương pháp bền vững | [ROADMAP](ROADMAP.md) |
+| Bảo mật | TLS verify-full, key tối thiểu quyền, bootstrap đã revoke | Preflight bước 4–6 |
+| Rollback | Image cũ tương thích schema hiện tại; migrate down không dùng | Chứng minh dữ liệu |
 
-Do not use `migrate down` as an application rollback. Roll back the image only
-when its schema is compatible; otherwise restore the tested database backup or
-deploy the forward-compatible migration first.
+## Preflight và triển khai
 
-## Backup and restore acceptance drill
-
-Run a full `pg_dump -Fc` at least daily, retain it according to the data policy,
-and monitor backup age/size. Once per release:
-
-```bash
-pg_dump -Fc "$TRACEPILOT_DATABASE_URL" > tracepilot-$(date -u +%Y%m%dT%H%M%SZ).dump
-createdb tracepilot_restore
-pg_restore --exit-on-error --clean --if-exists -d tracepilot_restore tracepilot.dump
-TRACEPILOT_DATABASE_URL="$TRACEPILOT_RESTORE_URL" tracepilot migrate version
-TRACEPILOT_DATABASE_URL="$TRACEPILOT_RESTORE_URL" tracepilot healthcheck
-```
-
-The drill passes only when row counts for events, spans, logs, security events,
-incidents, metrics and webhook deliveries match the source, readiness is green,
-and a sample API query returns the expected project-scoped data. Destroy the
-restore database after the evidence is recorded.
-
-## Outage and recovery drill
-
-- Stop PostgreSQL or revoke its network route for five minutes. Ingest clients
-  must receive bounded errors; the server must not acknowledge uncommitted
-  records, and queue depth/DB error metrics must rise.
-- Restore PostgreSQL. Confirm readiness, bounded queue drain, and no duplicate
-  event rows. The agent may replay its disk spool; verify its checkpoint moves
-  only after an accepted OTLP response.
-- For webhook outage, return HTTP 503 from a test endpoint. Deliveries must move
-  `pending -> sending -> pending` and finally `failed` after three attempts;
-  restart TracePilot and confirm stale leases are reclaimed.
-
-## Migration rollback drill
-
-On a disposable clone, record the current version, apply one migration, run
-`migrate down 1`, and verify the previous image rejects the newer schema until
-the migration is reapplied. Test a dirty migration marker and confirm both
-`migrate version` and server readiness fail closed. Capture command output and
-the exact release/image digest in the change record.
-
-The repository includes a guarded wrapper for the disposable database portion:
+1. Xác định có DB cũ không. Source hiện chỉ có baseline schema 1, không nâng cấp
+   tại chỗ DB dùng lịch sử migration cũ. Giữ backup và binary tương thích cho DB đó.
+2. Dùng cùng compose.yaml và .env ở root, lấy .env.example làm mẫu. Đặt
+   COMPOSE_PROFILES= để tắt PostgreSQL local, TRACEPILOT_PRODUCTION=true,
+   TRACEPILOT_IMAGE thành release digest và DATABASE_URL thành DB riêng.
+   Dùng bootstrap key riêng đủ mạnh; tạo key ingest/read riêng theo nhiệm vụ.
+3. Chọn retention max_age và dung lượng đĩa theo volume thực. Giá trị 0s mặc định
+   tắt xóa tự động; không được suy ra DB có dung lượng hữu hạn nhờ defaults.
+4. PostgreSQL dùng sslmode=verify-full và hostname khớp certificate. Với CA riêng,
+   mount CA read-only trong container và đặt sslrootcert tới đường dẫn đó.
+   Validator hiện vẫn chấp nhận require/verify-ca; đó không thay thế việc chọn
+   verify-full cho deployment này.
+5. TRACEPILOT_TLS_DIRECTORY chứa tls.crt, tls.key, ca.crt, cho UID nonroot đọc
+   được; mount tại /run/tracepilot/tls. Bật các field TLS/healthcheck đã có comment
+   trong .env.example. HEALTHCHECK_SERVER_NAME phải khớp DNS certificate. Chỉ mở listener
+   tới interface tin cậy; management mặc định bind loopback trên host.
+6. Validate Compose, chạy migrate riêng trên DB đã xác minh, rồi start:
 
 ```powershell
-.\scripts\upgrade-rollback-drill.ps1 `
-  -DatabaseUrl $env:TRACEPILOT_DISPOSABLE_DATABASE_URL `
-  -AllowDestructive
+docker compose config --quiet
+docker compose --profile tools pull tracepilot migrate
+docker compose run --rm migrate
+docker compose up --no-build -d tracepilot
 ```
 
-It performs `migrate up`, `migrate down 1`, and `migrate up` again, printing the
-schema version after each step. Application compatibility and N/N-1 policy
-still need verification with a real previous image in staging.
+Kiểm tra healthcheck container và /health/ready qua HTTPS tin cậy. Query một
+trace/log bằng key read; gửi thử bằng key ingest. /metrics yêu cầu quyền read.
+Không ghi config có secret, API key hoặc raw telemetry vào log vận hành.
+Revoke bootstrap sau khi đã có admin key thay thế; restart cùng bootstrap key
+không tự bỏ trạng thái revoke.
 
-## Load and capacity drill
+env_file: .env chuyển toàn bộ cấu hình từ file root vào container, gồm rate
+limit/retention/queue và các field mới. Không dùng --env-file để chọn thêm một
+file runtime khác: tham số đó chỉ đổi nguồn nội suy của Compose, env_file trong
+service vẫn trỏ .env ở root. Secret manager cần cấp file root này hoặc dùng
+environment override rõ ràng. Kiểm tra [Docker env_file](https://docs.docker.com/compose/how-tos/environment-variables/set-environment-variables/).
 
-Run `make bench-pipeline` for a CPU baseline and `make bench-postgres` against a
-disposable database. In staging, run a five-minute OTLP mixed traces/logs/metrics
-load at 2x expected peak. Record p50/p95/p99 ingest acknowledgement latency,
-throughput, queue depth/bytes, DB pool saturation, WAL rate, CPU, memory, and
-disk/index growth. The release gate is the agreed SLO, not a fixed benchmark
-number; abort on unbounded queue growth, rising failed batches, or data loss.
+## Chứng minh dữ liệu và phục hồi
 
-For a repeatable HTTP soak with explicit thresholds:
+Trước release, chạy trên staging có thể bỏ đi và lưu evidence theo image digest:
+
+| Drill | Điều kiện đạt |
+| --- | --- |
+| Schema | Baseline up/down/up và integration suite pass trên DB sạch; startup từ chối schema dirty/sai version. Down baseline xóa schema. |
+| Restore | Backup phục hồi vào DB khác; so row counts, scope, sample trace/log/incident/evidence/metrics/outbox; start server trên DB restore rồi kiểm tra readiness/API. |
+| Auth/storage outage | Ngắt DB test, OTLP trả retryable, không ACK trước commit; reconnect, retry cùng payload không tăng unique rows. |
+| Shutdown | Gửi tải và SIGTERM; ACK chỉ cho dữ liệu commit, không vượt grace, không panic/deadlock; exporter phục hồi phần chưa ACK. |
+| Webhook outage | Endpoint test trả 503; retry/outbox tồn tại qua restart, stale sending lease được reclaim, cuối cùng succeed/failed đúng policy. |
+| TLS | Certificate chain, DNS/SAN và expiry hợp lệ cho client, healthcheck và PostgreSQL. |
+
+Dùng pg_dump/pg_restore hoặc backup/PITR của managed database; định kỳ thực sự
+restore vào DB riêng. Chốt RPO (mức dữ liệu được phép mất) và RTO (thời gian
+khôi phục) trước khi triển khai. Chỉ rollback image nếu schema tương thích;
+migrate down không phải cách rollback production.
+
+Wrapper migration destructive có guard, chỉ dành cho disposable DB:
 
 ```powershell
-.\scripts\load-test.ps1 -DurationMinutes 5 -Concurrency 8 `
-  -HealthUrl http://localhost:8080/health/ready -MaxP95Ms 2000
+./scripts/upgrade-rollback-drill.ps1 -DatabaseUrl $env:TRACEPILOT_DISPOSABLE_DATABASE_URL -AllowDestructive
 ```
 
-Capture representative read-only query evidence with:
+Không chạy nếu chưa xác minh đúng DB test. Script không tự kiểm chứng tương
+thích application N/N-1; cần thử image thật trong staging.
+
+## Tải và giới hạn bộ nhớ
+
+Chốt events/giây, metric points/giây, kích thước payload, concurrent exporters,
+cardinality, retention và p95/p99 ACK trước khi đặt SLO. Chạy 2x peak dự kiến,
+ghi CPU/RSS, queue, DB pool/WAL, disk/index growth và latency truy vấn.
 
 ```powershell
-.\scripts\query-plan.ps1 -DatabaseUrl $env:TRACEPILOT_DATABASE_URL `
-  -ProjectId $projectId -EnvironmentId $environmentId -PsqlContainer tracepilot-postgres-1 `
-  -Output .\query-plan.txt
+./scripts/load-test.ps1 -Requests 1000 -Concurrency 8 -RecordsPerRequest 20 -ApiKey $env:TRACEPILOT_LOAD_API_KEY -Output ./load-result.json
+./scripts/load-test.ps1 -DurationMinutes 5 -Concurrency 8 -MaxP95Ms 2000 -ApiKey $env:TRACEPILOT_LOAD_API_KEY
 ```
 
-## Webhook security and operations
+Script này chỉ đo OTLP HTTP JSON logs; 2000 ms là ví dụ threshold, không phải SLO
+đã được chứng minh. Mỗi request có record identity riêng. accepted_records là số
+được OTLP chấp nhận, không phải phép đếm unique rows trong DB. Đối chiếu rows và
+counter storage với expected count trên DB test; partial rejection là failure.
+Retry/idempotency cần drill riêng gửi lại chính payload cũ.
 
-Set `TRACEPILOT_NOTIFICATIONS_ENABLED=true` only with a secret-manager supplied
-`TRACEPILOT_WEBHOOK_ENCRYPTION_KEY` (32 bytes, hex or base64). Endpoint URLs
-must be HTTPS. The worker resolves DNS at connection time and rejects private,
-loopback, link-local, shared, documentation and metadata ranges; redirects are
-not followed. Rotate a receiver secret with the rotate endpoint and update the
-receiver before enabling traffic again.
+Queue byte budget là ước lượng và áp dụng riêng cho events/metrics. Nó không
+giới hạn tổng RSS; đặc biệt gRPC decode xảy ra trước admission handler. Metrics
+best-effort có thể mất sau ACK khi DB lỗi. Nếu yêu cầu metrics bền vững, chọn
+phương pháp trong roadmap trước khi dùng chúng làm nguồn duy nhất cho SLO.
 
-## Alerts
+## Retention, thông báo và cảnh báo
 
-Alert on database readiness false, ingestion queue saturation, storage errors,
-security detection lag/checkpoint age, retention backlog, webhook delivery
-attempt failures (`tracepilot_webhook_delivery_attempts_total{outcome="failure"}`),
-webhook claim errors, backup age, disk usage and TLS expiry. Every alert should
-link to this runbook and include project/environment scope.
+Retention telemetry dùng ngày UTC và có thể giữ thêm gần một ngày ở cutoff.
+Incident/evidence/audit/delivery history chưa có TTL riêng, vẫn tăng dù telemetry
+được dọn. UI có thể gặp evidence tham chiếu trace đã hết hạn.
+Chốt policy cho từng nhóm trước khi cam kết thời hạn lưu hoặc dung lượng DB.
 
-For shutdown visibility, watch `tracepilot_ingestion_inflight_events` and alert
-on `tracepilot_ingestion_shutdowns_total{outcome="timeout"}`. A successful
-graceful drain is recorded with `outcome="completed"`.
+Webhook chỉ bật khi cần, kèm encryption key ngẫu nhiên 32 byte hex/base64 từ
+secret manager. URL phải HTTPS; worker kiểm tra DNS/IP, chặn private/metadata
+ranges và không theo redirect. Receiver cần xử lý delivery ID trùng do cơ chế
+at-least-once. Replay giữ tắt trừ khi đã chốt allowlist và quyền vận hành.
+
+Theo dõi readiness, queue depth/inflight bytes/events, rejected theo reason,
+storage/auth errors, detection duration/failures, retention backlog, webhook
+failure/claim errors, backup age, disk, TLS expiry và RSS. Khi shutdown, xem
+tracepilot_ingestion_shutdowns_total theo completed/timeout.
+Stop grace mặc định 35s cho hai budget 15s; tăng grace nếu đổi shutdown_timeout.
+
+Chưa có phép đo tải hoặc SLO được duyệt. Chỉ mở production traffic sau khi
+các drill, CI trên commit release và policy dữ liệu ở trên có evidence.

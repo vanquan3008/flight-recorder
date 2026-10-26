@@ -1,31 +1,111 @@
+/* Semantic tokens. Components read these names only; palette values live here.
+   Dark is the default for first paint scripts that cannot read the system theme. */
 :root {
   color-scheme: dark;
   --bg: #070b14;
+  --bg-glow: #183966;
   --surface: #0e1524;
   --surface-raised: #131d31;
+  --surface-sunken: #08111f;
+  --surface-header: #13213b;
+  --nav-bg: rgb(10 17 32 / 68%);
+  --topbar-bg: rgb(9 18 33 / 92%);
   --line: #263855;
+  --line-soft: #1e2d47;
   --text: #edf3ff;
-  --muted: #94a8c8;
+  --muted: #9bb0cf;
+  --faint: #7c92b3;
+  --code: #c0d2ef;
+  --hover: rgb(29 48 78 / 55%);
   --accent: #66dcb8;
   --accent-strong: #42b994;
-  --accent-blue: #79a9ff;
+  --accent-ink: #052019;
+  --blue: #79a9ff;
+  --violet: #b9a9ff;
+  --cyan: #77ddff;
   --danger: #ff8da2;
   --warning: #f7cf78;
+  --ok: #66dcb8;
+  --btn-bg: #1c4d65;
+  --btn-bg-hover: #28647c;
+  --btn-border: #367189;
+  --btn-text: #edf3ff;
+  --field-bg: #0a1220;
+  --danger-bg: #4b2035;
+  --danger-fg: #ffbfce;
+  --warn-bg: #4b3d20;
+  --warn-fg: #ffe7aa;
+  --ok-bg: #173f3d;
+  --ok-fg: #a4ebdf;
+  --neutral-bg: #273b5e;
+  --neutral-fg: #c7d8f1;
+  --info-bg: #192b48;
+  --info-border: #34537e;
+  --svc-0: #79a9ff; --svc-1: #66dcb8; --svc-2: #b9a9ff; --svc-3: #77ddff; --svc-4: #f7cf78; --svc-5: #f4a3d0;
   --shadow: 0 14px 36px rgb(0 0 0 / 24%);
+  --panel-bg: linear-gradient(145deg, #111e33, #0b1526);
+  --card-bg: linear-gradient(145deg, #14223b, #0e172a);
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f3f6fb;
+  --bg-glow: #d6e6ff;
+  --surface: #ffffff;
+  --surface-raised: #f8fafd;
+  --surface-sunken: #eef3fa;
+  --surface-header: #eaf0f8;
+  --nav-bg: rgb(255 255 255 / 78%);
+  --topbar-bg: rgb(255 255 255 / 92%);
+  --line: #cfd9e8;
+  --line-soft: #e0e8f3;
+  --text: #0f1b2d;
+  --muted: #4b5d78;
+  --faint: #66788f;
+  --code: #274365;
+  --hover: rgb(15 27 45 / 5%);
+  --accent: #0b7a68;
+  --accent-strong: #08604f;
+  --accent-ink: #ffffff;
+  --blue: #2457c5;
+  --violet: #5b45c4;
+  --cyan: #0a6f94;
+  --danger: #b4233f;
+  --warning: #8a5a00;
+  --ok: #0b7a68;
+  --btn-bg: #0b7a68;
+  --btn-bg-hover: #08604f;
+  --btn-border: #08604f;
+  --btn-text: #ffffff;
+  --field-bg: #ffffff;
+  --danger-bg: #fde4ea;
+  --danger-fg: #8f1b32;
+  --warn-bg: #fdf0cf;
+  --warn-fg: #6b4500;
+  --ok-bg: #d9f3ec;
+  --ok-fg: #075949;
+  --neutral-bg: #e2e9f4;
+  --neutral-fg: #2b405f;
+  --info-bg: #e7f0fd;
+  --info-border: #aac4ee;
+  --svc-0: #2457c5; --svc-1: #0b7a68; --svc-2: #5b45c4; --svc-3: #0a6f94; --svc-4: #a86b00; --svc-5: #b02a7a;
+  --shadow: 0 8px 24px rgb(25 45 80 / 10%);
+  --panel-bg: var(--surface);
+  --card-bg: linear-gradient(145deg, #ffffff, #f4f8fd);
 }
 
 * { box-sizing: border-box; }
 html { background: var(--bg); }
-body { min-width: 320px; margin: 0; background: radial-gradient(960px 560px at 88% -10%, #183966 0%, transparent 64%), var(--bg); color: var(--text); font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-button, input, select { font: inherit; }
-button, input, select { border: 1px solid var(--line); border-radius: 8px; background: #0a1220; color: var(--text); padding: 9px 11px; }
-button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; border-color: #367189; background: #1c4d65; cursor: pointer; font-weight: 700; transition: background .18s ease, border-color .18s ease, transform .18s ease; }
-button:hover:not(:disabled) { background: #28647c; transform: translateY(-1px); }
+body { min-width: 320px; margin: 0; background: radial-gradient(960px 560px at 88% -10%, var(--bg-glow) 0%, transparent 64%), var(--bg); color: var(--text); font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+button, input, select, textarea { font: inherit; }
+button, input, select, textarea { border: 1px solid var(--line); border-radius: 8px; background: var(--field-bg); color: var(--text); padding: 9px 11px; }
+button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; border-color: var(--btn-border); background: var(--btn-bg); color: var(--btn-text); cursor: pointer; font-weight: 700; transition: background .18s ease, border-color .18s ease, transform .18s ease; }
+button:hover:not(:disabled) { background: var(--btn-bg-hover); transform: translateY(-1px); }
 button:disabled { cursor: not-allowed; opacity: .55; }
-button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 a { color: inherit; }
 code, pre { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
-code { color: #c0d2ef; font-size: .9em; overflow-wrap: anywhere; }
+code { color: var(--code); font-size: .9em; overflow-wrap: anywhere; }
 h1, h2, h3, h4, p { margin-top: 0; }
 #root { min-height: 100vh; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }

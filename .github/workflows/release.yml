@@ -53,8 +53,6 @@ jobs:
             GOOS=${target%/*} GOARCH=${target#*/} CGO_ENABLED=0 go -C backend build -trimpath \
               -ldflags="-s -w -X main.version=${tag} -X main.commit=${commit} -X main.buildTime=${build_time}" \
               -o "../dist/tracepilot-${suffix}" ./cmd/tracepilot
-            GOOS=${target%/*} GOARCH=${target#*/} CGO_ENABLED=0 go -C backend build -trimpath \
-              -ldflags="-s -w" -o "../dist/tracepilot-agent-${suffix}" ./cmd/tracepilot-agent
           done
 
       - name: Smoke test release binary
@@ -75,8 +73,6 @@ jobs:
           sha256sum \
             tracepilot-linux-amd64 \
             tracepilot-linux-arm64 \
-            tracepilot-agent-linux-amd64 \
-            tracepilot-agent-linux-arm64 \
             tracepilot-binaries.spdx.json > SHA256SUMS
 
       - name: Log in to GHCR
@@ -92,8 +88,8 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
 
-      - name: Extract Docker metadata
-        id: meta
+      - name: Extract server image metadata
+        id: server_meta
         uses: docker/metadata-action@8e5442c4ef9f78752691e2d8f8d19755c6f78e81 # v5.5.1
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
@@ -103,15 +99,16 @@ jobs:
             type=semver,pattern={{major}}
             type=sha
 
-      - name: Build and push image
-        id: image
+      - name: Build and push server image
+        id: server_image
         uses: docker/build-push-action@5cd11c3a4ced054e52742c5fd54dca954e0edd85 # v6.7.0
         with:
           context: backend
+          target: server
           push: true
           platforms: linux/amd64,linux/arm64
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: ${{ steps.server_meta.outputs.tags }}
+          labels: ${{ steps.server_meta.outputs.labels }}
           sbom: true
           provenance: mode=max
           build-args: |
@@ -122,23 +119,23 @@ jobs:
       - name: Sign immutable image digest
         uses: sigstore/cosign-installer@1aa8e0f2454b781fbf0fbf306a4c9533a0c57409 # v3.7.0
 
-      - name: Sign image with keyless OIDC
+      - name: Sign server image with keyless OIDC
         env:
-          IMAGE_DIGEST: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.image.outputs.digest }}
+          IMAGE_DIGEST: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.server_image.outputs.digest }}
         run: cosign sign --yes "$IMAGE_DIGEST"
 
-      - name: Verify image signature
+      - name: Verify server image signature
         env:
-          IMAGE_DIGEST: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.image.outputs.digest }}
+          IMAGE_DIGEST: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.server_image.outputs.digest }}
         run: |
           cosign verify \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
             --certificate-identity-regexp "^https://github.com/${{ github.repository }}/.github/workflows/" \
             "$IMAGE_DIGEST"
 
-      - name: Smoke test immutable image
+      - name: Smoke test immutable server image
         env:
-          IMAGE_DIGEST: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.image.outputs.digest }}
+          IMAGE_DIGEST: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.server_image.outputs.digest }}
         run: |
           docker pull "$IMAGE_DIGEST"
           docker run --rm "$IMAGE_DIGEST" version
@@ -150,7 +147,5 @@ jobs:
           files: |
             dist/tracepilot-linux-amd64
             dist/tracepilot-linux-arm64
-            dist/tracepilot-agent-linux-amd64
-            dist/tracepilot-agent-linux-arm64
             dist/SHA256SUMS
             dist/tracepilot-binaries.spdx.json

@@ -18,12 +18,16 @@ func TestAdapterDependencies(t *testing.T) {
 		t.Fatal("locate architecture test")
 	}
 	internalRoot := filepath.Dir(filepath.Dir(currentFile))
-	assertNoImport(t, filepath.Join(internalRoot, "domain"), "/internal/config")
-	assertNoImport(t, filepath.Join(internalRoot, "domain"), "/internal/storage")
-	assertNoImport(t, filepath.Join(internalRoot, "domain"), "/internal/transport")
-	assertNoImport(t, filepath.Join(internalRoot, "transport"), "/internal/storage/postgres")
-	assertNoImport(t, filepath.Join(internalRoot, "ingest"), "/internal/storage/postgres")
-	assertNoImport(t, filepath.Join(internalRoot, "storage", "postgres"), "/internal/replay")
+	for _, adapter := range []string{"config", "storage", "transport", "ingest", "webui"} {
+		assertNoImport(t, filepath.Join(internalRoot, "domain"), "/internal/"+adapter)
+		assertNoImport(t, filepath.Join(internalRoot, "application"), "/internal/"+adapter)
+	}
+	for _, service := range []string{"application", "auth", "observability", "query"} {
+		assertNoImport(t, filepath.Join(internalRoot, "domain"), "/internal/"+service)
+	}
+	assertNoImport(t, filepath.Join(internalRoot, "transport"), "/internal/storage")
+	assertNoImport(t, filepath.Join(internalRoot, "ingest"), "/internal/storage")
+	assertNoImport(t, filepath.Join(internalRoot, "storage"), "/internal/application")
 	// The operator UI must remain a self-contained embedded asset. A runtime
 	// filesystem read would make the distroless image depend on host mounts.
 	webuiRoot := filepath.Join(internalRoot, "webui")
@@ -48,7 +52,7 @@ func assertNoImport(t *testing.T, root, forbiddenSuffix string) {
 			if unquoteError != nil {
 				return unquoteError
 			}
-			if strings.HasSuffix(importPath, forbiddenSuffix) {
+			if forbiddenImport(importPath, forbiddenSuffix) {
 				t.Errorf("%s imports forbidden adapter %s", path, importPath)
 			}
 		}
@@ -56,6 +60,26 @@ func assertNoImport(t *testing.T, root, forbiddenSuffix string) {
 	})
 	if walkError != nil {
 		t.Fatal(walkError)
+	}
+}
+
+func forbiddenImport(importPath, suffix string) bool {
+	if strings.HasPrefix(suffix, "/internal/") {
+		root := "github.com/vanquan3008/tracepilot" + suffix
+		return importPath == root || strings.HasPrefix(importPath, root+"/")
+	}
+	root := strings.TrimPrefix(suffix, "/")
+	return importPath == root || strings.HasPrefix(importPath, root+"/")
+}
+
+func TestForbiddenImportIncludesSubpackages(t *testing.T) {
+	for _, path := range []string{"github.com/vanquan3008/tracepilot/internal/storage", "github.com/vanquan3008/tracepilot/internal/storage/postgres"} {
+		if !forbiddenImport(path, "/internal/storage") {
+			t.Errorf("guard missed %s", path)
+		}
+	}
+	if forbiddenImport("github.com/vanquan3008/tracepilot/internal/storageextra", "/internal/storage") {
+		t.Fatal("guard matched a sibling package")
 	}
 }
 

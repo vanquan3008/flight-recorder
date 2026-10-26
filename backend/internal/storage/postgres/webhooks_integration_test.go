@@ -38,7 +38,7 @@ func TestWebhookEncryptionAndDurableClaimIntegration(t *testing.T) {
 	t.Cleanup(func() {
 		_, _ = database.pool.Exec(context.Background(), "DELETE FROM webhooks WHERE project_id=$1", projectID)
 	})
-	issued, createError := database.CreateWebhook(context.Background(), projectID, "", notificationdomain.CreateWebhookParams{Name: "integration", URL: "https://example.com/tracepilot", Events: []string{"detection.created"}})
+	issued, createError := database.CreateWebhook(context.Background(), projectID, "", notificationdomain.CreateWebhookParams{Name: "integration", URL: "https://example.com/tracepilot", Events: []string{"incident.opened"}})
 	if createError != nil {
 		t.Fatal(createError)
 	}
@@ -49,9 +49,9 @@ func TestWebhookEncryptionAndDurableClaimIntegration(t *testing.T) {
 	if stored == issued.Secret || !strings.HasPrefix(stored, "v1:") {
 		t.Fatalf("secret is not encrypted: %q", stored)
 	}
-	payload := []byte(`{"event":"detection.created","payload":{"id":"one"}}`)
-	deliveryID := webhookDeliveryID(projectID, issued.ID, "detection.created", payload)
-	if _, err := database.pool.Exec(context.Background(), `INSERT INTO webhook_deliveries (id,project_id,webhook_id,event_type,payload,status,attempt,max_attempts,next_attempt_at,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,'pending',0,3,now(),now(),now()) ON CONFLICT (project_id,id) DO NOTHING`, deliveryID, projectID, issued.ID, "detection.created", json.RawMessage(payload)); err != nil {
+	payload := []byte(`{"event":"incident.opened","payload":{"id":"one"}}`)
+	deliveryID := webhookDeliveryID(projectID, issued.ID, "incident.opened", payload)
+	if _, err := database.pool.Exec(context.Background(), `INSERT INTO webhook_deliveries (id,project_id,webhook_id,event_type,payload,status,attempt,max_attempts,next_attempt_at,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,'pending',0,3,now(),now(),now()) ON CONFLICT (project_id,id) DO NOTHING`, deliveryID, projectID, issued.ID, "incident.opened", json.RawMessage(payload)); err != nil {
 		t.Fatal(err)
 	}
 	claimed, err := database.ClaimDueDeliveries(context.Background(), 1000)

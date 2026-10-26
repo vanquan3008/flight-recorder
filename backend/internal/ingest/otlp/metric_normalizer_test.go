@@ -53,10 +53,26 @@ func TestMetricAttributeMergeDoesNotMutateResourceSlice(t *testing.T) {
 			Value:        &metricspb.NumberDataPoint_AsInt{AsInt: 1},
 		}}}},
 	}
-	if points, rejected := normalizer.extractDataPoints(resource, "", nil, metric, "checkout", "", map[string]any{"service.name": "checkout"}); rejected != nil || len(points) != 1 {
-		t.Fatalf("points=%d rejected=%v", len(points), rejected)
+	if points, rejected := normalizer.extractDataPoints(resource, "", nil, metric, "checkout", "", map[string]any{"service.name": "checkout"}, 100); rejected != 0 || len(points) != 1 {
+		t.Fatalf("points=%d rejected=%d", len(points), rejected)
 	}
 	if len(resourceAttributes) != 1 || resourceAttributes[0].GetKey() != "service.name" {
 		t.Fatalf("resource attributes were mutated: %#v", resourceAttributes)
+	}
+}
+
+func TestMetricExemplarKeepsTraceCorrelation(t *testing.T) {
+	timestamp := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
+	normalizer := newNormalizer(testIngestionConfig())
+	metric := &metricspb.Metric{Name: "queue.backlog", Data: &metricspb.Metric_Gauge{Gauge: &metricspb.Gauge{DataPoints: []*metricspb.NumberDataPoint{{
+		TimeUnixNano: uint64(timestamp.UnixNano()), Value: &metricspb.NumberDataPoint_AsInt{AsInt: 42},
+		Exemplars: []*metricspb.Exemplar{{TimeUnixNano: uint64(timestamp.UnixNano()), TraceId: []byte("0123456789abcdef"), SpanId: []byte("01234567"), Value: &metricspb.Exemplar_AsInt{AsInt: 42}}},
+	}}}}}
+	points, rejected := normalizer.extractDataPoints(&resourcepb.Resource{}, "", nil, metric, "worker", "", map[string]any{}, 100)
+	if rejected != 0 || len(points) != 1 || len(points[0].Exemplars) != 1 {
+		t.Fatalf("points=%d exemplars=%d rejected=%v", len(points), len(points[0].Exemplars), rejected)
+	}
+	if points[0].Exemplars[0].TraceID != "30313233343536373839616263646566" {
+		t.Fatalf("trace id = %q", points[0].Exemplars[0].TraceID)
 	}
 }

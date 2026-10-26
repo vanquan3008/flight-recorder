@@ -60,7 +60,7 @@ func (database *Database) StoreEvents(ctx context.Context, ingestion config.Inge
 				$11, $12, $13, $14, $15,
 				$16, $17, $18, $19
 			)
-			ON CONFLICT (id) DO NOTHING`,
+			ON CONFLICT (id, occurred_at) DO NOTHING`,
 			event.ID, ingestion.ProjectID, ingestion.EnvironmentID, event.ServiceName, nullableString(event.ServiceVersion),
 			nullableString(event.TraceID), nullableString(event.SpanID), nullableString(event.ParentSpanID), nullableString(event.RequestID), string(event.Type),
 			event.Timestamp, nullableDuration(event.Duration), nullableString(event.Severity), nullableString(event.Status), nullableInt(event.HTTPStatus),
@@ -92,9 +92,6 @@ func (database *Database) StoreEvents(ctx context.Context, ingestion config.Inge
 	}
 	if incidentError := storeIncidents(ctx, transaction, ingestion, events); incidentError != nil {
 		return incidentError
-	}
-	if securityError := storeSecurityEvents(ctx, transaction, ingestion, events); securityError != nil {
-		return securityError
 	}
 	if commitError := transaction.Commit(ctx); commitError != nil {
 		return fmt.Errorf("commit event batch: %w", commitError)

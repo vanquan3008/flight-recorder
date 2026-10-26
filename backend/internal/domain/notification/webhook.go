@@ -27,7 +27,6 @@ var (
 
 // AllowedEvents is the set of event types that can be subscribed to.
 var AllowedEvents = map[string]struct{}{
-	"detection.created": {},
 	"incident.opened":   {},
 	"incident.resolved": {},
 }

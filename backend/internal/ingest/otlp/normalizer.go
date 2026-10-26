@@ -13,12 +13,6 @@ import (
 	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
 )
 
-var defaultRedactedSegments = map[string]struct{}{
-	"authorization": {}, "cookie": {}, "password": {}, "passwd": {},
-	"secret": {}, "token": {}, "api_key": {}, "apikey": {},
-	"credit_card": {}, "set_cookie": {},
-}
-
 const maxSignedNanoseconds = uint64(1<<63 - 1)
 
 type normalizer struct {
@@ -150,20 +144,12 @@ func (normalizer *normalizer) redacts(key string) bool {
 	if _, found := normalizer.redactedKeys[normalized]; found {
 		return true
 	}
-	canonical := strings.NewReplacer("-", "_", ".", "_", "/", "_").Replace(normalized)
-	if _, found := defaultRedactedSegments[canonical]; found {
-		return true
-	}
-	for _, sensitivePattern := range []string{"authorization", "cookie", "password", "passwd", "secret", "token", "api_key", "apikey", "credit_card"} {
-		if strings.Contains(canonical, sensitivePattern) {
-			return true
-		}
-	}
-	segments := strings.FieldsFunc(normalized, func(character rune) bool {
-		return character == '.' || character == '-' || character == '/' || character == '_'
-	})
-	for _, segment := range segments {
-		if _, found := defaultRedactedSegments[segment]; found {
+	for _, sensitivePattern := range []string{
+		"authorization", "cookie", "password", "passwd", "secret", "token", "apikey",
+		"api_key", "api.key", "api-key", "api/key",
+		"credit_card", "credit.card", "credit-card", "credit/card",
+	} {
+		if strings.Contains(normalized, sensitivePattern) {
 			return true
 		}
 	}

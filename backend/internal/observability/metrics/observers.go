@@ -17,20 +17,6 @@ func (registry *Registry) ObserveWebhookAttempt(outcome string) {
 	registry.webhookAttempts.WithLabelValues(outcome).Inc()
 }
 
-func (registry *Registry) SetSecurityDetectionLag(lag time.Duration) {
-	if lag < 0 {
-		lag = 0
-	}
-	registry.detectionLag.Set(lag.Seconds())
-}
-
-func (registry *Registry) SetSecurityDetectionCheckpointAge(age time.Duration) {
-	if age < 0 {
-		age = 0
-	}
-	registry.detectionCheckpointAge.Set(age.Seconds())
-}
-
 func (registry *Registry) SetRetentionBacklog(count int64) {
 	if count < 0 {
 		count = 0
@@ -100,21 +86,7 @@ func (registry *Registry) ObserveRetention(duration time.Duration, deleted int64
 	}
 }
 
-func (registry *Registry) ObserveSyslogRecord(outcome, format string) {
-	if format == "" {
-		format = "unknown"
-	}
-	registry.syslogRecords.WithLabelValues(outcome, format).Inc()
-}
-
-func (registry *Registry) SetSyslogConnections(count int) {
-	if count < 0 {
-		count = 0
-	}
-	registry.syslogConnections.Set(float64(count))
-}
-
-func (registry *Registry) ObserveSecurityDetection(duration time.Duration, count int, failed bool) {
+func (registry *Registry) ObserveIncidentDetection(duration time.Duration, count int, failed bool) {
 	registry.detectionDuration.Observe(duration.Seconds())
 	if failed {
 		registry.detectionRuns.WithLabelValues("error").Inc()

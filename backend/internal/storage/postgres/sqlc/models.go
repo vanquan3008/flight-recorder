@@ -5,8 +5,6 @@
 package sqlc
 
 import (
-	"net/netip"
-
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -60,6 +58,29 @@ type Event struct {
 	IngestedAt     pgtype.Timestamptz
 }
 
+type EventsDefault struct {
+	ID             pgtype.UUID
+	ProjectID      pgtype.UUID
+	EnvironmentID  pgtype.UUID
+	ServiceName    string
+	ServiceVersion pgtype.Text
+	TraceID        pgtype.Text
+	SpanID         pgtype.Text
+	ParentSpanID   pgtype.Text
+	RequestID      pgtype.Text
+	EventType      string
+	OccurredAt     pgtype.Timestamptz
+	DurationNs     pgtype.Int8
+	Severity       pgtype.Text
+	Status         pgtype.Text
+	HttpStatus     pgtype.Int4
+	Operation      pgtype.Text
+	ErrorType      pgtype.Text
+	ErrorMessage   pgtype.Text
+	Attributes     []byte
+	IngestedAt     pgtype.Timestamptz
+}
+
 type Incident struct {
 	ID              pgtype.UUID
 	ProjectID       pgtype.UUID
@@ -88,6 +109,27 @@ type IncidentEvent struct {
 	CreatedAt  pgtype.Timestamptz
 }
 
+type IncidentEvidence struct {
+	ID              pgtype.UUID
+	ProjectID       pgtype.UUID
+	EnvironmentID   pgtype.UUID
+	IncidentID      pgtype.UUID
+	SignalType      string
+	EntityType      string
+	EntityID        string
+	MetricName      string
+	Direction       string
+	ObservedValue   float64
+	BaselineValue   float64
+	ChangeRatio     float64
+	WindowStartedAt pgtype.Timestamptz
+	WindowEndedAt   pgtype.Timestamptz
+	TraceIds        []string
+	Summary         string
+	CreatedAt       pgtype.Timestamptz
+	SeriesID        string
+}
+
 type IncidentOccurrence struct {
 	ID         pgtype.UUID
 	ProjectID  pgtype.UUID
@@ -108,6 +150,31 @@ type IncidentStatusChange struct {
 }
 
 type Log struct {
+	EventID                pgtype.UUID
+	ProjectID              pgtype.UUID
+	EnvironmentID          pgtype.UUID
+	OccurredAt             pgtype.Timestamptz
+	ObservedAt             pgtype.Timestamptz
+	TraceID                pgtype.Text
+	SpanID                 pgtype.Text
+	TraceFlags             int64
+	SeverityNumber         int32
+	SeverityText           string
+	Body                   []byte
+	EventName              string
+	ServiceName            string
+	ServiceVersion         pgtype.Text
+	ResourceSchemaUrl      string
+	ResourceAttributes     []byte
+	ScopeName              string
+	ScopeVersion           string
+	ScopeSchemaUrl         string
+	ScopeAttributes        []byte
+	LogAttributes          []byte
+	DroppedAttributesCount int32
+}
+
+type LogsDefault struct {
 	EventID                pgtype.UUID
 	ProjectID              pgtype.UUID
 	EnvironmentID          pgtype.UUID
@@ -155,6 +222,39 @@ type MetricDataPoint struct {
 	ScopeName          string
 	ScopeVersion       string
 	IngestedAt         pgtype.Timestamptz
+	Exemplars          []byte
+	StartedAt          pgtype.Timestamptz
+	Flags              int64
+	ScopeAttributes    []byte
+}
+
+type MetricDataPointsDefault struct {
+	ID                 pgtype.UUID
+	ProjectID          pgtype.UUID
+	EnvironmentID      pgtype.UUID
+	MetricName         string
+	MetricUnit         string
+	MetricType         string
+	ServiceName        string
+	ServiceVersion     pgtype.Text
+	OccurredAt         pgtype.Timestamptz
+	Value              pgtype.Float8
+	HistCount          pgtype.Int8
+	HistSum            pgtype.Float8
+	HistMin            pgtype.Float8
+	HistMax            pgtype.Float8
+	HistBuckets        []byte
+	Temporality        string
+	IsMonotonic        pgtype.Bool
+	Attributes         []byte
+	ResourceAttributes []byte
+	ScopeName          string
+	ScopeVersion       string
+	IngestedAt         pgtype.Timestamptz
+	Exemplars          []byte
+	StartedAt          pgtype.Timestamptz
+	Flags              int64
+	ScopeAttributes    []byte
 }
 
 type Project struct {
@@ -180,103 +280,6 @@ type ReplayExecution struct {
 	CreatedAt   pgtype.Timestamptz
 }
 
-type SecurityDetection struct {
-	ID              pgtype.UUID
-	ProjectID       pgtype.UUID
-	EnvironmentID   pgtype.UUID
-	RuleID          pgtype.UUID
-	RuleVersion     int32
-	SecurityEventID pgtype.UUID
-	IncidentID      pgtype.UUID
-	GroupKey        string
-	WindowStartedAt pgtype.Timestamptz
-	WindowEndedAt   pgtype.Timestamptz
-	Severity        string
-	CreatedAt       pgtype.Timestamptz
-}
-
-type SecurityDetectionCheckpoint struct {
-	ProjectID      pgtype.UUID
-	EnvironmentID  pgtype.UUID
-	LastIngestedAt pgtype.Timestamptz
-	LastEventID    pgtype.UUID
-	UpdatedAt      pgtype.Timestamptz
-}
-
-type SecurityDetectionRule struct {
-	ID             pgtype.UUID
-	ProjectID      pgtype.UUID
-	Name           string
-	Description    pgtype.Text
-	Version        int32
-	Enabled        bool
-	Severity       string
-	MatchField     string
-	MatchOperator  string
-	MatchValue     string
-	ThresholdCount int32
-	GroupByField   pgtype.Text
-	WindowSeconds  int32
-	CreatedAt      pgtype.Timestamptz
-	UpdatedAt      pgtype.Timestamptz
-}
-
-type SecurityEvent struct {
-	ID               pgtype.UUID
-	ProjectID        pgtype.UUID
-	EnvironmentID    pgtype.UUID
-	RawEventID       pgtype.UUID
-	SourceID         pgtype.UUID
-	OccurredAt       pgtype.Timestamptz
-	IngestedAt       pgtype.Timestamptz
-	Format           string
-	EventKind        string
-	Category         pgtype.Text
-	Action           pgtype.Text
-	Outcome          pgtype.Text
-	Severity         pgtype.Text
-	ObserverVendor   pgtype.Text
-	ObserverProduct  pgtype.Text
-	ObserverHostname pgtype.Text
-	HostName         pgtype.Text
-	UserName         pgtype.Text
-	SourceIp         *netip.Addr
-	SourcePort       pgtype.Int4
-	DestinationIp    *netip.Addr
-	DestinationPort  pgtype.Int4
-	NetworkTransport pgtype.Text
-	NetworkProtocol  pgtype.Text
-	RuleIdentifier   pgtype.Text
-	RuleName         pgtype.Text
-	Message          pgtype.Text
-	Attributes       []byte
-}
-
-type SecurityRuleAudit struct {
-	ID           pgtype.UUID
-	ProjectID    pgtype.UUID
-	RuleID       pgtype.UUID
-	RuleVersion  int32
-	Action       string
-	ActorKeyID   pgtype.UUID
-	RuleSnapshot []byte
-	CreatedAt    pgtype.Timestamptz
-}
-
-type SecuritySource struct {
-	ID            pgtype.UUID
-	ProjectID     pgtype.UUID
-	EnvironmentID pgtype.UUID
-	Name          string
-	SourceType    string
-	Format        string
-	LastSeenAt    pgtype.Timestamptz
-	AcceptedCount int64
-	ErrorCount    int64
-	CreatedAt     pgtype.Timestamptz
-	UpdatedAt     pgtype.Timestamptz
-}
-
 type Service struct {
 	ID            pgtype.UUID
 	ProjectID     pgtype.UUID
@@ -287,6 +290,37 @@ type Service struct {
 }
 
 type Span struct {
+	EventID                pgtype.UUID
+	ProjectID              pgtype.UUID
+	EnvironmentID          pgtype.UUID
+	TraceID                string
+	SpanID                 string
+	ParentSpanID           pgtype.Text
+	TraceState             string
+	SpanName               string
+	SpanKind               int32
+	StartedAt              pgtype.Timestamptz
+	EndedAt                pgtype.Timestamptz
+	StatusCode             string
+	StatusMessage          string
+	Flags                  int64
+	ServiceName            string
+	ServiceVersion         pgtype.Text
+	ResourceSchemaUrl      string
+	ResourceAttributes     []byte
+	ScopeName              string
+	ScopeVersion           string
+	ScopeSchemaUrl         string
+	ScopeAttributes        []byte
+	SpanAttributes         []byte
+	SpanEvents             []byte
+	SpanLinks              []byte
+	DroppedAttributesCount int32
+	DroppedEventsCount     int32
+	DroppedLinksCount      int32
+}
+
+type SpansDefault struct {
 	EventID                pgtype.UUID
 	ProjectID              pgtype.UUID
 	EnvironmentID          pgtype.UUID

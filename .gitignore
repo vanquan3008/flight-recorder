@@ -1,7 +1,8 @@
 /bin/
 /data/
-/.env
-/deploy/.env
+.env
+.env.*
+!.env.example
 *.local.yaml
 coverage.out
 /web/node_modules/

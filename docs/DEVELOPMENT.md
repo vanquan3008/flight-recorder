@@ -1,291 +1,114 @@
-# Development, test và runbook
+# Phát triển và kiểm tra
 
-Các lệnh dưới đây khớp với binary, Compose và Makefile hiện tại. Lệnh
-PowerShell được ưu tiên cho Windows; các lệnh `go -C backend` cũng chạy được
-trên Linux/macOS.
+Source map/flow: [ARCHITECTURE.md](ARCHITECTURE.md). Các lệnh chạy từ repo root.
+Go lấy version từ backend/go.mod; Node theo web/.nvmrc. Dùng fixture tổng hợp.
 
-## Yêu cầu
-
-- Go `1.26.6` hoặc mới hơn (xem `backend/go.mod`).
-- Node.js `24` hoặc mới hơn (xem `web/.nvmrc`) khi sửa operator console React.
-- Docker Desktop/Engine và Docker Compose v2.
-- PostgreSQL 17 nếu chạy native không dùng Compose.
-- `staticcheck` và `govulncheck` chỉ cần khi chạy các gate tương ứng; CI pin
-  toolchain trong workflow.
-
-## Chạy local bằng Docker Compose
-
-Lần đầu nên build image và chạy migration tách biệt để thấy lỗi rõ ràng:
+## Docker Compose development
 
 ```powershell
-docker compose -f deploy/compose.dev.yaml up --build -d
+npm --prefix web ci
+npm --prefix web run build
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
+# Trong .env: COMPOSE_PROFILES=local, DB host là postgres.
+docker compose up -d --wait postgres
+docker compose run --build --rm migrate
+docker compose up --build -d tracepilot
 Invoke-WebRequest http://localhost:8080/health/ready
+docker compose run --rm tracepilot mockdata
 ```
 
-Compose local dùng `tracepilot-development-bootstrap-key-000000` cho phiên
-console đầu tiên. Key này chỉ dùng ở development; không dùng ngoài máy local.
-Chạy `make demo` hoặc
-`docker compose -f deploy/compose.dev.yaml run --build --rm tracepilot mockdata`
-để seed trace lỗi và correlated log cho console walkthrough.
+Mở http://localhost:8080 với key development-only:
+tracepilot-development-bootstrap-key-000000. Tạo key ingest riêng cho ứng dụng
+và key read cho console. Không dùng key demo trong production.
 
-Các cổng mặc định:
+Chỉ có compose.yaml ở root. Profile local bật PostgreSQL 17; migrate là one-shot
+chạy chủ động trước application, không tự sửa schema lúc serve. make dev chạy
+các bước build UI/start DB/migrate/start app ở trên. Build UI trước rebuild image.
+Không overwrite .env đã có. DATABASE_URL trong container dùng hostname postgres;
+native dùng localhost. Chỉnh cùng một .env theo cách chạy được chọn.
 
-| Cổng | Thành phần |
-| --- | --- |
-| `8080` | management API, UI, health, metrics, OpenAPI |
-| `4317` | OTLP gRPC |
-| `4318` | OTLP HTTP (`/v1/traces`, `/v1/logs`, `/v1/metrics`; metrics best-effort) |
-| `6514` | Syslog TCP/TLS, chỉ hoạt động khi security bật |
-| `5432` | PostgreSQL development |
-
-Khi cần reset database development disposable:
+## Native với PostgreSQL test
 
 ```powershell
-docker compose -f deploy/compose.dev.yaml down --volumes
-```
-
-> Lệnh trên xóa volume PostgreSQL của stack dev. Không dùng với dữ liệu cần
-> giữ lại.
-
-## Chạy native server
-
-Khởi động PostgreSQL trước, sau đó dùng host `localhost` thay vì hostname
-`postgres` trong Compose:
-
-```powershell
-docker compose -f deploy/compose.dev.yaml up -d postgres
-$env:TRACEPILOT_DATABASE_URL = "postgres://tracepilot:tracepilot-dev-only@localhost:5432/tracepilot?sslmode=disable"
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
+# Điền DB URL dùng hostname localhost và key của bạn trong .env ở root.
 go -C backend run ./cmd/tracepilot migrate up
 go -C backend run ./cmd/tracepilot mockdata
 go -C backend run ./cmd/tracepilot serve
 ```
 
-`mockdata` là tùy chọn và có thể chạy lặp lại. Các subcommand khác:
-
-```powershell
-go -C backend run ./cmd/tracepilot version
-go -C backend run ./cmd/tracepilot healthcheck
-go -C backend run ./cmd/tracepilot migrate version
-go -C backend run ./cmd/tracepilot migrate down 1
-go -C backend run ./cmd/tracepilot migrate up
-```
-
-Server đọc default, YAML (nếu truyền `serve -config path/to/config.yaml` hoặc
-`TRACEPILOT_CONFIG_FILE`), rồi environment override. Xem
-`backend/internal/config/defaults.go` và `deploy/.env.example` trước khi thêm
-biến mới.
-
-## Chạy React operator console
-
-Console source nằm trong `web/`, còn output Vite được commit tại
-`backend/internal/webui/dist` để binary Go vẫn nhúng UI qua `go:embed`. Khi
-backend đang chạy ở `localhost:8080`, mở terminal khác:
+Terminal khác:
 
 ```powershell
 npm --prefix web ci
 npm --prefix web run dev
 ```
 
-Vite chạy ở `http://localhost:5173` và proxy `/api` sang backend. Trước khi
-commit, chạy:
+Vite proxy API tới :8080. Config chuẩn duy nhất là .env ở root, .env.example chỉ
+là mẫu không tự được đọc. Không tạo backend/.env hoặc deploy/.env.
+Go đọc .env trong thư mục chạy, thiếu mới tìm ../.env. Vì go -C backend đổi
+working directory sang backend/, nó tìm thấy ../.env ở root. Nếu có backend/.env
+cũ, file đó sẽ được ưu tiên: chuyển giá trị cần giữ về root rồi xóa bản trùng.
+Biến môi trường process ưu tiên hơn file, sau đó tới YAML tùy chọn và defaults.
+Compose đọc root .env cho biến nội suy và env_file đưa các giá trị vào container;
+override khi chạy container bằng docker compose run -e NAME=value.
+CLI serve --config vẫn hỗ trợ YAML version: 1 để tương thích; không cần cho
+workflow dùng .env này. Chi tiết chính thức: [Docker env_file](https://docs.docker.com/compose/how-tos/environment-variables/set-environment-variables/).
 
-```powershell
-npm --prefix web run check
-npm --prefix web run test
-npm --prefix web run build
-git diff --exit-code -- backend/internal/webui/dist
-```
-
-## Chạy file agent
-
-Agent tail file theo newline, export OTLP gRPC, ghi checkpoint và tùy chọn spool
-disk khi server tạm mất kết nối:
-
-```powershell
-go -C backend run ./cmd/tracepilot-agent `
-  -source .\app.log `
-  -checkpoint .\var\agent.checkpoint `
-  -endpoint localhost:4317 `
-  -disk-buffer .\var\agent-spool `
-  -api-key-file .\secrets\otlp.key
-```
-
-Các flag đáng chú ý: `-batch-bytes` (tối thiểu 64 KiB, mặc định 3 MiB),
-`-batch-lines` (mặc định 1000), `-disk-buffer-bytes` (mặc định 64 MiB),
-`-tls`, `-tls-server-name`, `-service` và `-metrics-address`. Dùng
-`TRACEPILOT_AGENT_API_KEY` hoặc `-api-key-file` thay vì truyền secret trực tiếp
-qua process arguments.
-
-## Kiểm tra API nhanh
-
-```powershell
-Invoke-WebRequest http://localhost:8080/health/live
-Invoke-WebRequest http://localhost:8080/health/ready
-Invoke-WebRequest http://localhost:8080/openapi.json
-Invoke-WebRequest http://localhost:8080/metrics
-```
-
-API v1 cần `Authorization: Bearer <api-key>` (trừ health và môi trường dev khi
-metrics chưa yêu cầu auth). Route đầy đủ và scope nằm trong
-`/openapi.json`; delivery guarantee và compatibility policy nằm trong
-[ARCHITECTURE.md](ARCHITECTURE.md).
-
-## Test và quality gates
-
-Chạy từ thư mục repository:
+## Checks
 
 ```powershell
 go -C backend test ./...
-go -C backend test -race ./...
 go -C backend vet ./...
-go -C backend test -coverprofile=coverage.out ./...
+go -C backend build ./...
+npm --prefix web run check
+npm --prefix web run test
+npm --prefix web run build
+powershell -NoProfile -File scripts/load-test.tests.ps1
 ```
 
-Package test chính:
+Linux/macOS dùng pwsh thay powershell. Race detector cần CGO toolchain; CI Linux
+chạy go test -race. Unit test không thay thế PostgreSQL integration: khi chưa
+bật TRACEPILOT_INTEGRATION_TEST=1, các test DB tự skip.
 
-| Package | Phạm vi |
-| --- | --- |
-| `internal/domain/*` | invariant, fingerprint, canonical event |
-| `internal/ingest/pipeline` | bounded queue, ack, timeout, batch |
-| `internal/ingest/otlp` | gRPC/HTTP decode, limit, auth, normalize |
-| `internal/ingest/syslog` + `internal/security/parser` | TCP/TLS, line limit, CEF/LEEF/Syslog/JSON |
-| `internal/agent` | tail, rotate, checkpoint, spool, exporter |
-| `internal/transport/httpapi` | route/OpenAPI parity, auth, pagination, rate limit, integration |
-| `internal/storage/postgres` | adapter, migration và PostgreSQL integration |
-| `internal/architecture` | dependency direction |
-
-Các gate tùy chọn tương ứng Makefile:
+Thay đổi SQL/schema phải chạy trên DB test có thể bỏ đi. Kiểm tra URL trước:
 
 ```powershell
-go -C backend test -run '^$' -bench '^BenchmarkSubmitBatch$' -benchmem ./internal/ingest/pipeline
-$env:TRACEPILOT_INTEGRATION_TEST = "1"
-go -C backend test -run '^$' -bench '^BenchmarkStoreEventsIntegration$' -benchtime=5s ./internal/storage/postgres
+if (-not $env:TRACEPILOT_DISPOSABLE_DATABASE_URL) { throw 'Set disposable DB URL first' }
+$env:TRACEPILOT_DATABASE_URL = $env:TRACEPILOT_DISPOSABLE_DATABASE_URL
+$env:TRACEPILOT_INTEGRATION_TEST = '1'
+go -C backend run ./cmd/tracepilot migrate up
+go -C backend test ./...
 ```
 
-Staticcheck phải chạy trong module:
+Baseline down/up xóa schema: chỉ dùng scripts/upgrade-rollback-drill.ps1 có
+guard trên DB disposable. Không dùng migrate down để rollback application.
+Schema hiện là version 1; không có migration 014/015.
+
+SQLC source: backend/db/queries; generated: internal/storage/postgres/sqlc.
+Chạy make sqlc-check với Docker, hoặc generator cùng version ghim trong Makefile.
+Không sửa generated code bằng tay. Commit UI source và embedded dist tương ứng.
+CI kiểm tra SQLC và assets khớp source.
+
+## Browser smoke
+
+Với DB test đã migrate/seed và server đang chạy:
 
 ```powershell
-Push-Location backend
-go run honnef.co/go/tools/cmd/staticcheck@2026.1 ./...
-Pop-Location
+npm --prefix web exec playwright -- install chromium
+$env:TRACEPILOT_E2E_BASE_URL = 'http://127.0.0.1:8080'
+$env:TRACEPILOT_E2E_API_KEY = 'tracepilot-development-bootstrap-key-000000'
+npm --prefix web run test:e2e
 ```
 
-Govulncheck có thể chạy trực tiếp trong module bằng `go run`, không cần cài
-binary global:
+Chạy binary từ thư mục backend/ (nguồn migration theo cwd) hoặc dùng `go -C backend run`.
+Smoke: connect → seeded failed trace → correlated log; `console-surfaces.spec.ts` kiểm tra
+theme, Back giữ filter, logs, topology, API key và quyền đọc. CI còn kiểm tra race,
+staticcheck, vulnerability, migration roundtrip và image nonroot.
+Kết quả thực sự chạy trong phiên này ở [REVIEW.md](REVIEW.md).
 
-```powershell
-docker run --rm -v "${PWD}/backend:/src" -w /src golang:1.26.6 `
-  sh -c 'go run golang.org/x/vuln/cmd/govulncheck@latest ./...'
-```
+## Chọn việc tiếp theo
 
-Race test tương tự trong container Linux (hữu ích khi Windows thiếu cgo):
-
-```powershell
-docker run --rm -v "${PWD}/backend:/src" -w /src golang:1.26.6 go test -race ./...
-```
-
-## SQLC và migration gate
-
-Sau khi sửa SQL hoặc migration, regenerate bằng image đã pin:
-
-```powershell
-docker run --rm -v "${PWD}/backend:/src" -w /src sqlc/sqlc:1.31.1 generate
-git diff --exit-code -- backend/internal/storage/postgres/sqlc
-```
-
-Lệnh `git diff --exit-code` chỉ có ý nghĩa sau khi generated output đã được
-commit hoặc workspace sạch trước khi generate. Server sẽ từ chối start nếu
-schema chưa ở migration version hiện tại.
-
-## Integration test với PostgreSQL
-
-```powershell
-docker compose -f deploy/compose.dev.yaml up -d postgres
-docker compose -f deploy/compose.dev.yaml run --build --rm migrate
-$env:TRACEPILOT_INTEGRATION_TEST = "1"
-$env:TRACEPILOT_DATABASE_URL = "postgres://tracepilot:tracepilot-dev-only@localhost:5432/tracepilot?sslmode=disable"
-go -C backend test -race ./internal/storage/postgres ./internal/transport/httpapi
-```
-
-Nếu không set `TRACEPILOT_INTEGRATION_TEST=1`, test cần database sẽ được skip.
-
-## Docker image và production Compose
-
-Build local image:
-
-```powershell
-docker build -t tracepilot:dev backend
-docker run --rm tracepilot:dev version
-```
-
-Image final chạy user non-root, filesystem read-only và chứa migrations cùng hai
-binary. Production dùng image digest bất biến và PostgreSQL managed/private:
-
-```powershell
-docker compose --env-file C:\secure\tracepilot.env -f deploy/compose.prod.yaml run --rm tracepilot migrate up
-docker compose --env-file C:\secure\tracepilot.env -f deploy/compose.prod.yaml up -d
-```
-
-File TLS mount phải có `tls.crt`, `tls.key`, `ca.crt`; production validation yêu
-cầu Syslog TLS và client CA để bật mTLS khi security được bật. Kiểm tra expiry
-và chain trước rotation bằng `.\scripts\cert-check.ps1`.
-
-## Troubleshooting nhanh
-
-- `schema version is not current`: chạy `migrate up` đúng database URL rồi thử
-  lại `serve`.
-- Kết nối DB native thất bại: dùng `localhost`; hostname `postgres` chỉ tồn tại
-  trong network Compose.
-- `429 Too Many Requests`: management limiter là fixed-window theo client IP;
-  chờ hết `Retry-After` hoặc điều chỉnh các biến `TRACEPILOT_HTTP_RATE_LIMIT_*`.
-- Agent không gửi được: kiểm tra endpoint `4317`, API key, `-tls`/server name và
-  quyền ghi checkpoint/spool.
-- `make` không có trên Windows: chạy các lệnh `go -C backend` và `docker compose`
-  ở các mục trên; Makefile chỉ là shortcut.
-
-## Webhook production workflow
-
-Webhook is a v1 feature and is disabled by default. To enable it, set
-`TRACEPILOT_NOTIFICATIONS_ENABLED=true` and provide a random 32-byte
-`TRACEPILOT_WEBHOOK_ENCRYPTION_KEY` (hex or base64) through a secret manager.
-The API is under `/api/v1/webhooks` and requires the `admin` scope:
-
-1. `POST /api/v1/webhooks` creates an HTTPS subscription and returns its signing
-   secret once. Store it in the receiving system immediately.
-2. `GET` lists metadata only; no endpoint ever returns a stored secret.
-3. `POST /api/v1/webhooks/{webhookID}/rotate` invalidates the old secret and
-   returns a new one once.
-4. `GET /api/v1/webhooks/{webhookID}/deliveries` shows pending, succeeded, and
-   terminally failed attempts.
-
-The worker claims rows with PostgreSQL row locks, sends signed JSON with
-`X-TracePilot-Signature: sha256=<HMAC-SHA256>`, blocks private/reserved DNS
-answers and redirects, and retries pending rows after 30 seconds up to three
-attempts. A stale `sending` lease is recovered after one minute.
-
-## Backup, restore, and migration drills
-
-Use a disposable PostgreSQL instance for every drill. The following commands
-exercise the same image and migration directory used in production:
-
-```powershell
-$env:BACKUP_FILE = Join-Path $PWD "tracepilot-backup.dump"
-docker compose -f deploy/compose.dev.yaml exec -T postgres pg_dump -Fc -U tracepilot tracepilot > $env:BACKUP_FILE
-docker compose -f deploy/compose.dev.yaml exec -T postgres dropdb -U tracepilot --if-exists tracepilot_restore
-docker compose -f deploy/compose.dev.yaml exec -T postgres createdb -U tracepilot tracepilot_restore
-Get-Content $env:BACKUP_FILE -AsByteStream | docker compose -f deploy/compose.dev.yaml exec -T postgres pg_restore -U tracepilot -d tracepilot_restore --clean --if-exists
-docker compose -f deploy/compose.dev.yaml run --rm -e TRACEPILOT_DATABASE_URL=postgres://tracepilot:tracepilot-dev-only@postgres:5432/tracepilot_restore migrate version
-```
-
-For a migration rollback drill, record `migrate version`, run
-`migrate down 1`, verify the previous application refuses the schema mismatch,
-then run `migrate up` and verify readiness. Never run `down` against the live
-database unless the release runbook explicitly names the tested migration.
-
-The repeatable load smoke tests are `make bench-pipeline` and
-`make bench-postgres`; run them for at least five minutes in staging and record
-p50/p95/p99 latency, ingest rate, queue depth, PostgreSQL WAL, CPU and memory.
-Timed soak và query-plan evidence dùng
-`.\scripts\load-test.ps1 -DurationMinutes 5 -HealthUrl http://localhost:8080/health/ready -MaxP95Ms 2000`
-và `.\scripts\query-plan.ps1`; migration wrapper có tại
-`.\scripts\upgrade-rollback-drill.ps1`.
+Trước phạm vi mới, trình bày 2–3 phương pháp, đánh đổi và đề xuất. Khi đã chọn,
+hoàn thành callers, tests, config và docs của phạm vi đó. Chỉ thêm dependency,
+index hoặc tiến trình khi có nhu cầu/số đo. Các lựa chọn ở [ROADMAP.md](ROADMAP.md).

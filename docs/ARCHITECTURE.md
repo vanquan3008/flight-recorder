@@ -1,169 +1,161 @@
-# Kiến trúc TracePilot
+# Kiến trúc và flow TracePilot
 
-Tài liệu này mô tả cấu trúc đang được thực thi trong source. Quy tắc chính là
-`cmd` chỉ khởi tạo ứng dụng, `internal/domain` giữ mô hình nghiệp vụ thuần,
-còn I/O được đẩy ra các adapter trong `ingest`, `storage` và `transport`.
+Đối chiếu working tree ngày 13/10/2026. Hướng đã chọn: một ứng dụng Go,
+React embed vào binary và PostgreSQL riêng. Trạng thái kiểm chứng ở
+[REVIEW.md](REVIEW.md); điều kiện triển khai ở [OPERATIONS.md](OPERATIONS.md).
 
-## Cây thư mục
+## Source theo trách nhiệm
 
 ```text
 backend/
-├── cmd/
-│   ├── tracepilot/          # binary server: serve, migrate, mockdata, ...
-│   └── tracepilot-agent/    # binary tail file và export OTLP
-├── db/
-│   ├── migrations/          # SQL migration, hiện tại version 13
-│   └── queries/             # nguồn SQL cho sqlc
-└── internal/
-    ├── agent/               # tailer, batch, disk spool, checkpoint, exporter
-    ├── architecture/        # test giữ dependency direction
-    ├── auth/                # principal, scope và API-key policy
-    ├── config/              # default, YAML, env override, validation
-    ├── domain/
-    │   ├── incident/        # fingerprint và trạng thái incident
-    │   ├── replay/          # mô hình replay nghiệp vụ
-    │   ├── security/        # event/rule/detection domain
-    │   ├── telemetry/       # canonical event, span, log, metric và attributes
-    │   └── ...              # domain không biết DB, HTTP hay config
-    ├── ingest/
-    │   ├── otlp/            # OTLP gRPC/HTTP decode, normalize, auth
-    │   ├── pipeline/        # queue giới hạn byte, batch worker, ack
-    │   └── syslog/          # TCP/TLS newline receiver
-    ├── observability/metrics/ # Prometheus registry và runtime metrics
-    ├── query/               # filter, cursor, pagination dùng chung
-    ├── replay/              # allowlist, executor, service và capture
-    ├── retention/           # job xóa dữ liệu hết hạn
-    ├── security/
-    │   ├── parser/          # CEF, LEEF, Syslog, JSON
-    │   └── detect/           # evaluator bất đồng bộ và checkpoint
-    ├── storage/
-    │   ├── migrations/      # kiểm tra schema trước khi serve (version 13)
-    │   └── postgres/         # pool, adapter, writers và sqlc-generated code
-    ├── transport/httpapi/   # management API, auth middleware, OpenAPI, UI
-    └── webui/               # static UI được go:embed
+  cmd/tracepilot/             CLI, startup, wiring, shutdown, lịch partition
+  internal/
+    application/
+      incident/              Use case đổi trạng thái và validation actor
+      intelligence/          Lịch detector, ngoài đường ACK
+      notification/          Webhook delivery, HMAC, outbound policy
+      replay/                Replay use case, executor, allowlist, capture
+      retention/             Lịch và vòng lặp dọn dữ liệu hết hạn
+    domain/
+      telemetry/             Event, metric và định danh ổn định
+      incident/              Candidate, fingerprint, status transition
+      analysis/              Evidence, detection policy và RCA ranking
+      notification/          Webhook model và secret encryption
+      replay/                Execution/result model
+    ingest/otlp/             OTLP HTTP/gRPC, auth, decode, normalize
+    ingest/pipeline/         Admission, batching, byte budget, ACK/drain
+    transport/httpapi/      REST, middleware, query parsing, OpenAPI
+    storage/postgres/       SQL, transaction, partition, query, outbox
+    storage/migrations/     Kiểm tra và chạy version schema
+    auth/                   Principal, scopes và API key model
+    query/                  Contract truy vấn không phụ thuộc PostgreSQL
+    observability/metrics/  Prometheus cho chính TracePilot
+    webui/                  Embedded assets và SPA fallback
+  db/                       Migration và query nguồn của SQLC
+web/src/
+  app/                      Router, auth, application shell
+  features/                 Giao diện theo chức năng
+  shared/                   API client, query helper, UI, types dùng chung
+compose.yaml                Compose duy nhất, local PostgreSQL qua profile
+.env / .env.example         Config thực / mẫu duy nhất ở root
+scripts/                    Load, query plan, certificate, migration drill
 ```
 
-`internal` ngăn package bên ngoài module import trực tiếp implementation. Mỗi
-package nên expose interface nhỏ ở biên cần mock; không tạo service container
-hoặc abstraction nếu một hàm/adapter đơn giản đã đủ.
+Replay/notification/intelligence/retention được gom vào application để người
+đọc tìm nơi điều phối trong một cây thống nhất. Interface nhỏ nằm gần consumer;
+PostgreSQL triển khai chúng, cmd nối dependency. Di chuyển package giữ nguyên
+API và schema.
 
-## Luồng runtime
+Domain không import application, auth, config, ingest, query, metrics hoặc
+adapter. Application không import config, ingest, storage, HTTP transport hoặc
+webui. Transport và ingest không import storage; storage không import
+application. [Architecture test](../backend/internal/architecture/dependencies_test.go)
+kiểm tra các ranh giới này, kể cả subpackage.
+
+Transaction và query liên quan vẫn ở PostgreSQL; replay executor và webhook
+HTTP client nằm cùng workflow sở hữu chúng. Chỉ thêm use case khi cần điều phối
+thật, không bọc mọi query bằng một service chuyển tiếp. Một tiến trình giữ
+deploy đơn giản khi chưa có số đo cần scale riêng ingest/API/worker.
+
+## Khởi động
+
+[serve.go](../backend/cmd/tracepilot/serve.go) đọc config, kiểm tra schema đúng
+version 1 và không dirty, mở pool, tạo partition, ingestion scope và bootstrap
+key. [wiring.go](../backend/cmd/tracepilot/wiring.go) nối dependency, rồi khởi
+động hai pipeline, management HTTP, OTLP và các background workflow.
+Serve không tự migrate; operator chạy migrate ở bước riêng.
+
+Config ưu tiên: process environment → file .env đầu tiên ở thư mục chạy hoặc
+thư mục cha → YAML → defaults. Config sai làm startup thất bại.
+Trong repo chỉ dùng .env ở root; go -C backend đọc ../.env khi backend/.env
+không tồn tại. Compose dùng env_file: .env để chuyển toàn bộ giá trị thành
+environment trong container; không mount file secret vào image. Không tạo
+thêm backend/.env hoặc deploy/.env. File YAML vẫn là tùy chọn CLI tương thích,
+không cần để chạy cấu hình chuẩn của repo.
+Một server có một ingestion project/environment từ cấu hình. Read API lấy
+project từ principal và environment từ server, không tin scope client gửi lên.
+
+## Trace/log: vì sao ACK sau commit
 
 ```mermaid
-flowchart LR
-    A[OTLP gRPC/HTTP] --> N[Normalize + redact]
-    S[Syslog TCP/TLS] --> P[Security parser]
-    P --> N
-    N --> Q[Bounded pipeline queue]
-    Q --> W[Batch workers]
-    W --> DB[(PostgreSQL)]
-    DB --> API[Management API / UI]
-    DB --> D[Security detection worker]
-    D --> WH[Durable signed webhook queue]
-    F[tracepilot-agent] -->|OTLP gRPC| A
+sequenceDiagram
+    participant SDK as SDK / Collector
+    participant OTLP as ingest/otlp
+    participant Queue as ingest/pipeline
+    participant DB as storage/postgres
+    participant UI as REST + Console
+    SDK->>OTLP: Export HTTP hoặc gRPC
+    OTLP->>OTLP: Auth, admission, decode, validate, redact
+    OTLP->>Queue: Canonical events
+    Queue->>Queue: Giới hạn số event và byte, gom batch
+    Queue->>DB: StoreEvents
+    DB->>DB: Transaction: event + span/log + incident + evidence + outbox
+    DB-->>Queue: COMMIT thành công
+    Queue-->>OTLP: ACK các event đã lưu
+    OTLP-->>SDK: Success / partial validation rejection
+    UI->>DB: Query theo project + environment
+    DB-->>UI: Trace, log, incident và evidence
 ```
 
-## Điểm vào và hàm chính
+HTTP auth và lấy slot trước khi đọc body; giới hạn cả body nén và sau giải nén.
+gRPC giới hạn message nhưng decode trước handler, nên slot trong handler không
+giới hạn toàn bộ bộ nhớ decode gRPC. Normalizer chuyển protocol model thành
+domain model, giữ correlation và redact attribute key nhạy cảm.
+Free-text log/exception/URL vẫn cần policy ở SDK/Collector; key redaction không
+bảo đảm lọc mọi secret trong nội dung.
 
-| Thành phần | Điểm vào | Trách nhiệm |
-| --- | --- | --- |
-| Server | `cmd/tracepilot/main.go:run` | Chọn `serve`, `migrate`, `mockdata`, `healthcheck`, `version` |
-| Composition root | `cmd/tracepilot/serve.go:runServer` | Load config, kiểm tra schema, nối DB/pipeline/listener/worker và graceful shutdown |
-| OTLP | `ingest/otlp.NewServer` | HTTP/gRPC decode, auth, normalize và chuyển sang pipeline |
-| Trace/log pipeline | `pipeline.Pipeline.Submit` | Admission theo record/byte, batch, retry và ACK sau commit |
-| Metrics pipeline | `pipeline.MetricsPipeline.SubmitMetrics` | Queue best-effort tách khỏi trace/log |
-| Persistence | `postgres.Database.StoreEvents` | Ghi canonical event và signal liên quan trong một transaction |
-| Detection | `postgres.Database.EvaluateSecurityRules` | Lock scope, đọc checkpoint, match rule và tạo detection/incident |
-| Webhook | `notification.Service.Run` | Claim outbox, ký HMAC, kiểm tra SSRF và retry |
-| API | `httpapi.Server.Run` | Health, metrics, OpenAPI, API có scope và UI nhúng |
+Trace/log chờ transaction commit. Auth DB, queue hoặc storage tạm lỗi trả HTTP
+503/Retry-After hoặc gRPC Unavailable để exporter retry. Record sai validation
+được báo partial success sau khi phần hợp lệ đã lưu. Định danh ổn định và unique
+constraint ngăn retry tạo bản ghi trùng; không phải cam kết exactly-once toàn hệ thống.
 
-## Contract v1
+Incident từ lỗi trực tiếp được tạo cùng transaction ingest. Fingerprint được
+khóa bằng PostgreSQL advisory lock; occurrence chống trùng theo event.
+Webhook chỉ được thêm vào outbox trong transaction; gửi mạng diễn ra sau đó.
 
-- Trace/log OTLP chỉ được ACK sau khi PostgreSQL commit; queue saturation hoặc
-  DB outage trả lỗi retryable. PostgreSQL là durability boundary.
-- Metrics là extension best-effort và có thể drop khi backpressure/storage lỗi.
-- Direct Syslog không có application ACK; sender cần disk queue nếu yêu cầu
-  lossless. Agent chỉ xóa spool sau response thành công.
-- Một deployment v1 dùng một ingestion project/environment. Mọi API query và
-  mutation đều áp scope project từ API key; quản trị multi-project để sau v1.
-- API tương thích trong `/api/v1`: thay đổi additive được phép, breaking change
-  cần version mới. Error dùng envelope `code`, `message`, `request_id`.
-- Webhook chỉ nhận HTTPS public, secret mã hóa AES-256-GCM và payload được ký
-  HMAC-SHA256. Ý định delivery được ghi cùng transaction nghiệp vụ.
+## Metrics, detection và RCA
 
-### Ingestion và durability
+Metrics có queue riêng, ACK sau admission. Lỗi DB sau ACK vẫn làm mất point;
+counter rejected reason=storage ghi nhận trường hợp này. Queue giới hạn số point
+và byte ước lượng, giữ reservation tới khi ghi xong/thất bại. Histogram +Inf
+được tính bằng kích thước bucket để tránh lỗi JSON khi ước lượng.
 
-1. Receiver kiểm tra kích thước request/record, decode và chuẩn hóa về
-   `domain/telemetry.Event`.
-2. `ingest/pipeline` giới hạn đồng thời theo số record, số byte, timeout enqueue
-   và batch timeout. `Submit` chỉ trả thành công sau khi batch đã được persist
-   (ack sau transaction), vì vậy caller không được hiểu `accepted` là chỉ mới
-   vào RAM.
-3. `storage/postgres` ghi canonical events cùng các bảng span/log/security trong
-   transaction. Migration phải ở version hiện tại trước khi server khởi động.
-4. Khi exporter của agent không tới được server, agent ghi disk spool bounded
-   (nếu cấu hình), rồi chỉ tiến checkpoint qua boundary đã export hoặc đã spool.
+Cùng queue_max_bytes áp dụng RIÊNG cho mỗi pipeline: mặc định events 64 MiB và
+metrics 64 MiB. Đây không phải giới hạn tổng RSS; decoded request, map overhead,
+DB buffers và UI/runtime còn dùng bộ nhớ khác.
 
-### Server và các listener
+Worker intelligence chạy mỗi phút, so cửa sổ gần nhất 5 phút với baseline
+30 phút trước đó. SQL lấy signal; policy thuần ở domain/analysis quyết định
+deviation. Detector ghi incident/evidence riêng, không chặn ACK telemetry.
+Read analysis lấy evidence và dependency rồi gọi BuildRCA xếp hạng giả thuyết.
+RCA có evidence nhưng không phải xác suất hoặc kết luận chắc chắn về nguyên nhân.
+Chưa có LLM hoặc tự remediation.
 
-- Management HTTP mặc định `:8080`: health, metrics, OpenAPI, UI và API v1.
-- OTLP gRPC mặc định `:4317`; OTLP HTTP mặc định `:4318` với
-  `POST /v1/traces` và `POST /v1/logs`.
-- Syslog là tùy chọn, mặc định tắt; khi bật dùng TCP newline trên địa chỉ
-  `security.syslog_address` (Compose dev/prod cấu hình `:6514`). Production
-  bắt buộc TLS và CA client (`security.syslog_client_ca_file`) để verify mTLS;
-  SAN/URI/CN của client trở thành source identity, còn peer address vẫn được
-  giữ làm evidence mạng.
-- `cmd/tracepilot/serve` khởi tạo DB, scope, bootstrap key, pipeline, listener,
-  detection và retention; SIGINT/SIGTERM đi qua graceful shutdown với
-  `shutdown_timeout`.
+Console gọi REST qua shared/api.ts và React Query. Mỗi feature sở hữu giao diện
+của mình. Vite build vào internal/webui/dist; Go embed để image không cần một
+web server thứ hai.
 
-### Management API
+## Partition, retention và shutdown
 
-Danh sách route được khai báo một lần trong
-`internal/transport/httpapi/routes.go`. Cùng manifest này được dùng để đăng ký
-`http.ServeMux` và sinh `/openapi.json`, tránh route chạy thật lệch tài liệu.
-Middleware theo thứ tự trong `server.go` xử lý request ID, metrics, rate limit,
-access log, CORS, panic recovery và body limit. API key được kiểm tra scope ở
-handler/middleware; replay chỉ được đăng ký khi replay service được bật.
+Events/spans/logs/metric_data_points partition theo ngày UTC. Startup tạo
+10 ngày bắt đầu từ hôm qua; maintenance mỗi giờ. Record ngoài cửa sổ hoặc ngày
+đã có dữ liệu trong default tiếp tục vào default. Chỉ lỗi check constraint dự
+kiến khi tạo partition được bỏ qua; lỗi quyền/disk/connection phải trả về.
+Không tự chuyển dữ liệu default sang partition mới.
 
-Webhook management dùng scope `admin`. Secret được sinh hoặc nhận lúc tạo,
-mã hóa AES-256-GCM trước khi ghi PostgreSQL và chỉ trả đúng một lần ở response
-tạo/rotate. Retry worker lease bằng `FOR UPDATE SKIP LOCKED`, reset lease cũ sau
-crash, chặn DNS/private-network ở thời điểm connect, không follow redirect và
-thử lại tối đa theo `max_attempts` của delivery.
+Retention chỉ chạy khi max_age > 0. Partition hết cả ngày được drop; default
+được DELETE theo batch. Dữ liệu trong ngày cắt có thể tồn tại thêm gần một ngày.
+Incident/evidence/audit/outbox cần policy riêng; trace được tham chiếu có thể
+đã hết retention. Retention telemetry không giới hạn toàn bộ kích thước DB.
 
-## Dependency direction
+Khi dừng: listeners ngừng nhận và chờ request trong budget, sau đó pipeline
+drain trong budget tiếp theo. Default shutdown_timeout=15s, Compose stop grace=35s.
+Tăng grace nếu tăng timeout. Exporter retry khi tiến trình bị kill trước ACK.
+Readiness kiểm tra pipeline, OTLP runtime và DB; liveness kiểm tra tiến trình.
 
-Architecture test trong `internal/architecture/dependencies_test.go` bảo vệ các
-quy tắc sau:
+## Schema hiện hành
 
-- `domain/*` không import `config`, `storage` hoặc `transport`.
-- `transport` và `ingest` không import implementation `storage/postgres`.
-- `storage/postgres` không import `replay`.
-- Wiring phụ thuộc concrete adapter chỉ nằm ở `cmd/tracepilot`.
-
-Nếu thêm package mới, ưu tiên truyền interface/function từ composition root thay
-vì import ngược tầng. Chạy `go -C backend test ./internal/architecture` sau mọi
-thay đổi package boundary.
-
-## SQL, migration và generated code
-
-- Thêm schema bằng file mới trong `backend/db/migrations` với số tăng dần.
-- Cập nhật query trong `backend/db/queries`, sau đó chạy sqlc version được pin
-  trong Makefile (`sqlc/sqlc:1.31.1`).
-- Commit cả output trong `internal/storage/postgres/sqlc`; CI chạy `sqlc-check`
-  để phát hiện generated code lệch source SQL.
-- Không sửa tay file generated nếu thay đổi có thể biểu diễn trong query/schema.
-
-## Quy trình thêm tính năng
-
-1. Xác định model/rule thuần trong `internal/domain` và test table-driven.
-2. Đặt parsing/transport ở `ingest` hoặc `transport`, không đưa SQL vào domain.
-3. Thêm query + migration (nếu cần), regenerate sqlc.
-4. Nối dependency tại `cmd/tracepilot/serve.go`.
-5. Cập nhật route manifest/OpenAPI, metrics và tài liệu nếu là API hoặc runtime
-   behavior.
-6. Chạy các gate trong [DEVELOPMENT.md](DEVELOPMENT.md), tối thiểu format,
-   unit test, race test, vet và architecture test; cập nhật
-   [ROADMAP.md](ROADMAP.md) nếu hoàn thành hoặc phát hiện blocker mới.
+Working tree chỉ còn 000001_init và CurrentVersion=1. Baseline đã gộp từ lịch
+sử cũ trước phiên này; không phải đường nâng cấp DB version 15. Không recreate
+DB có dữ liệu để chạy source mới. Nếu có DB cũ, cần data migration hoặc binary
+tương thích. Khi baseline đã áp dụng thật, mọi thay đổi dùng migration mới.

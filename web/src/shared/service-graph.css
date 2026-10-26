@@ -1,0 +1,16 @@
+.graph-scroll { max-height: 70vh; overflow: auto; background: var(--surface-sunken); }
+.graph-scroll:focus-visible { outline-offset: -2px; }
+.graph-svg { display: block; }
+.graph-edge { stroke: color-mix(in srgb, var(--blue) 70%, var(--faint)); opacity: .85; transition: opacity .15s ease; }
+.graph-edge.failing { stroke: var(--danger); }
+.graph-edge.dim { opacity: .15; }
+.graph-node { cursor: pointer; outline: none; }
+.graph-node rect { fill: var(--surface); stroke: var(--line); stroke-width: 1.5; transition: stroke .15s ease; }
+.graph-node:hover rect, .graph-node:focus-visible rect { stroke: var(--accent); }
+.graph-node.selected rect { stroke: var(--accent); stroke-width: 3; fill: var(--surface-raised); }
+.graph-node.typedatabase rect, .graph-node.typedb rect { stroke-dasharray: 2 0; fill: color-mix(in srgb, var(--violet) 10%, var(--surface)); }
+.graph-node.typemessaging rect, .graph-node.typequeue rect { fill: color-mix(in srgb, var(--warning) 10%, var(--surface)); }
+.graph-node.typeexternal rect, .graph-node.typeclient rect { fill: color-mix(in srgb, var(--cyan) 10%, var(--surface)); }
+.graph-name { fill: var(--text); font-size: 13px; font-weight: 700; }
+.graph-type { fill: var(--muted); font-size: 10px; letter-spacing: .06em; text-transform: uppercase; }
+.graph-legend { margin: 0; padding: 10px 18px; border-top: 1px solid var(--line-soft); }

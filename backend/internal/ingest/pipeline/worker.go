@@ -174,10 +174,10 @@ func (pipeline *Pipeline) observeShutdown(outcome string) {
 	})
 }
 
-func estimateBytes(event telemetry.Event) int64 {
+func estimateBytes(value any) int64 {
 	estimator := estimateEncoders.Get().(*estimateEncoder)
 	estimator.buffer.Reset()
-	encodeError := estimator.encoder.Encode(event)
+	encodeError := estimator.encoder.Encode(value)
 	encodedBytes := estimator.buffer.Len()
 	if estimator.buffer.Cap() <= maxPooledEstimateBytes {
 		estimateEncoders.Put(estimator)

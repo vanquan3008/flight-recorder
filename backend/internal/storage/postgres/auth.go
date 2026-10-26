@@ -12,6 +12,10 @@ import (
 	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
 )
 
+// EnsureBootstrapAPIKey provisions the configured bootstrap key. A restart with
+// the same key leaves the stored row untouched, so a revoked or narrowed
+// bootstrap key stays that way. Only a different configured key rotates the
+// stored hash and reactivates the row, which keeps lost-admin recovery possible.
 func (database *Database) EnsureBootstrapAPIKey(ctx context.Context, projectID, rawKey string) error {
 	if rawKey == "" {
 		return nil
@@ -22,7 +26,8 @@ func (database *Database) EnsureBootstrapAPIKey(ctx context.Context, projectID, 
 		INSERT INTO api_keys (id, project_id, name, key_hash, scopes)
 		VALUES ($1, $2, 'bootstrap', $3, ARRAY['read', 'write', 'ingest', 'replay', 'admin'])
 		ON CONFLICT (project_id, name) DO UPDATE
-		SET key_hash = EXCLUDED.key_hash, scopes = EXCLUDED.scopes, revoked_at = NULL`, keyID, projectID, digest[:]); executeError != nil {
+		SET key_hash = EXCLUDED.key_hash, scopes = EXCLUDED.scopes, revoked_at = NULL
+		WHERE api_keys.key_hash <> EXCLUDED.key_hash`, keyID, projectID, digest[:]); executeError != nil {
 		return fmt.Errorf("ensure bootstrap API key: %w", executeError)
 	}
 	return nil

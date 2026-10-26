@@ -29,6 +29,12 @@ func (handler Handler) ServeHTTP(responseWriter http.ResponseWriter, request *ht
 		_, _ = responseWriter.Write(indexHTML)
 		return
 	}
+	if request.URL.Path == "/theme-init.js" {
+		// Unhashed so it can run before first paint; revalidate instead of caching as immutable.
+		responseWriter.Header().Set("Cache-Control", "no-cache")
+		handler.assets.ServeHTTP(responseWriter, request)
+		return
+	}
 	assetPath := path.Clean(request.URL.Path)
 	if strings.HasPrefix(assetPath, "/assets/") {
 		request.URL.Path = assetPath

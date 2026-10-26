@@ -15,7 +15,7 @@ func TestServerExposesOpenAPIContract(t *testing.T) {
 	if responseRecorder.Code != http.StatusOK {
 		t.Fatalf("status = %d", responseRecorder.Code)
 	}
-	if !strings.Contains(responseRecorder.Body.String(), `"openapi":"3.1.0"`) || !strings.Contains(responseRecorder.Body.String(), `"/api/v1/api-key-events"`) || !strings.Contains(responseRecorder.Body.String(), `"/api/v1/security/rules/{ruleID}/history"`) {
+	if !strings.Contains(responseRecorder.Body.String(), `"openapi":"3.1.0"`) || !strings.Contains(responseRecorder.Body.String(), `"/api/v1/api-key-events"`) || !strings.Contains(responseRecorder.Body.String(), `"/api/v1/incidents/{incidentID}/analysis"`) {
 		t.Fatalf("unexpected OpenAPI response: %s", responseRecorder.Body.String())
 	}
 }
@@ -39,8 +39,6 @@ func TestOpenAPIUsesHandlerSuccessStatusCodes(t *testing.T) {
 			t.Fatalf("%s %s does not advertise %s response", method, path, want)
 		}
 	}
-	assertStatus("/api/v1/security/rules", "post", "201")
-	assertStatus("/api/v1/security/rules/{ruleID}", "delete", "204")
 	assertStatus("/api/v1/api-keys/{keyID}/rotate", "post", "200")
 	assertStatus("/api/v1/webhooks/{webhookID}/rotate", "post", "200")
 	assertStatus("/api/v1/traces/{traceID}", "get", "200")
@@ -78,8 +76,10 @@ func TestOpenAPIQueryParametersMatchHandlerFilters(t *testing.T) {
 	assertParameters("/api/v1/traces", "get", "limit", "cursor", "from", "to", "service", "operation", "status", "traceId", "minDuration", "maxDuration")
 	assertParameters("/api/v1/logs", "get", "limit", "cursor", "from", "to", "service", "severity", "traceId", "spanId", "search")
 	assertParameters("/api/v1/incidents", "get", "limit", "cursor", "from", "to", "service", "severity", "status")
-	assertParameters("/api/v1/security/events", "get", "limit", "cursor", "from", "to", "kind", "severity", "sourceIp", "destinationIp", "outcome")
+	assertParameters("/api/v1/topology", "get", "from", "to", "service")
+	assertParameters("/api/v1/metrics/query", "get", "limit", "from", "to", "service", "metric")
 	assertParameters("/api/v1/services", "get", "from", "to")
+	assertParameters("/api/v1/performance", "get", "limit", "from", "to", "service", "endpoint")
 }
 
 func TestOpenAPIRoutesComeFromRouterManifest(t *testing.T) {

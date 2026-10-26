@@ -2,7 +2,6 @@ package postgres
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -13,9 +12,8 @@ import (
 	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
 )
 
-// StoreMetrics persists a batch of OTLP metric data points. Unlike StoreEvents
-// it uses a simple batch INSERT without a wrapping transaction — metrics are
-// best-effort and idempotent on the ID column so partial failures are safe.
+// StoreMetrics persists an idempotent batch. SendBatch uses an implicit
+// transaction; acknowledgement remains asynchronous on this best-effort path.
 func (database *Database) StoreMetrics(ctx context.Context, ingestion config.IngestionConfig, points []telemetry.MetricDataPoint) error {
 	if len(points) == 0 {
 		return nil
@@ -33,14 +31,18 @@ func (database *Database) StoreMetrics(ctx context.Context, ingestion config.Ing
 		if resErr != nil {
 			return fmt.Errorf("encode metric resource attributes: %w", resErr)
 		}
+		scopeAttrs, scopeErr := marshalJSONObject(point.ScopeAttributes)
+		if scopeErr != nil {
+			return fmt.Errorf("encode metric scope attributes: %w", scopeErr)
+		}
+		exemplars, exemplarErr := marshalJSONArray(point.Exemplars)
+		if exemplarErr != nil {
+			return fmt.Errorf("encode metric exemplars: %w", exemplarErr)
+		}
 
-		var buckets []byte
-		if len(point.HistBuckets) > 0 {
-			bucketsJSON, bucketsErr := json.Marshal(point.HistBuckets)
-			if bucketsErr != nil {
-				return fmt.Errorf("encode histogram buckets: %w", bucketsErr)
-			}
-			buckets = bucketsJSON
+		buckets, bucketsErr := encodeHistogramBuckets(point.HistBuckets)
+		if bucketsErr != nil {
+			return fmt.Errorf("encode histogram buckets: %w", bucketsErr)
 		}
 
 		batch.Queue(`
@@ -52,7 +54,7 @@ func (database *Database) StoreMetrics(ctx context.Context, ingestion config.Ing
 				value, hist_count, hist_sum, hist_min, hist_max, hist_buckets,
 				temporality, is_monotonic,
 				attributes, resource_attributes,
-				scope_name, scope_version
+				scope_name, scope_version, exemplars, started_at, flags, scope_attributes
 			) VALUES (
 				$1, $2, $3,
 				$4, $5, $6,
@@ -61,8 +63,8 @@ func (database *Database) StoreMetrics(ctx context.Context, ingestion config.Ing
 				$10, $11, $12, $13, $14, $15,
 				$16, $17,
 				$18, $19,
-				$20, $21
-			) ON CONFLICT (project_id, id) DO NOTHING`,
+				$20, $21, $22, $23, $24, $25
+			) ON CONFLICT (project_id, id, occurred_at) DO NOTHING`,
 			point.ID, ingestion.ProjectID, ingestion.EnvironmentID,
 			point.MetricName, point.MetricUnit, string(point.MetricType),
 			point.ServiceName, nullableString(point.ServiceVersion),
@@ -70,7 +72,7 @@ func (database *Database) StoreMetrics(ctx context.Context, ingestion config.Ing
 			nullableFloat64(point.Value), nullableInt64Ptr(point.HistCount), nullableFloat64(point.HistSum), nullableFloat64(point.HistMin), nullableFloat64(point.HistMax), nullableBytesOrNil(buckets),
 			point.Temporality, point.IsMonotonic,
 			attrs, resAttrs,
-			point.ScopeName, point.ScopeVersion,
+			point.ScopeName, point.ScopeVersion, exemplars, nullableTime(point.StartedAt), int64(point.Flags), scopeAttrs,
 		)
 	}
 
@@ -87,21 +89,15 @@ func (database *Database) StoreMetrics(ctx context.Context, ingestion config.Ing
 	return nil
 }
 
-// DeleteMetricsBefore removes metric data points older than before in batches.
+// DeleteMetricsBefore expires metric data points the same way as events: whole
+// daily partitions are dropped and the default partition is trimmed in batches.
 func (database *Database) DeleteMetricsBefore(ctx context.Context, before time.Time, batchSize int) (int64, error) {
-	result, deleteError := database.pool.Exec(ctx, `
-		WITH expired AS (
-			SELECT id FROM metric_data_points
-			WHERE occurred_at < $1
-			ORDER BY occurred_at, id
-			LIMIT $2
-		)
-		DELETE FROM metric_data_points USING expired
-		WHERE metric_data_points.id = expired.id`, before, batchSize)
-	if deleteError != nil {
-		return 0, fmt.Errorf("delete expired metric data points: %w", deleteError)
+	dropped, dropError := database.dropExpiredPartitions(ctx, []string{"metric_data_points"}, before)
+	if dropError != nil {
+		return dropped, fmt.Errorf("drop expired metric partitions: %w", dropError)
 	}
-	return result.RowsAffected(), nil
+	deleted, deleteError := database.deleteDefaultPartitionRows(ctx, "metric_data_points", before, batchSize)
+	return dropped + deleted, deleteError
 }
 
 // nullableFloat64 returns nil for nil pointers or non-finite values.

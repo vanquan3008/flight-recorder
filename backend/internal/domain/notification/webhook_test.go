@@ -34,9 +34,20 @@ func TestDecodeEncryptionKeyAcceptsHexAndBase64(t *testing.T) {
 
 func TestWebhookValidationRejectsSSRFTargets(t *testing.T) {
 	for _, url := range []string{"http://example.com/hook", "https://127.0.0.1/hook", "https://user:pass@example.com/hook", "https://example.com/hook#fragment"} {
-		err := (CreateWebhookParams{Name: "test", URL: url, Events: []string{"detection.created"}}).Validate()
+		err := (CreateWebhookParams{Name: "test", URL: url, Events: []string{"incident.opened"}}).Validate()
 		if err == nil {
 			t.Fatalf("Validate(%q) accepted an unsafe URL", url)
 		}
+	}
+}
+
+func TestWebhookValidationOnlyAllowsProducedEvents(t *testing.T) {
+	params := CreateWebhookParams{Name: "test", URL: "https://example.com/hook", Events: []string{"incident.opened", "incident.resolved"}}
+	if err := params.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	params.Events = []string{"detection.created"}
+	if err := params.Validate(); err == nil {
+		t.Fatal("obsolete event accepted")
 	}
 }

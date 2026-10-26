@@ -151,12 +151,13 @@ func openAPIQueryParameters(operationID string) []map[string]any {
 			openAPITimeParameters(),
 			openAPIStringParameters("service", "severity", "spanId", "search"),
 		)
-	case "listSecurityEvents":
+	case "listTopology", "getTelemetryQuality":
 		return combineOpenAPIParameters(
-			openAPIPageParameters(),
 			openAPITimeParameters(),
-			openAPIStringParameters("kind", "severity", "sourceIp", "destinationIp", "outcome"),
+			openAPIStringParameters("service"),
 		)
+	case "listMetricPoints":
+		return combineOpenAPIParameters(openAPIPageParameters()[:1], openAPITimeParameters(), openAPIStringParameters("service", "metric"))
 	case "listIncidents":
 		return combineOpenAPIParameters(
 			openAPIPageParameters(),
@@ -165,9 +166,9 @@ func openAPIQueryParameters(operationID string) []map[string]any {
 		)
 	case "listServices":
 		return openAPITimeParameters()
-	case "listSecuritySources", "listSecurityRuleAudits":
-		return []map[string]any{openAPILimitParameter()}
-	case "listSecurityDetections", "listIncidentOccurrences", "listIncidentEvents", "listIncidentStatusChanges", "listReplayExecutions", "listAPIKeys", "listAPIKeyEvents", "listWebhooks", "listWebhookDeliveries":
+	case "getRequestPerformance":
+		return combineOpenAPIParameters(openAPIPageParameters()[:1], openAPITimeParameters(), openAPIStringParameters("service", "endpoint"))
+	case "listIncidentOccurrences", "listIncidentEvents", "listIncidentStatusChanges", "listReplayExecutions", "listAPIKeys", "listAPIKeyEvents", "listWebhooks", "listWebhookDeliveries":
 		return openAPIPageParameters()
 	default:
 		return nil

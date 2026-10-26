@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/vanquan3008/tracepilot/internal/auth"
 	"github.com/vanquan3008/tracepilot/internal/config"
 	collectorlogspb "go.opentelemetry.io/proto/otlp/collector/logs/v1"
 	collectormetricspb "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
@@ -37,15 +38,20 @@ func newHTTPServer(configuration config.Config, server *Server) *http.Server {
 func (server *Server) traces(responseWriter http.ResponseWriter, request *http.Request) {
 	startedAt, outcome := time.Now(), "ok"
 	defer func() { server.observeHTTPRequest("traces", outcome, time.Since(startedAt)) }()
+	if authOutcome := server.authorizeHTTP(responseWriter, request); authOutcome != "" {
+		outcome = authOutcome
+		return
+	}
+	release, admitOutcome := server.admitHTTP(responseWriter, request)
+	if admitOutcome != "" {
+		outcome = admitOutcome
+		return
+	}
+	defer release()
 	message := &collectortracepb.ExportTraceServiceRequest{}
 	encoding, decodeError := server.decodeHTTP(responseWriter, request, message)
 	if decodeError != nil {
 		outcome = "rejected"
-		return
-	}
-	if authError := server.receiver.authorize(request.Context(), httpAPIKey(request)); authError != nil {
-		outcome = "unauthenticated"
-		server.writeHTTPError(responseWriter, encoding, http.StatusUnauthorized, "OTLP authentication failed")
 		return
 	}
 	response, exportError := server.receiver.exportTraces(request.Context(), message)
@@ -60,15 +66,20 @@ func (server *Server) traces(responseWriter http.ResponseWriter, request *http.R
 func (server *Server) logs(responseWriter http.ResponseWriter, request *http.Request) {
 	startedAt, outcome := time.Now(), "ok"
 	defer func() { server.observeHTTPRequest("logs", outcome, time.Since(startedAt)) }()
+	if authOutcome := server.authorizeHTTP(responseWriter, request); authOutcome != "" {
+		outcome = authOutcome
+		return
+	}
+	release, admitOutcome := server.admitHTTP(responseWriter, request)
+	if admitOutcome != "" {
+		outcome = admitOutcome
+		return
+	}
+	defer release()
 	message := &collectorlogspb.ExportLogsServiceRequest{}
 	encoding, decodeError := server.decodeHTTP(responseWriter, request, message)
 	if decodeError != nil {
 		outcome = "rejected"
-		return
-	}
-	if authError := server.receiver.authorize(request.Context(), httpAPIKey(request)); authError != nil {
-		outcome = "unauthenticated"
-		server.writeHTTPError(responseWriter, encoding, http.StatusUnauthorized, "OTLP authentication failed")
 		return
 	}
 	response, exportError := server.receiver.exportLogs(request.Context(), message)
@@ -83,15 +94,20 @@ func (server *Server) logs(responseWriter http.ResponseWriter, request *http.Req
 func (server *Server) httpMetrics(responseWriter http.ResponseWriter, request *http.Request) {
 	startedAt, outcome := time.Now(), "ok"
 	defer func() { server.observeHTTPRequest("metrics", outcome, time.Since(startedAt)) }()
+	if authOutcome := server.authorizeHTTP(responseWriter, request); authOutcome != "" {
+		outcome = authOutcome
+		return
+	}
+	release, admitOutcome := server.admitHTTP(responseWriter, request)
+	if admitOutcome != "" {
+		outcome = admitOutcome
+		return
+	}
+	defer release()
 	message := &collectormetricspb.ExportMetricsServiceRequest{}
 	encoding, decodeError := server.decodeHTTP(responseWriter, request, message)
 	if decodeError != nil {
 		outcome = "rejected"
-		return
-	}
-	if authError := server.receiver.authorize(request.Context(), httpAPIKey(request)); authError != nil {
-		outcome = "unauthenticated"
-		server.writeHTTPError(responseWriter, encoding, http.StatusUnauthorized, "OTLP authentication failed")
 		return
 	}
 	response, exportError := server.receiver.exportMetrics(request.Context(), message)
@@ -107,6 +123,30 @@ func (server *Server) observeHTTPRequest(signal, outcome string, duration time.D
 	if server.receiver != nil && server.receiver.metrics != nil {
 		server.receiver.metrics.ObserveOTLPRequest("http", signal, outcome, duration)
 	}
+}
+
+func (server *Server) authorizeHTTP(responseWriter http.ResponseWriter, request *http.Request) string {
+	err := server.receiver.authorize(request.Context(), httpAPIKey(request))
+	if err == nil {
+		return ""
+	}
+	if errors.Is(err, auth.ErrUnauthorized) {
+		server.writeHTTPError(responseWriter, responseEncoding(request), http.StatusUnauthorized, "OTLP authentication failed")
+		return "unauthenticated"
+	}
+	server.writeHTTPError(responseWriter, responseEncoding(request), http.StatusServiceUnavailable, "OTLP authentication temporarily unavailable")
+	return "unavailable"
+}
+
+// admitHTTP runs after authentication and before the body is read, so an
+// overloaded receiver answers 503 without buffering another payload.
+func (server *Server) admitHTTP(responseWriter http.ResponseWriter, request *http.Request) (func(), string) {
+	release, admitted := server.receiver.admit()
+	if admitted {
+		return release, ""
+	}
+	server.writeHTTPError(responseWriter, responseEncoding(request), http.StatusServiceUnavailable, "OTLP receiver is at its concurrent request limit")
+	return nil, "overloaded"
 }
 
 func (server *Server) decodeHTTP(responseWriter http.ResponseWriter, request *http.Request, message proto.Message) (string, error) {
@@ -147,7 +187,7 @@ func (server *Server) decodeHTTP(responseWriter http.ResponseWriter, request *ht
 		return encoding, errors.New("request body too large")
 	}
 	if mediaType == "application/json" {
-		if unmarshalError := protojson.Unmarshal(body, message); unmarshalError != nil {
+		if unmarshalError := unmarshalOTLPJSON(body, message); unmarshalError != nil {
 			server.writeHTTPError(responseWriter, encoding, http.StatusBadRequest, "invalid OTLP JSON")
 			return encoding, unmarshalError
 		}

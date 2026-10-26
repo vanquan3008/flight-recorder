@@ -1,7 +1,7 @@
-COMPOSE := docker compose -f deploy/compose.dev.yaml
+COMPOSE := docker compose
 SQLC_IMAGE := sqlc/sqlc:1.31.1
 
-.PHONY: build build-all test test-race bench-pipeline bench-postgres vet staticcheck vulncheck fmt-check size-check sqlc-generate sqlc-check web-install web-check web-test web-build web-dist-check web-ci ci run dev demo migrate migrate-version migration-roundtrip mockdata clean
+.PHONY: build test test-race bench-pipeline bench-postgres vet staticcheck vulncheck fmt-check size-check sqlc-generate sqlc-check web-install web-check web-test web-build web-dist-check web-ci ci run dev demo migrate migrate-version migration-roundtrip mockdata clean
 
 WEB_NPM := npm --prefix web
 
@@ -9,12 +9,7 @@ build: web-build
 	mkdir -p bin
 	go -C backend build -o ../bin/tracepilot ./cmd/tracepilot
 
-build-all: web-build
-	mkdir -p bin
-	go -C backend build -o ../bin/tracepilot ./cmd/tracepilot
-	go -C backend build -o ../bin/tracepilot-agent ./cmd/tracepilot-agent
-
-ci: web-ci sqlc-check fmt-check size-check vet staticcheck vulncheck test-race build-all
+ci: web-ci sqlc-check fmt-check size-check vet staticcheck vulncheck test-race build
 
 web-install:
 	$(WEB_NPM) ci
@@ -30,6 +25,7 @@ web-build:
 
 web-dist-check: web-build
 	git diff --exit-code -- backend/internal/webui/dist
+	@test -z "$$(git ls-files --others --exclude-standard -- backend/internal/webui/dist)" || (echo "Untracked console assets; commit backend/internal/webui/dist." && git ls-files --others --exclude-standard -- backend/internal/webui/dist && exit 1)
 
 web-ci: web-install web-check web-test web-dist-check
 
@@ -78,8 +74,10 @@ size-check:
 run:
 	go -C backend run ./cmd/tracepilot serve
 
-dev:
-	$(COMPOSE) up --build -d
+dev: web-build
+	$(COMPOSE) up -d --wait postgres
+	$(COMPOSE) run --build --rm migrate
+	$(COMPOSE) up --build -d tracepilot
 
 demo: dev
 	$(COMPOSE) run --build --rm tracepilot mockdata

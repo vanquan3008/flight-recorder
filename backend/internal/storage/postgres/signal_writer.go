@@ -47,7 +47,7 @@ func queueSignalRecord(batch *pgx.Batch, ingestion config.IngestionConfig, event
 				$19, $20, $21, $22, $23,
 				$24, $25, $26, $27, $28
 			)
-			ON CONFLICT (event_id) DO NOTHING`,
+			ON CONFLICT (event_id, started_at) DO NOTHING`,
 			event.ID, ingestion.ProjectID, ingestion.EnvironmentID, event.TraceID, event.SpanID, nullableString(event.ParentSpanID),
 			event.TraceState, event.Operation, event.SpanKind, event.Timestamp, event.Timestamp.Add(event.Duration), event.Status, event.StatusMessage, int64(event.TraceFlags),
 			event.ServiceName, nullableString(event.ServiceVersion), event.ResourceSchemaURL, resourceAttributes,
@@ -84,7 +84,7 @@ func queueSignalRecord(batch *pgx.Batch, ingestion config.IngestionConfig, event
 				$15, $16, $17, $18, $19,
 				$20, $21, $22
 			)
-			ON CONFLICT (event_id) DO NOTHING`,
+			ON CONFLICT (event_id, occurred_at) DO NOTHING`,
 			event.ID, ingestion.ProjectID, ingestion.EnvironmentID, event.Timestamp, nullableTime(event.ObservedTimestamp), nullableString(event.TraceID), nullableString(event.SpanID),
 			int64(event.TraceFlags), event.SeverityNumber, event.Severity, body, event.LogEventName, event.ServiceName, nullableString(event.ServiceVersion),
 			event.ResourceSchemaURL, resourceAttributes, event.ScopeName, event.ScopeVersion, event.ScopeSchemaURL,

@@ -17,9 +17,6 @@ func (configuration Config) Validate() error {
 	if err := configuration.validateIngestion(); err != nil {
 		return err
 	}
-	if err := configuration.validateSecurity(); err != nil {
-		return err
-	}
 	if err := configuration.validateNotifications(); err != nil {
 		return err
 	}

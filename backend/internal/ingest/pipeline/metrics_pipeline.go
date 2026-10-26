@@ -9,6 +9,7 @@ import (
 
 	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
 	"github.com/vanquan3008/tracepilot/internal/observability/metrics"
+	"golang.org/x/sync/semaphore"
 )
 
 // batchStoreTimeout is the maximum time allowed for a single metrics batch write.
@@ -25,7 +26,8 @@ type MetricsStoreFunc func(context.Context, []telemetry.MetricDataPoint) error
 // increments the rejected counter. This matches how most observability backends
 // treat high-cardinality metrics under backpressure.
 type MetricsPipeline struct {
-	queue         chan []telemetry.MetricDataPoint
+	queue         chan metricBatch
+	byteBudget    *semaphore.Weighted
 	store         MetricsStoreFunc
 	batchSize     int
 	workers       int
@@ -44,10 +46,16 @@ type MetricsPipeline struct {
 
 // MetricsPipelineConfig holds tuning parameters for MetricsPipeline.
 type MetricsPipelineConfig struct {
-	QueueSize int
-	BatchSize int
-	Workers   int
-	Metrics   *metrics.Registry
+	QueueSize     int
+	QueueMaxBytes int64
+	BatchSize     int
+	Workers       int
+	Metrics       *metrics.Registry
+}
+
+type metricBatch struct {
+	points []telemetry.MetricDataPoint
+	bytes  int64
 }
 
 // NewMetricsPipeline creates a MetricsPipeline. Call Start before SubmitMetrics.
@@ -61,13 +69,17 @@ func NewMetricsPipeline(cfg MetricsPipelineConfig, store MetricsStoreFunc) *Metr
 	if cfg.Workers <= 0 {
 		cfg.Workers = 2
 	}
+	if cfg.QueueMaxBytes <= 0 {
+		cfg.QueueMaxBytes = 64 << 20
+	}
 	return &MetricsPipeline{
-		queue:     make(chan []telemetry.MetricDataPoint, cfg.QueueSize),
-		store:     store,
-		batchSize: cfg.BatchSize,
-		workers:   cfg.Workers,
-		metrics:   cfg.Metrics,
-		maxQueued: int64(cfg.QueueSize) * int64(cfg.BatchSize),
+		queue:      make(chan metricBatch, cfg.QueueSize),
+		byteBudget: semaphore.NewWeighted(cfg.QueueMaxBytes),
+		store:      store,
+		batchSize:  cfg.BatchSize,
+		workers:    cfg.Workers,
+		metrics:    cfg.Metrics,
+		maxQueued:  int64(cfg.QueueSize) * int64(cfg.BatchSize),
 	}
 }
 
@@ -122,10 +134,23 @@ func (p *MetricsPipeline) SubmitMetrics(ctx context.Context, points []telemetry.
 		}
 		break
 	}
+	var bytes int64
+	for _, point := range points {
+		bytes += estimateMetricBytes(point)
+	}
+	if !p.byteBudget.TryAcquire(bytes) {
+		p.queued.Add(-pointCount)
+		p.dropped.Add(pointCount)
+		if p.metrics != nil {
+			p.metrics.ObserveRejected("metrics", "queue_bytes", len(points))
+		}
+		return 0, errors.New("metrics pipeline byte budget is full")
+	}
 	select {
-	case p.queue <- points:
+	case p.queue <- metricBatch{points: points, bytes: bytes}:
 		return len(points), nil
 	default:
+		p.byteBudget.Release(bytes)
 		p.queued.Add(-pointCount)
 		p.dropped.Add(pointCount)
 		if p.metrics != nil {
@@ -169,38 +194,43 @@ func (p *MetricsPipeline) Shutdown(ctx context.Context) error {
 func (p *MetricsPipeline) worker(ctx context.Context) {
 	defer p.waitGroup.Done()
 	batch := make([]telemetry.MetricDataPoint, 0, p.batchSize)
+	var batchBytes int64
 	for {
 		first, open := <-p.queue
 		if !open {
 			if len(batch) > 0 {
-				p.flush(ctx, batch)
+				p.flush(ctx, batch, batchBytes)
 			}
 			return
 		}
-		batch = append(batch, first...)
+		batch = append(batch, first.points...)
+		batchBytes += first.bytes
 		for len(batch) < p.batchSize {
 			select {
 			case more, ok := <-p.queue:
 				if !ok {
-					p.flush(ctx, batch)
+					p.flush(ctx, batch, batchBytes)
 					return
 				}
-				batch = append(batch, more...)
+				batch = append(batch, more.points...)
+				batchBytes += more.bytes
 			default:
 				goto flush
 			}
 		}
 	flush:
-		p.flush(ctx, batch)
+		p.flush(ctx, batch, batchBytes)
 		batch = batch[:0]
+		batchBytes = 0
 	}
 }
 
-func (p *MetricsPipeline) flush(ctx context.Context, points []telemetry.MetricDataPoint) {
+func (p *MetricsPipeline) flush(ctx context.Context, points []telemetry.MetricDataPoint, bytes int64) {
 	if len(points) == 0 {
 		return
 	}
 	defer p.queued.Add(-int64(len(points)))
+	defer p.byteBudget.Release(bytes)
 	storeCtx, cancel := context.WithTimeout(ctx, batchStoreTimeout)
 	defer cancel()
 	// Best-effort: ignore errors on the metrics path.

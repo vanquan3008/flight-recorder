@@ -53,6 +53,9 @@ func (configuration Config) validateIngestionLimits() error {
 	if configuration.Ingestion.MaxRecordsPerRequest <= 0 || configuration.Ingestion.MaxRecordsPerRequest > maxIngestionRecords {
 		return fmt.Errorf("ingestion.max_records_per_request must be between 1 and %d", maxIngestionRecords)
 	}
+	if configuration.Ingestion.MaxConcurrentRequests <= 0 || configuration.Ingestion.MaxConcurrentRequests > maxIngestionConcurrentRequests {
+		return fmt.Errorf("ingestion.max_concurrent_requests must be between 1 and %d", maxIngestionConcurrentRequests)
+	}
 	if configuration.Ingestion.MaxAttributesPerRecord <= 0 || configuration.Ingestion.MaxAttributesPerRecord > maxIngestionAttributes {
 		return fmt.Errorf("ingestion.max_attributes_per_record must be between 1 and %d", maxIngestionAttributes)
 	}

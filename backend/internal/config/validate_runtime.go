@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -28,48 +29,17 @@ func (configuration Config) validateNotifications() error {
 	return nil
 }
 
-func (configuration Config) validateSecurity() error {
-	if !configuration.Security.Enabled {
-		return nil
-	}
-	if strings.TrimSpace(configuration.Security.SyslogAddress) == "" {
-		return errors.New("security.syslog_address is required when security is enabled")
-	}
-	if configuration.Security.SyslogAddress == configuration.HTTP.Address ||
-		configuration.Security.SyslogAddress == configuration.Ingestion.GRPCAddress ||
-		configuration.Security.SyslogAddress == configuration.Ingestion.HTTPAddress {
-		return errors.New("security.syslog_address must be distinct from HTTP and OTLP addresses")
-	}
-	if configuration.Security.MaxLineBytes < 1024 || configuration.Security.MaxLineBytes > 1<<20 {
-		return fmt.Errorf("security.max_line_bytes must be between 1024 and %d", 1<<20)
-	}
-	if configuration.Security.MaxConnections <= 0 || configuration.Security.MaxConnections > 10_000 {
-		return errors.New("security.max_connections must be between 1 and 10000")
-	}
-	if configuration.Security.IdleTimeout <= 0 {
-		return errors.New("security.idle_timeout must be positive")
-	}
-	if configuration.Security.DetectionInterval <= 0 {
-		return errors.New("security.detection_interval must be positive")
-	}
-	if configuration.Production && !configuration.Security.SyslogTLS {
-		return errors.New("production security syslog requires TLS (set security.syslog_tls: true)")
-	}
-	if configuration.Security.SyslogTLS && (configuration.TLS.CertificateFile == "" || configuration.TLS.PrivateKeyFile == "") {
-		return errors.New("security.syslog_tls requires tls.certificate_file and tls.private_key_file")
-	}
-	if configuration.Production && strings.TrimSpace(configuration.Security.SyslogClientCAFile) == "" {
-		return errors.New("production security syslog requires security.syslog_client_ca_file for mTLS client verification")
-	}
-	return nil
-}
-
 func (configuration Config) validateRuntime() error {
 	if configuration.Production && configuration.Auth.BootstrapAPIKey == "" {
 		return errors.New("auth.bootstrap_api_key is required in production")
 	}
 	if configuration.Production && configuration.TLS.CertificateFile == "" {
 		return errors.New("tls.certificate_file and tls.private_key_file are required in production")
+	}
+	if configuration.Production {
+		if err := validateProductionDatabaseTLS(configuration.Database.URL); err != nil {
+			return err
+		}
 	}
 	if configuration.Auth.BootstrapAPIKey != "" && len(configuration.Auth.BootstrapAPIKey) < 32 {
 		return errors.New("auth.bootstrap_api_key must contain at least 32 characters")
@@ -119,4 +89,24 @@ func (configuration Config) validateRetentionLimits() error {
 		return fmt.Errorf("retention.batch_size must be between 1 and %d", maxIngestionBatchSize)
 	}
 	return nil
+}
+
+// validateProductionDatabaseTLS rejects database URLs that can fall back to
+// plaintext. libpq defaults to sslmode=prefer, so a missing sslmode is rejected
+// too. Unix sockets never leave the host and are exempt. require encrypts but
+// does not authenticate the server; verify-full is the recommended mode.
+func validateProductionDatabaseTLS(databaseURL string) error {
+	parsed, parseError := url.Parse(databaseURL)
+	if parseError != nil || (parsed.Scheme != "postgres" && parsed.Scheme != "postgresql") {
+		return errors.New("database.url must be a postgres:// URL in production")
+	}
+	query := parsed.Query()
+	if strings.HasPrefix(parsed.Hostname(), "/") || strings.HasPrefix(query.Get("host"), "/") {
+		return nil
+	}
+	switch query.Get("sslmode") {
+	case "require", "verify-ca", "verify-full":
+		return nil
+	}
+	return errors.New("database.url must set sslmode to require, verify-ca, or verify-full in production")
 }

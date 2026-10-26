@@ -40,7 +40,7 @@ func TestValidateRequiresCompleteTLSConfiguration(t *testing.T) {
 
 func TestValidateProductionRequiresAuthAndTLS(t *testing.T) {
 	configuration := defaultConfig()
-	configuration.Database.URL = "postgres://tracepilot:tracepilot@localhost/tracepilot"
+	configuration.Database.URL = "postgres://tracepilot:tracepilot@localhost/tracepilot?sslmode=require"
 	configuration.Production = true
 	if err := configuration.Validate(); err == nil {
 		t.Fatal("expected production authentication and TLS to be required")
@@ -53,33 +53,50 @@ func TestValidateProductionRequiresAuthAndTLS(t *testing.T) {
 	}
 }
 
-func TestValidateProductionSecurityRequiresTLS(t *testing.T) {
-	configuration := defaultConfig()
-	configuration.Database.URL = "postgres://tracepilot:tracepilot@localhost/tracepilot"
-	configuration.Production = true
-	configuration.Auth.BootstrapAPIKey = "production-bootstrap-key-000000000000000000000000000000"
-	configuration.TLS.CertificateFile = "certificate.pem"
-	configuration.TLS.PrivateKeyFile = "private-key.pem"
-	configuration.Security.Enabled = true
-	configuration.Security.SyslogAddress = ":6514"
-	if err := configuration.Validate(); err == nil {
-		t.Fatal("expected plaintext production syslog to fail")
-	}
-	configuration.Security.SyslogTLS = true
-	if err := configuration.Validate(); err == nil {
-		t.Fatal("expected production TLS syslog without a client CA to fail")
-	}
-	configuration.Security.SyslogClientCAFile = "ca.pem"
-	if err := configuration.Validate(); err != nil {
-		t.Fatalf("production security configuration rejected: %v", err)
-	}
-}
-
 func TestValidateRejectsInvalidAllowedOrigin(t *testing.T) {
 	configuration := defaultConfig()
 	configuration.Database.URL = "postgres://test"
 	configuration.HTTP.AllowedOrigins = []string{"https://operator.example.test/path"}
 	if err := configuration.Validate(); err == nil {
 		t.Fatal("expected invalid allowed origin to fail")
+	}
+}
+
+func TestValidateProductionRequiresVerifiedDatabaseTransport(t *testing.T) {
+	cases := []struct {
+		name, url string
+		wantErr   bool
+	}{
+		{"missing sslmode", "postgres://u:p@db.internal/tracepilot", true},
+		{"disable", "postgres://u:p@db.internal/tracepilot?sslmode=disable", true},
+		{"prefer", "postgres://u:p@db.internal/tracepilot?sslmode=prefer", true},
+		{"keyword dsn", "host=db.internal sslmode=disable", true},
+		{"require", "postgres://u:p@db.internal/tracepilot?sslmode=require", false},
+		{"verify-full", "postgresql://u:p@db.internal/tracepilot?sslmode=verify-full", false},
+		{"unix socket", "postgres://u:p@/tracepilot?host=/var/run/postgresql", false},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			configuration := defaultConfig()
+			configuration.Production = true
+			configuration.Database.URL = testCase.url
+			configuration.Auth.BootstrapAPIKey = "production-bootstrap-key-000000000000000000000000000000"
+			configuration.TLS.CertificateFile = "certificate.pem"
+			configuration.TLS.PrivateKeyFile = "private-key.pem"
+			if err := configuration.Validate(); (err != nil) != testCase.wantErr {
+				t.Fatalf("Validate() error = %v, wantErr %t", err, testCase.wantErr)
+			}
+		})
+	}
+}
+
+func TestValidateRejectsInvalidConcurrentRequestLimit(t *testing.T) {
+	for _, limit := range []int{0, -1, maxIngestionConcurrentRequests + 1} {
+		configuration := defaultConfig()
+		configuration.Database.URL = "postgres://test"
+		configuration.Ingestion.MaxConcurrentRequests = limit
+		if err := configuration.Validate(); err == nil {
+			t.Fatalf("expected max_concurrent_requests=%d to fail", limit)
+		}
 	}
 }

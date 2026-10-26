@@ -124,7 +124,7 @@ func TestManagementTLSConfigurationUsesModernMinimum(t *testing.T) {
 	}
 }
 
-func TestBackendServesSecurityConsole(t *testing.T) {
+func TestBackendServesOperatorConsole(t *testing.T) {
 	httpServer := newTestServer(func(context.Context) error { return nil })
 	responseRecorder := httptest.NewRecorder()
 	httpRequest := httptest.NewRequest(http.MethodGet, "/", nil)

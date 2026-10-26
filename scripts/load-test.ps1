@@ -27,26 +27,12 @@ if ($HealthUrl -ne "") {
     catch { throw "readiness check failed at $HealthUrl`: $($_.Exception.Message)" }
 }
 
-$records = @()
-for ($index = 0; $index -lt $RecordsPerRequest; $index++) {
-    $records += @{
-        timeUnixNano = ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() * 1000000).ToString()
-        body = @{ stringValue = "tracepilot-load-$index" }
-        severityText = "INFO"
-    }
-}
-$body = @{
-    resourceLogs = @(@{
-        resource = @{ attributes = @(@{ key = "service.name"; value = @{ stringValue = "tracepilot-load" } }) }
-        scopeLogs = @(@{ logRecords = $records })
-    })
-} | ConvertTo-Json -Depth 12 -Compress
-
 $headers = @{ "Content-Type" = "application/json" }
 if ($ApiKey -ne "") { $headers["X-API-Key"] = $ApiKey }
 $uri = "$($BaseUrl.TrimEnd('/'))/v1/logs"
 $durationMode = $DurationMinutes -gt 0
 $startedAt = [DateTimeOffset]::UtcNow
+$runId = [Guid]::NewGuid().ToString("N")
 $deadline = if ($durationMode) { [DateTime]::UtcNow.AddMinutes($DurationMinutes) } else { [DateTime]::MinValue }
 
 # Windows PowerShell has no runspace for a raw Task delegate. Start-Job keeps
@@ -56,16 +42,39 @@ for ($worker = 0; $worker -lt $Concurrency; $worker++) {
     $workerRequests = if ($durationMode) { 0 } else { [Math]::Floor($Requests / $Concurrency) }
     if (-not $durationMode -and $worker -lt ($Requests % $Concurrency)) { $workerRequests++ }
     if (-not $durationMode -and $workerRequests -eq 0) { continue }
-    $jobs += Start-Job -ArgumentList $uri, $headers, $body, $workerRequests, $durationMode, $deadline -ScriptBlock {
-        param($requestUri, $requestHeaders, $requestBody, $count, $runUntilDeadline, $until)
+    $jobs += Start-Job -ArgumentList $uri, $headers, $RecordsPerRequest, $workerRequests, $durationMode, $deadline, $runId, $worker -ScriptBlock {
+        param($requestUri, $requestHeaders, $recordCount, $count, $runUntilDeadline, $until, $runIdentity, $workerId)
+        $ErrorActionPreference = "Stop"
         $request = 0
         while (($runUntilDeadline -and [DateTime]::UtcNow -lt $until) -or (-not $runUntilDeadline -and $request -lt $count)) {
+            $timestamp = ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() * 1000000).ToString()
+            $records = @(for ($index = 0; $index -lt $recordCount; $index++) {
+                @{
+                    timeUnixNano = $timestamp
+                    body = @{ stringValue = "tracepilot-load-$runIdentity-$workerId-$request-$index" }
+                    severityText = "INFO"
+                }
+            })
+            $requestBody = @{
+                resourceLogs = @(@{
+                    resource = @{ attributes = @(@{ key = "service.name"; value = @{ stringValue = "tracepilot-load" } }) }
+                    scopeLogs = @(@{ logRecords = $records })
+                })
+            } | ConvertTo-Json -Depth 12 -Compress
             $started = [Diagnostics.Stopwatch]::StartNew()
             $failure = $null
+            $accepted = 0
+            $rejected = 0
             try {
                 $response = Invoke-WebRequest -UseBasicParsing -Method Post -Uri $requestUri -Headers $requestHeaders -Body $requestBody -TimeoutSec 30
                 if ($response.StatusCode -lt 200 -or $response.StatusCode -ge 300) {
                     $failure = "HTTP $($response.StatusCode)"
+                } else {
+                    $payload = $response.Content | ConvertFrom-Json
+                    $rejected = [long]$payload.partialSuccess.rejectedLogRecords
+                    if ($rejected -lt 0 -or $rejected -gt $recordCount) { throw "Invalid OTLP rejected record count" }
+                    $accepted = $recordCount - $rejected
+                    if ($rejected -gt 0) { $failure = "OTLP partially rejected $rejected records" }
                 }
             } catch {
                 $failure = $_.Exception.Message
@@ -74,6 +83,8 @@ for ($worker = 0; $worker -lt $Concurrency; $worker++) {
             [pscustomobject]@{
                 latency_ms = $started.Elapsed.TotalMilliseconds
                 failure = $failure
+                accepted = $accepted
+                rejected = $rejected
             }
             $request++
         }
@@ -82,7 +93,8 @@ for ($worker = 0; $worker -lt $Concurrency; $worker++) {
 
 try {
     if ($jobs.Count -gt 0) { Wait-Job -Job $jobs | Out-Null }
-    $results = @(Receive-Job -Job $jobs)
+    $results = @(Receive-Job -Job $jobs -ErrorAction Stop)
+    if (@($jobs | Where-Object { $_.State -ne 'Completed' }).Count -gt 0) { throw "Load worker failed" }
 } finally {
     if ($jobs.Count -gt 0) { Remove-Job -Job $jobs -Force -ErrorAction SilentlyContinue }
 }
@@ -96,12 +108,15 @@ $percentile = {
 }
 
 $failureRate = if ($results.Count -eq 0) { 100 } else { 100 * $failures.Count / $results.Count }
+if (-not $durationMode -and $results.Count -ne $Requests) { throw "Expected $Requests responses, got $($results.Count)" }
 $summary = [pscustomobject]@{
     mode = if ($durationMode) { "soak" } else { "requests" }
     started_at = $startedAt.ToString("o")
     duration_minutes = $DurationMinutes
     requests = $results.Count
     records = $results.Count * $RecordsPerRequest
+    accepted_records = [long](($results | Measure-Object -Property accepted -Sum).Sum)
+    rejected_records = [long](($results | Measure-Object -Property rejected -Sum).Sum)
     concurrency = $Concurrency
     failures = $failures.Count
     failure_rate_percent = [Math]::Round($failureRate, 3)

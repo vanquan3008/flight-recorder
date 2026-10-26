@@ -2,6 +2,14 @@ package telemetry
 
 import "time"
 
+type MetricExemplar struct {
+	OccurredAt time.Time      `json:"occurred_at"`
+	Value      float64        `json:"value"`
+	TraceID    string         `json:"trace_id,omitempty"`
+	SpanID     string         `json:"span_id,omitempty"`
+	Attributes map[string]any `json:"attributes,omitempty"`
+}
+
 // MetricType identifies the OTLP instrument shape stored in a data point.
 type MetricType string
 
@@ -30,6 +38,8 @@ type MetricDataPoint struct {
 	ServiceName    string
 	ServiceVersion string
 	OccurredAt     time.Time
+	StartedAt      time.Time
+	Flags          uint32
 
 	// Gauge / Sum
 	Value       *float64
@@ -47,4 +57,6 @@ type MetricDataPoint struct {
 	ResourceAttributes map[string]any
 	ScopeName          string
 	ScopeVersion       string
+	ScopeAttributes    map[string]any
+	Exemplars          []MetricExemplar
 }

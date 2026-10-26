@@ -4,13 +4,13 @@ import (
 	"context"
 	"time"
 
+	"github.com/vanquan3008/tracepilot/internal/application/replay"
 	"github.com/vanquan3008/tracepilot/internal/auth"
+	"github.com/vanquan3008/tracepilot/internal/domain/analysis"
 	"github.com/vanquan3008/tracepilot/internal/domain/incident"
 	notificationdomain "github.com/vanquan3008/tracepilot/internal/domain/notification"
 	replaydomain "github.com/vanquan3008/tracepilot/internal/domain/replay"
-	"github.com/vanquan3008/tracepilot/internal/domain/security"
 	"github.com/vanquan3008/tracepilot/internal/query"
-	"github.com/vanquan3008/tracepilot/internal/replay"
 )
 
 // Backend is the HTTP adapter's port. PostgreSQL implements it, but transport
@@ -22,7 +22,6 @@ import (
 type Backend interface {
 	AuthBackend
 	TelemetryBackend
-	SecurityBackend
 	IncidentBackend
 	ReplayBackend
 	APIKeyBackend
@@ -30,7 +29,7 @@ type Backend interface {
 
 // WebhookBackend is optional at the transport boundary so deployments can run
 // without outbound notifications while keeping the rest of the API available.
-// PostgreSQL implements it when migration 13 is installed.
+// PostgreSQL implements it once the schema migrations are applied.
 type WebhookBackend interface {
 	ListWebhooks(context.Context, string, notificationdomain.WebhookFilter) ([]notificationdomain.Webhook, error)
 	GetWebhook(context.Context, string, string) (notificationdomain.Webhook, error)
@@ -39,6 +38,19 @@ type WebhookBackend interface {
 	DeleteWebhook(context.Context, string, string) (bool, error)
 	RotateWebhookSecret(context.Context, string, string) (string, error)
 	ListWebhookDeliveries(context.Context, string, notificationdomain.DeliveryFilter) ([]notificationdomain.Delivery, error)
+}
+
+// AnalysisBackend is optional so lightweight transport fakes and deployments
+// can expose the core API without pretending RCA data exists.
+type AnalysisBackend interface {
+	ListTopology(context.Context, string, analysis.Filter) (analysis.Topology, error)
+	ListMetricPoints(context.Context, string, analysis.Filter) ([]analysis.MetricPoint, error)
+	TelemetryQuality(context.Context, string, analysis.Filter) (analysis.Quality, error)
+	GetIncidentAnalysis(context.Context, string, string, string) (analysis.IncidentAnalysis, error)
+}
+
+type PerformanceBackend interface {
+	RequestPerformance(context.Context, string, query.PerformanceFilter) (query.RequestPerformance, error)
 }
 
 // AuthBackend authenticates inbound API key tokens.
@@ -54,19 +66,6 @@ type TelemetryBackend interface {
 	GetLog(context.Context, string, string, string) (query.LogRecord, error)
 	ListServices(context.Context, string, string, time.Time, time.Time) ([]query.ServiceSummary, error)
 	ListServiceDependencies(context.Context, string, string, string) ([]query.ServiceDependency, error)
-}
-
-// SecurityBackend covers security events, sources, detection rules, and detections.
-type SecurityBackend interface {
-	ListSecurityEvents(context.Context, string, security.Filter) ([]security.Event, error)
-	GetSecurityEvent(context.Context, string, string, string) (security.Event, error)
-	ListSecuritySources(context.Context, string, string, int) ([]security.Source, error)
-	ListSecurityRules(context.Context, string) ([]security.Rule, error)
-	CreateSecurityRule(context.Context, string, string, security.Rule) (security.Rule, error)
-	UpdateSecurityRule(context.Context, string, string, string, security.Rule) (security.Rule, error)
-	DeleteSecurityRule(context.Context, string, string, string) (bool, error)
-	ListSecurityRuleAudits(context.Context, string, string, int) ([]security.RuleAudit, error)
-	ListSecurityDetections(context.Context, string, string, int, time.Time, string) ([]security.Detection, error)
 }
 
 // IncidentBackend covers incident lifecycle and timeline queries.
