@@ -24,6 +24,7 @@ type Registry struct {
 	otlpRequests       *prometheus.CounterVec
 	otlpDuration       *prometheus.HistogramVec
 	retentionDeleted   prometheus.Counter
+	retentionByGroup   *prometheus.CounterVec
 	retentionBacklog   prometheus.Gauge
 	retentionErrors    prometheus.Counter
 	retentionDuration  prometheus.Histogram
@@ -117,6 +118,11 @@ func New(version, commit, buildTime string) *Registry {
 		Name:      "retention_deleted_events_total",
 		Help:      "Events deleted by retention cleanup.",
 	})
+	retentionByGroup := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "tracepilot",
+		Name:      "retention_deleted_records_total",
+		Help:      "Records deleted by retention cleanup, by data group.",
+	}, []string{"group"})
 	retentionBacklog := prometheus.NewGauge(prometheus.GaugeOpts{
 		Namespace: "tracepilot",
 		Name:      "retention_backlog_events",
@@ -148,7 +154,7 @@ func New(version, commit, buildTime string) *Registry {
 		Help:      "TracePilot build and runtime information.",
 	}, []string{"version", "commit", "build_time", "go_version"})
 
-	prometheusRegistry.MustRegister(httpRequests, httpDuration, databaseReady, ingestedRecords, rejectedRecords, ingestionQueue, ingestionBytes, ingestionInflight, ingestionShutdowns, batchDuration, storageErrors, ingestionRetries, admissionTimeouts, otlpRequests, otlpDuration, retentionDeleted, retentionBacklog, retentionErrors, retentionDuration, detectionRuns, detectionDuration, webhookAttempts, buildInfo)
+	prometheusRegistry.MustRegister(httpRequests, httpDuration, databaseReady, ingestedRecords, rejectedRecords, ingestionQueue, ingestionBytes, ingestionInflight, ingestionShutdowns, batchDuration, storageErrors, ingestionRetries, admissionTimeouts, otlpRequests, otlpDuration, retentionDeleted, retentionByGroup, retentionBacklog, retentionErrors, retentionDuration, detectionRuns, detectionDuration, webhookAttempts, buildInfo)
 	buildInfo.WithLabelValues(version, commit, buildTime, runtime.Version()).Set(1)
 
 	return &Registry{
@@ -169,6 +175,7 @@ func New(version, commit, buildTime string) *Registry {
 		otlpRequests:       otlpRequests,
 		otlpDuration:       otlpDuration,
 		retentionDeleted:   retentionDeleted,
+		retentionByGroup:   retentionByGroup,
 		retentionBacklog:   retentionBacklog,
 		retentionErrors:    retentionErrors,
 		retentionDuration:  retentionDuration,

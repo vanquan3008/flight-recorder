@@ -86,6 +86,14 @@ func (registry *Registry) ObserveRetention(duration time.Duration, deleted int64
 	}
 }
 
+// ObserveRetentionGroup counts records one cleanup removed from a data group:
+// telemetry, metrics, incidents, audit or deliveries.
+func (registry *Registry) ObserveRetentionGroup(group string, deleted int64) {
+	if deleted > 0 {
+		registry.retentionByGroup.WithLabelValues(group).Add(float64(deleted))
+	}
+}
+
 func (registry *Registry) ObserveIncidentDetection(duration time.Duration, count int, failed bool) {
 	registry.detectionDuration.Observe(duration.Seconds())
 	if failed {
