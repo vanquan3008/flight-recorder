@@ -61,7 +61,7 @@ type AuthBackend interface {
 // TelemetryBackend covers traces, spans, logs, and service topology.
 type TelemetryBackend interface {
 	ListTraces(context.Context, string, query.TraceFilter) ([]query.TraceSummary, error)
-	GetTrace(context.Context, string, string, string) ([]query.SpanRecord, error)
+	GetTrace(context.Context, string, string, string, query.SpanPage) ([]query.SpanRecord, bool, error)
 	ListLogs(context.Context, string, query.LogFilter) ([]query.LogRecord, error)
 	GetLog(context.Context, string, string, string) (query.LogRecord, error)
 	ListServices(context.Context, string, string, time.Time, time.Time) ([]query.ServiceSummary, error)

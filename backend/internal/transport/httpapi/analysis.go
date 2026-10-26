@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/vanquan3008/tracepilot/internal/auth"
 	"github.com/vanquan3008/tracepilot/internal/domain/analysis"
 )
 
@@ -46,84 +47,65 @@ func parseAnalysisFilter(request *http.Request) (analysis.Filter, error) {
 	return analysis.Filter{EnvironmentID: "", Service: strings.TrimSpace(values.Get("service")), Metric: strings.TrimSpace(values.Get("metric")), From: from, To: to, Limit: limit}, nil
 }
 
-func (server *Server) listTopology(responseWriter http.ResponseWriter, request *http.Request) {
-	principal, ok := server.authenticateRead(responseWriter, request)
-	if !ok {
-		return
-	}
+// analysisRequest resolves the analysis backend and the request's filter,
+// scoped to this server's environment, answering the error itself when either
+// is unavailable.
+func (server *Server) analysisRequest(responseWriter http.ResponseWriter, request *http.Request) (AnalysisBackend, analysis.Filter, bool) {
 	backend, ok := server.analysisBackend(responseWriter)
 	if !ok {
-		return
+		return nil, analysis.Filter{}, false
 	}
 	filter, err := parseAnalysisFilter(request)
 	if err != nil {
-		writeAPIError(responseWriter, http.StatusBadRequest, "INVALID_QUERY", err.Error())
-		return
+		writeInvalidQuery(responseWriter, err)
+		return nil, analysis.Filter{}, false
 	}
 	filter.EnvironmentID = server.environmentID
+	return backend, filter, true
+}
+
+func (server *Server) listTopology(responseWriter http.ResponseWriter, request *http.Request, principal auth.Principal) {
+	backend, filter, ok := server.analysisRequest(responseWriter, request)
+	if !ok {
+		return
+	}
 	topology, err := backend.ListTopology(request.Context(), principal.ProjectID, filter)
 	if err != nil {
-		server.logger.Error("list topology", "error", err)
-		writeAPIError(responseWriter, http.StatusInternalServerError, "INTERNAL_ERROR", "internal server error")
+		server.writeInternalError(responseWriter, "list topology", err)
 		return
 	}
 	writeJSONValue(responseWriter, http.StatusOK, topology)
 }
 
-func (server *Server) listMetricPoints(responseWriter http.ResponseWriter, request *http.Request) {
-	principal, ok := server.authenticateRead(responseWriter, request)
+func (server *Server) listMetricPoints(responseWriter http.ResponseWriter, request *http.Request, principal auth.Principal) {
+	backend, filter, ok := server.analysisRequest(responseWriter, request)
 	if !ok {
 		return
 	}
-	backend, ok := server.analysisBackend(responseWriter)
-	if !ok {
-		return
-	}
-	filter, err := parseAnalysisFilter(request)
-	if err != nil {
-		writeAPIError(responseWriter, http.StatusBadRequest, "INVALID_QUERY", err.Error())
-		return
-	}
-	filter.EnvironmentID = server.environmentID
 	points, err := backend.ListMetricPoints(request.Context(), principal.ProjectID, filter)
 	if err != nil {
-		server.logger.Error("list metric points", "error", err)
-		writeAPIError(responseWriter, http.StatusInternalServerError, "INTERNAL_ERROR", "internal server error")
+		server.writeInternalError(responseWriter, "list metric points", err)
 		return
 	}
 	writeJSONValue(responseWriter, http.StatusOK, map[string]any{"data": points})
 }
 
-func (server *Server) telemetryQuality(responseWriter http.ResponseWriter, request *http.Request) {
-	principal, ok := server.authenticateRead(responseWriter, request)
+func (server *Server) telemetryQuality(responseWriter http.ResponseWriter, request *http.Request, principal auth.Principal) {
+	backend, filter, ok := server.analysisRequest(responseWriter, request)
 	if !ok {
 		return
 	}
-	backend, ok := server.analysisBackend(responseWriter)
-	if !ok {
-		return
-	}
-	filter, err := parseAnalysisFilter(request)
-	if err != nil {
-		writeAPIError(responseWriter, http.StatusBadRequest, "INVALID_QUERY", err.Error())
-		return
-	}
-	filter.EnvironmentID = server.environmentID
 	quality, err := backend.TelemetryQuality(request.Context(), principal.ProjectID, filter)
 	if err != nil {
-		server.logger.Error("telemetry quality", "error", err)
-		writeAPIError(responseWriter, http.StatusInternalServerError, "INTERNAL_ERROR", "internal server error")
+		server.writeInternalError(responseWriter, "telemetry quality", err)
 		return
 	}
 	writeJSONValue(responseWriter, http.StatusOK, quality)
 }
 
-func (server *Server) getIncidentAnalysis(responseWriter http.ResponseWriter, request *http.Request) {
-	principal, ok := server.authenticateRead(responseWriter, request)
-	if !ok {
-		return
-	}
-	if !validUUID(request.PathValue("incidentID")) {
+func (server *Server) getIncidentAnalysis(responseWriter http.ResponseWriter, request *http.Request, principal auth.Principal) {
+	incidentID := request.PathValue("incidentID")
+	if !validUUID(incidentID) {
 		writeAPIError(responseWriter, http.StatusBadRequest, "INVALID_ID", "incident ID must be a UUID")
 		return
 	}
@@ -131,14 +113,13 @@ func (server *Server) getIncidentAnalysis(responseWriter http.ResponseWriter, re
 	if !ok {
 		return
 	}
-	result, err := backend.GetIncidentAnalysis(request.Context(), principal.ProjectID, server.environmentID, request.PathValue("incidentID"))
+	result, err := backend.GetIncidentAnalysis(request.Context(), principal.ProjectID, server.environmentID, incidentID)
 	if err != nil {
-		server.logger.Error("get incident analysis", "error", err)
-		writeAPIError(responseWriter, http.StatusInternalServerError, "INTERNAL_ERROR", "internal server error")
+		server.writeInternalError(responseWriter, "get incident analysis", err)
 		return
 	}
 	if result.IncidentID == "" {
-		writeAPIError(responseWriter, http.StatusNotFound, "NOT_FOUND", "incident not found")
+		writeNotFound(responseWriter, "incident")
 		return
 	}
 	writeJSONValue(responseWriter, http.StatusOK, result)

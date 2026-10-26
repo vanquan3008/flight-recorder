@@ -43,11 +43,19 @@ func TestOpenAPIUsesHandlerSuccessStatusCodes(t *testing.T) {
 	assertStatus("/api/v1/webhooks/{webhookID}/rotate", "post", "200")
 	assertStatus("/api/v1/traces/{traceID}", "get", "200")
 
+	// A trace is read in pages so one request never loads a whole large trace.
 	parameters := paths["/api/v1/traces/{traceID}"].(map[string]any)["get"].(map[string]any)["parameters"].([]map[string]any)
+	advertised := map[string]bool{}
 	for _, parameter := range parameters {
-		if parameter["name"] == "limit" || parameter["name"] == "cursor" {
-			t.Fatalf("getTrace should not advertise pagination parameter %q", parameter["name"])
+		if parameter["in"] == "query" {
+			advertised[parameter["name"].(string)] = true
+			if parameter["name"] == "limit" && parameter["schema"].(map[string]any)["maximum"] != maxTraceSpansPerPage {
+				t.Fatalf("getTrace limit maximum = %v, want %d", parameter["schema"].(map[string]any)["maximum"], maxTraceSpansPerPage)
+			}
 		}
+	}
+	if !advertised["limit"] || !advertised["cursor"] || len(advertised) != 2 {
+		t.Fatalf("getTrace query parameters = %v, want limit and cursor", advertised)
 	}
 }
 

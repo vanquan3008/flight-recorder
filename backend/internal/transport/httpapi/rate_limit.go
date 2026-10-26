@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"math"
-	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -78,7 +77,7 @@ func (server *Server) withRateLimit(nextHandler http.Handler) http.Handler {
 			nextHandler.ServeHTTP(responseWriter, request)
 			return
 		}
-		key := class + ":" + clientAddress(request)
+		key := class + ":" + server.clientAddress(request)
 		allowed, retryAfter := server.rateLimiter.allow(key, limit, time.Now())
 		if !allowed {
 			seconds := int(math.Ceil(retryAfter.Seconds()))
@@ -104,14 +103,4 @@ func (server *Server) rateLimitFor(request *http.Request) (int, string) {
 		return server.rateLimitAuthRequests, "auth"
 	}
 	return server.rateLimitRequests, "query"
-}
-
-func clientAddress(request *http.Request) string {
-	if host, _, splitError := net.SplitHostPort(request.RemoteAddr); splitError == nil {
-		return host
-	}
-	if strings.TrimSpace(request.RemoteAddr) == "" {
-		return "unknown"
-	}
-	return request.RemoteAddr
 }
