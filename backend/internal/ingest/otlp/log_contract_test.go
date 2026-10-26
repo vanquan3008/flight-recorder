@@ -93,3 +93,25 @@ func BenchmarkSensitiveAttributeKey(b *testing.B) {
 		}
 	}
 }
+
+func TestLogsWithNULTextAreRejectedIndividually(t *testing.T) {
+	normalizer := newNormalizer(testIngestionConfig())
+	stringBody := func(text string) *commonpb.AnyValue {
+		return &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: text}}
+	}
+	at := uint64(time.Date(2026, 10, 24, 8, 0, 0, 0, time.UTC).UnixNano())
+	records := []*logspb.LogRecord{
+		{TimeUnixNano: at, Body: stringBody("clean")},
+		{TimeUnixNano: at + 1, Body: stringBody("bad\x00body")},
+		{TimeUnixNano: at + 2, Attributes: []*commonpb.KeyValue{stringKeyValue("note", "bad\x00value")}},
+		{TimeUnixNano: at + 3, Attributes: []*commonpb.KeyValue{stringKeyValue("bad\x00key", "value")}},
+		{TimeUnixNano: at + 4, SeverityText: "ERR\x00R"},
+	}
+	events, rejected := normalizer.logs([]*logspb.ResourceLogs{{
+		Resource:  &resourcepb.Resource{Attributes: []*commonpb.KeyValue{stringKeyValue("service.name", "worker")}},
+		ScopeLogs: []*logspb.ScopeLogs{{LogRecords: records}},
+	}})
+	if len(events) != 1 || rejected != 4 {
+		t.Fatalf("kept %d and rejected %d records, want 1 and 4", len(events), rejected)
+	}
+}

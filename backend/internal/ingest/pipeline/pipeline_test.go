@@ -28,7 +28,7 @@ func TestSubmitAcknowledgesOnlyAfterStoreCompletes(t *testing.T) {
 		err       error
 	}, 1)
 	go func() {
-		persisted, submitError := ingestionPipeline.Submit(context.Background(), []telemetry.Event{{ID: "event"}})
+		persisted, _, submitError := ingestionPipeline.Submit(context.Background(), []telemetry.Event{{ID: "event"}})
 		result <- struct {
 			persisted int
 			err       error
@@ -68,13 +68,13 @@ func TestSubmitRejectsWhenQueueStaysFull(t *testing.T) {
 
 	firstResult := make(chan error, 1)
 	go func() {
-		_, submitError := ingestionPipeline.Submit(context.Background(), []telemetry.Event{{ID: "first"}})
+		_, _, submitError := ingestionPipeline.Submit(context.Background(), []telemetry.Event{{ID: "first"}})
 		firstResult <- submitError
 	}()
 	<-storeStarted
 	secondResult := make(chan error, 1)
 	go func() {
-		_, submitError := ingestionPipeline.Submit(context.Background(), []telemetry.Event{{ID: "second"}})
+		_, _, submitError := ingestionPipeline.Submit(context.Background(), []telemetry.Event{{ID: "second"}})
 		secondResult <- submitError
 	}()
 	queueDeadline := time.Now().Add(time.Second)
@@ -84,7 +84,7 @@ func TestSubmitRejectsWhenQueueStaysFull(t *testing.T) {
 	if len(ingestionPipeline.queue) != 1 {
 		t.Fatal("second event did not fill the queue")
 	}
-	if persisted, submitError := ingestionPipeline.Submit(context.Background(), []telemetry.Event{{ID: "third"}}); persisted != 0 || !errors.Is(submitError, ErrUnavailable) {
+	if persisted, _, submitError := ingestionPipeline.Submit(context.Background(), []telemetry.Event{{ID: "third"}}); persisted != 0 || !errors.Is(submitError, ErrUnavailable) {
 		t.Fatalf("full queue result = (%d, %v)", persisted, submitError)
 	}
 	close(releaseStore)
@@ -117,7 +117,7 @@ func TestStartAfterShutdownDoesNotReopenPipeline(t *testing.T) {
 	if ingestionPipeline.Ready() {
 		t.Fatal("pipeline reopened after shutdown")
 	}
-	if persisted, submitError := ingestionPipeline.Submit(context.Background(), []telemetry.Event{{ID: "event"}}); persisted != 0 || !errors.Is(submitError, ErrUnavailable) {
+	if persisted, _, submitError := ingestionPipeline.Submit(context.Background(), []telemetry.Event{{ID: "event"}}); persisted != 0 || !errors.Is(submitError, ErrUnavailable) {
 		t.Fatalf("submit after shutdown = (%d, %v)", persisted, submitError)
 	}
 }
@@ -133,7 +133,7 @@ func TestSubmitRecoversAfterTemporaryStoreOutage(t *testing.T) {
 	}, metrics.New("test", "test", "test"))
 	ingestionPipeline.Start()
 
-	persisted, submitError := ingestionPipeline.Submit(context.Background(), []telemetry.Event{{ID: "event"}})
+	persisted, _, submitError := ingestionPipeline.Submit(context.Background(), []telemetry.Event{{ID: "event"}})
 	if submitError != nil || persisted != 1 {
 		t.Fatalf("submit result = (%d, %v)", persisted, submitError)
 	}
@@ -165,12 +165,12 @@ func TestShutdownDrainsQueuedWork(t *testing.T) {
 	first := make(chan error, 1)
 	second := make(chan error, 1)
 	go func() {
-		_, err := ingestionPipeline.Submit(context.Background(), []telemetry.Event{{ID: "first"}})
+		_, _, err := ingestionPipeline.Submit(context.Background(), []telemetry.Event{{ID: "first"}})
 		first <- err
 	}()
 	<-storeStarted
 	go func() {
-		_, err := ingestionPipeline.Submit(context.Background(), []telemetry.Event{{ID: "second"}})
+		_, _, err := ingestionPipeline.Submit(context.Background(), []telemetry.Event{{ID: "second"}})
 		second <- err
 	}()
 	deadline := time.Now().Add(time.Second)
@@ -219,7 +219,7 @@ func BenchmarkSubmitBatch(b *testing.B) {
 	b.ResetTimer()
 	b.RunParallel(func(parallel *testing.PB) {
 		for parallel.Next() {
-			if persisted, submitError := ingestionPipeline.Submit(context.Background(), events); submitError != nil || persisted != len(events) {
+			if persisted, _, submitError := ingestionPipeline.Submit(context.Background(), events); submitError != nil || persisted != len(events) {
 				b.Errorf("submit = (%d, %v)", persisted, submitError)
 				return
 			}

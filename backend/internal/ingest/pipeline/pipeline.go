@@ -99,9 +99,11 @@ func (pipeline *Pipeline) Ready() bool {
 
 // Submit waits until accepted events have committed. This is the Phase 2
 // durability boundary: returning success never means "only queued in memory".
-func (pipeline *Pipeline) Submit(ctx context.Context, events []telemetry.Event) (int, error) {
+// It reports committed events, events storage rejected as invalid (retrying
+// them cannot help), and an error for temporary failures that must be retried.
+func (pipeline *Pipeline) Submit(ctx context.Context, events []telemetry.Event) (persisted, rejected int, err error) {
 	if len(events) == 0 {
-		return 0, nil
+		return 0, 0, nil
 	}
 	admissionContext, cancelAdmission := context.WithTimeout(ctx, pipeline.enqueueTimeout)
 	defer cancelAdmission()
@@ -113,7 +115,7 @@ func (pipeline *Pipeline) Submit(ctx context.Context, events []telemetry.Event) 
 	pipeline.submitMutex.RLock()
 	if !pipeline.accepting {
 		pipeline.submitMutex.RUnlock()
-		return 0, ErrUnavailable
+		return 0, 0, ErrUnavailable
 	}
 	for _, event := range events {
 		eventBytes := estimateBytes(event)
@@ -148,22 +150,24 @@ func (pipeline *Pipeline) Submit(ctx context.Context, events []telemetry.Event) 
 	return pipeline.waitForAcks(ctx, ack, accepted, nil)
 }
 
-func (pipeline *Pipeline) waitForAcks(ctx context.Context, ack <-chan error, accepted int, admissionError error) (int, error) {
-	persisted := 0
-	resultError := admissionError
+func (pipeline *Pipeline) waitForAcks(ctx context.Context, ack <-chan error, accepted int, admissionError error) (persisted, rejected int, err error) {
+	err = admissionError
 	for range accepted {
 		select {
 		case persistError := <-ack:
-			if persistError == nil {
+			switch {
+			case persistError == nil:
 				persisted++
-			} else {
-				resultError = errors.Join(resultError, persistError)
+			case errors.Is(persistError, telemetry.ErrInvalidEvent):
+				rejected++
+			default:
+				err = errors.Join(err, persistError)
 			}
 		case <-ctx.Done():
-			return persisted, errors.Join(resultError, ctx.Err())
+			return persisted, rejected, errors.Join(err, ctx.Err())
 		}
 	}
-	return persisted, resultError
+	return persisted, rejected, err
 }
 
 func (pipeline *Pipeline) Shutdown(ctx context.Context) error {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"math/rand/v2"
 	"sync"
 	"time"
@@ -66,7 +67,26 @@ func (pipeline *Pipeline) worker(ctx context.Context) {
 	}
 }
 
+// persist stores a batch and acknowledges every item in it. Batches mix events
+// from many requests, so when storage rejects event content the batch is split
+// until the invalid events are isolated; the rest still commit.
 func (pipeline *Pipeline) persist(ctx context.Context, batch []item) {
+	storeError := pipeline.storeWithRetry(ctx, batch)
+	if errors.Is(storeError, telemetry.ErrInvalidEvent) && len(batch) > 1 {
+		middle := len(batch) / 2
+		pipeline.persist(ctx, batch[:middle])
+		pipeline.persist(ctx, batch[middle:])
+		return
+	}
+	for _, queued := range batch {
+		pipeline.releaseBytes(queued.bytes)
+		queued.ack <- storeError
+	}
+}
+
+// storeWithRetry retries temporary failures only; invalid content fails the
+// same way on every attempt.
+func (pipeline *Pipeline) storeWithRetry(ctx context.Context, batch []item) error {
 	events := make([]telemetry.Event, len(batch))
 	for index := range batch {
 		events[index] = batch[index].event
@@ -78,7 +98,7 @@ func (pipeline *Pipeline) persist(ctx context.Context, batch []item) {
 		batchContext, cancelBatch := context.WithTimeout(ctx, pipeline.batchTimeout)
 		storeError = pipeline.store(batchContext, events)
 		cancelBatch()
-		if storeError == nil || ctx.Err() != nil {
+		if storeError == nil || errors.Is(storeError, telemetry.ErrInvalidEvent) || ctx.Err() != nil {
 			break
 		}
 		pipeline.observeRetry()
@@ -95,10 +115,7 @@ func (pipeline *Pipeline) persist(ctx context.Context, batch []item) {
 		}
 	}
 	pipeline.observeBatch(time.Since(startedAt), storeError != nil)
-	for _, queued := range batch {
-		pipeline.releaseBytes(queued.bytes)
-		queued.ack <- storeError
-	}
+	return storeError
 }
 
 func retryBackoff(attempt int) time.Duration {

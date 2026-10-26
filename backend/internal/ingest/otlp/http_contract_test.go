@@ -19,6 +19,7 @@ import (
 	collectortracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -142,11 +143,17 @@ func TestOTLPJSONRejectsInvalidKnownFields(t *testing.T) {
 	}
 }
 
-type eventCollector struct{ events []telemetry.Event }
+// eventCollector stores every event except the trailing `invalid` ones, which
+// it reports as rejected by storage.
+type eventCollector struct {
+	events  []telemetry.Event
+	invalid int
+}
 
-func (collector *eventCollector) Submit(_ context.Context, events []telemetry.Event) (int, error) {
-	collector.events = append(collector.events, events...)
-	return len(events), nil
+func (collector *eventCollector) Submit(_ context.Context, events []telemetry.Event) (int, int, error) {
+	invalid := min(collector.invalid, len(events))
+	collector.events = append(collector.events, events[:len(events)-invalid]...)
+	return len(events) - invalid, invalid, nil
 }
 
 func TestOTLPHTTPJSONLogKeepsCorrelation(t *testing.T) {
@@ -193,5 +200,69 @@ func TestOTLPRejectsRequestsBeyondConcurrencyLimitBeforeReadingBody(t *testing.T
 		t.Fatal("slot was not released")
 	} else {
 		again()
+	}
+}
+
+func TestOTLPStorageRejectionIsPartialSuccessNotRetry(t *testing.T) {
+	collector := &eventCollector{invalid: 1}
+	configuration := testIngestionConfig()
+	configuration.MaxRequestBytes = 1 << 20
+	server := NewServer(config.Config{Ingestion: configuration}, NewReceiver(configuration, collector, nil, metrics.New("test", "test", "test"), nil))
+	payload := `{"resourceLogs":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"worker"}}]},"scopeLogs":[{"logRecords":[{"timeUnixNano":"1791507600123456789","body":{"stringValue":"kept"}},{"timeUnixNano":"1791507600123456790","body":{"stringValue":"rejected"}}]}]}]}`
+	request := httptest.NewRequest(http.MethodPost, "/v1/logs", strings.NewReader(payload))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	server.httpServer.Handler.ServeHTTP(response, request)
+
+	var body collectorlogspb.ExportLogsServiceResponse
+	if response.Code != http.StatusOK || protojson.Unmarshal(response.Body.Bytes(), &body) != nil {
+		t.Fatalf("status=%d body=%s; invalid records must not trigger a retry", response.Code, response.Body.String())
+	}
+	if body.GetPartialSuccess().GetRejectedLogRecords() != 1 || len(collector.events) != 1 {
+		t.Fatalf("partial success = %+v, stored %d", body.GetPartialSuccess(), len(collector.events))
+	}
+}
+
+// metricsStub answers SubmitMetrics with a fixed outcome.
+type metricsStub struct {
+	persisted, rejected int
+	err                 error
+}
+
+func (stub metricsStub) SubmitMetrics(context.Context, []telemetry.MetricDataPoint) (int, int, error) {
+	return stub.persisted, stub.rejected, stub.err
+}
+
+func TestOTLPMetricsAreAcknowledgedOnlyForStoredPoints(t *testing.T) {
+	payload := `{"resourceMetrics":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"api"}}]},"scopeMetrics":[{"metrics":[{"name":"requests","gauge":{"dataPoints":[{"timeUnixNano":"1791507600123456789","asDouble":1}]}}]}]}]}`
+	for _, test := range []struct {
+		name           string
+		stub           metricsStub
+		status         int
+		rejectedPoints int64
+	}{
+		{"stored", metricsStub{persisted: 1}, http.StatusOK, 0},
+		{"storage outage is retryable", metricsStub{err: errors.New("database unavailable")}, http.StatusServiceUnavailable, 0},
+		{"unstorable point is not retried", metricsStub{rejected: 1}, http.StatusOK, 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			configuration := testIngestionConfig()
+			configuration.MaxRequestBytes = 1 << 20
+			server := NewServer(config.Config{Ingestion: configuration}, NewReceiver(configuration, &eventCollector{}, test.stub, metrics.New("test", "test", "test"), nil))
+			request := httptest.NewRequest(http.MethodPost, "/v1/metrics", strings.NewReader(payload))
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			server.httpServer.Handler.ServeHTTP(response, request)
+			if response.Code != test.status {
+				t.Fatalf("status = %d, want %d; body=%s", response.Code, test.status, response.Body.String())
+			}
+			if test.status != http.StatusOK {
+				return
+			}
+			var body collectormetricspb.ExportMetricsServiceResponse
+			if err := protojson.Unmarshal(response.Body.Bytes(), &body); err != nil || body.GetPartialSuccess().GetRejectedDataPoints() != test.rejectedPoints {
+				t.Fatalf("partial success = %+v (%v), want %d rejected", body.GetPartialSuccess(), err, test.rejectedPoints)
+			}
+		})
 	}
 }
