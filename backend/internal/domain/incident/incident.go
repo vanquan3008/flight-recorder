@@ -1,10 +1,7 @@
 package incident
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
-	"fmt"
 	"strings"
 	"time"
 
@@ -113,12 +110,6 @@ func Candidate(event telemetry.Event) bool {
 	}
 	severity := strings.ToUpper(event.Severity)
 	return strings.Contains(severity, "ERROR") || strings.Contains(severity, "FATAL")
-}
-
-func Fingerprint(event telemetry.Event) string {
-	identity := strings.Join([]string{event.ServiceName, event.Operation, event.ErrorType, event.ErrorMessage, fmt.Sprintf("%d", event.HTTPStatus)}, "\x00")
-	digest := sha256.Sum256([]byte(identity))
-	return hex.EncodeToString(digest[:])
 }
 
 func Title(event telemetry.Event) string {

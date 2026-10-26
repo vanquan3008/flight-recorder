@@ -20,6 +20,16 @@ type TraceFilter struct {
 	Limit         int
 }
 
+// SpanPage selects one page of a trace's spans, oldest first. After* identify
+// the last span of the previous page; zero values start from the beginning.
+// MaxBytes ends a page early once the spans' serialized JSON passes it.
+type SpanPage struct {
+	Limit          int
+	MaxBytes       int64
+	AfterStartedAt time.Time
+	AfterEventID   string
+}
+
 type TraceSummary struct {
 	TraceID       string    `json:"trace_id"`
 	StartedAt     time.Time `json:"started_at"`

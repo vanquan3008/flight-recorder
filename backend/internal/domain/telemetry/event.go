@@ -8,6 +8,11 @@ import (
 	"time"
 )
 
+// ErrInvalidEvent marks events that storage rejected because of their content.
+// Retrying the same event cannot succeed, so it is reported to the client as a
+// rejected record instead of a temporary failure.
+var ErrInvalidEvent = errors.New("telemetry event cannot be stored")
+
 type EventType string
 
 type Signal string
