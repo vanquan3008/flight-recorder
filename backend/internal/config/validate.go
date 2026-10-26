@@ -51,6 +51,12 @@ func (configuration Config) validateHTTP() error {
 	if configuration.HTTP.ManagementMaxBodyBytes <= 0 {
 		return errors.New("http.management_max_body_bytes must be positive")
 	}
+	if configuration.HTTP.MaxConcurrentQueries <= 0 {
+		return errors.New("http.max_concurrent_queries must be positive")
+	}
+	if configuration.HTTP.RequestTimeout <= 0 || configuration.HTTP.RequestTimeout >= configuration.HTTP.WriteTimeout {
+		return errors.New("http.request_timeout must be positive and shorter than http.write_timeout")
+	}
 	if configuration.HTTP.RateLimitRequests <= 0 {
 		return errors.New("http.rate_limit_requests must be positive")
 	}
@@ -62,6 +68,11 @@ func (configuration Config) validateHTTP() error {
 	}
 	if configuration.HTTP.RateLimitWindow <= 0 {
 		return errors.New("http.rate_limit_window must be positive")
+	}
+	for _, proxy := range configuration.HTTP.TrustedProxies {
+		if _, err := ParseProxyPrefix(proxy); err != nil {
+			return fmt.Errorf("http.trusted_proxies contains invalid entry %q: use a CIDR such as 10.0.0.0/8 or a single address", proxy)
+		}
 	}
 	for _, origin := range configuration.HTTP.AllowedOrigins {
 		parsed, err := url.ParseRequestURI(origin)

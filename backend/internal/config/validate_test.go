@@ -100,3 +100,17 @@ func TestValidateRejectsInvalidConcurrentRequestLimit(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateTrustedProxies(t *testing.T) {
+	for entry, valid := range map[string]bool{
+		"10.0.0.0/8": true, "192.0.2.1": true, "fd00::/8": true, " 172.16.0.0/12 ": true,
+		"": false, "not-an-ip": false, "10.0.0.0/33": false, "*": false,
+	} {
+		configuration := defaultConfig()
+		configuration.Database.URL = "postgres://test"
+		configuration.HTTP.TrustedProxies = []string{entry}
+		if err := configuration.Validate(); (err == nil) != valid {
+			t.Fatalf("trusted proxy %q: valid=%t, error=%v", entry, valid, err)
+		}
+	}
+}

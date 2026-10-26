@@ -79,8 +79,13 @@ func (configuration Config) validateReplayLimits() error {
 }
 
 func (configuration Config) validateRetentionLimits() error {
-	if configuration.Retention.MaxAge < 0 {
-		return errors.New("retention.max_age must not be negative")
+	for name, age := range map[string]time.Duration{
+		"max_age": configuration.Retention.MaxAge, "incident_max_age": configuration.Retention.IncidentMaxAge,
+		"audit_max_age": configuration.Retention.AuditMaxAge, "delivery_max_age": configuration.Retention.DeliveryMaxAge,
+	} {
+		if age < 0 {
+			return fmt.Errorf("retention.%s must not be negative", name)
+		}
 	}
 	if configuration.Retention.CheckInterval <= 0 {
 		return errors.New("retention.check_interval must be positive")

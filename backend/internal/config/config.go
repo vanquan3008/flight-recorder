@@ -67,8 +67,17 @@ type IngestionConfig struct {
 }
 
 type HTTPConfig struct {
-	Address                 string        `yaml:"address"`
-	AllowedOrigins          []string      `yaml:"allowed_origins"`
+	Address        string   `yaml:"address"`
+	AllowedOrigins []string `yaml:"allowed_origins"`
+	TrustedProxies []string `yaml:"trusted_proxies"`
+	// MaxConcurrentQueries bounds the management API requests running at once.
+	// They share the database pool with ingestion and the background workers, so
+	// the cap keeps a burst of heavy reads from taking every connection.
+	MaxConcurrentQueries int `yaml:"max_concurrent_queries"`
+	// RequestTimeout cancels a management API request, and the database work
+	// behind it, after this long. Keep it below WriteTimeout so the client gets
+	// an answer instead of a closed connection.
+	RequestTimeout          time.Duration `yaml:"request_timeout"`
 	ReadHeaderTimeout       time.Duration `yaml:"read_header_timeout"`
 	ReadTimeout             time.Duration `yaml:"read_timeout"`
 	WriteTimeout            time.Duration `yaml:"write_timeout"`
@@ -101,10 +110,17 @@ type TLSConfig struct {
 	PrivateKeyFile  string `yaml:"private_key_file"`
 }
 
+// RetentionConfig sets how long each group of data is kept; zero keeps the
+// group forever. MaxAge covers raw telemetry (events, spans, logs, metric
+// points). Incidents expire with their evidence, occurrences, status history
+// and replay results, and only once resolved or ignored.
 type RetentionConfig struct {
-	MaxAge        time.Duration `yaml:"max_age"`
-	CheckInterval time.Duration `yaml:"check_interval"`
-	BatchSize     int           `yaml:"batch_size"`
+	MaxAge         time.Duration `yaml:"max_age"`
+	IncidentMaxAge time.Duration `yaml:"incident_max_age"`
+	AuditMaxAge    time.Duration `yaml:"audit_max_age"`
+	DeliveryMaxAge time.Duration `yaml:"delivery_max_age"`
+	CheckInterval  time.Duration `yaml:"check_interval"`
+	BatchSize      int           `yaml:"batch_size"`
 }
 
 type ReplayConfig struct {

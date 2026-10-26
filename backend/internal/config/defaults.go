@@ -16,6 +16,8 @@ func defaultConfig() Config {
 			IdleTimeout:             60 * time.Second,
 			MaxHeaderBytes:          1 << 20,
 			ManagementMaxBodyBytes:  1 << 20,
+			MaxConcurrentQueries:    4,
+			RequestTimeout:          20 * time.Second,
 			RateLimitRequests:       120,
 			RateLimitWindow:         time.Minute,
 			RateLimitAuthRequests:   20,
@@ -59,8 +61,12 @@ func defaultConfig() Config {
 			MaxConcurrent:    2,
 		},
 		Retention: RetentionConfig{
-			CheckInterval: time.Hour,
-			BatchSize:     10_000,
+			MaxAge:         7 * 24 * time.Hour,
+			IncidentMaxAge: 90 * 24 * time.Hour,
+			AuditMaxAge:    180 * 24 * time.Hour,
+			DeliveryMaxAge: 30 * 24 * time.Hour,
+			CheckInterval:  time.Hour,
+			BatchSize:      10_000,
 		},
 		Notifications: NotificationsConfig{
 			PollInterval:   5 * time.Second,

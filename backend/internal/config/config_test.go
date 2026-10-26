@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -12,6 +13,9 @@ var configEnvironment = []string{
 	"TRACEPILOT_CONFIG_FILE",
 	"TRACEPILOT_HTTP_ADDRESS",
 	"TRACEPILOT_HTTP_ALLOWED_ORIGINS",
+	"TRACEPILOT_HTTP_TRUSTED_PROXIES",
+	"TRACEPILOT_HTTP_MAX_CONCURRENT_QUERIES",
+	"TRACEPILOT_HTTP_REQUEST_TIMEOUT",
 	"TRACEPILOT_HTTP_READ_HEADER_TIMEOUT",
 	"TRACEPILOT_HTTP_READ_TIMEOUT",
 	"TRACEPILOT_HTTP_WRITE_TIMEOUT",
@@ -57,6 +61,9 @@ var configEnvironment = []string{
 	"TRACEPILOT_TLS_CERTIFICATE_FILE",
 	"TRACEPILOT_TLS_PRIVATE_KEY_FILE",
 	"TRACEPILOT_RETENTION_MAX_AGE",
+	"TRACEPILOT_RETENTION_INCIDENT_MAX_AGE",
+	"TRACEPILOT_RETENTION_AUDIT_MAX_AGE",
+	"TRACEPILOT_RETENTION_DELIVERY_MAX_AGE",
 	"TRACEPILOT_RETENTION_CHECK_INTERVAL",
 	"TRACEPILOT_RETENTION_BATCH_SIZE",
 	"TRACEPILOT_REPLAY_ENABLED",
@@ -207,6 +214,31 @@ func TestLoadAllowsDisabledRetention(t *testing.T) {
 	}
 }
 
+func TestRetentionDefaultsKeepTelemetryShorterThanHistory(t *testing.T) {
+	clearConfigEnvironment(t)
+	t.Setenv("TRACEPILOT_DATABASE_URL", "postgres://test")
+	configuration, loadError := Load("")
+	if loadError != nil {
+		t.Fatal(loadError)
+	}
+	day := 24 * time.Hour
+	got := configuration.Retention
+	if got.MaxAge != 7*day || got.IncidentMaxAge != 90*day || got.AuditMaxAge != 180*day || got.DeliveryMaxAge != 30*day {
+		t.Fatalf("retention defaults = %+v", got)
+	}
+}
+
+func TestRetentionRejectsNegativeAges(t *testing.T) {
+	for _, name := range []string{"MAX_AGE", "INCIDENT_MAX_AGE", "AUDIT_MAX_AGE", "DELIVERY_MAX_AGE"} {
+		clearConfigEnvironment(t)
+		t.Setenv("TRACEPILOT_DATABASE_URL", "postgres://test")
+		t.Setenv("TRACEPILOT_RETENTION_"+name, "-1h")
+		if _, loadError := Load(""); loadError == nil {
+			t.Fatalf("negative %s was accepted", name)
+		}
+	}
+}
+
 func clearConfigEnvironment(t *testing.T) {
 	t.Helper()
 	for _, name := range configEnvironment {
@@ -221,5 +253,55 @@ func clearConfigEnvironment(t *testing.T) {
 			}
 			_ = os.Unsetenv(name)
 		})
+	}
+}
+
+func TestEmptyTrustedProxiesFromTheEnvironmentTemplateTrustsNoOne(t *testing.T) {
+	clearConfigEnvironment(t)
+	t.Setenv("TRACEPILOT_DATABASE_URL", "postgres://test")
+	t.Setenv("TRACEPILOT_HTTP_TRUSTED_PROXIES", "")
+	configuration, loadError := Load("")
+	if loadError != nil {
+		t.Fatalf(".env.example ships an empty value and must load: %v", loadError)
+	}
+	if len(configuration.HTTP.TrustedProxyPrefixes()) != 0 {
+		t.Fatalf("trusted proxies = %v, want none", configuration.HTTP.TrustedProxies)
+	}
+}
+
+func TestTrustedProxiesAreReadFromTheEnvironment(t *testing.T) {
+	clearConfigEnvironment(t)
+	t.Setenv("TRACEPILOT_DATABASE_URL", "postgres://test")
+	t.Setenv("TRACEPILOT_HTTP_TRUSTED_PROXIES", "10.0.0.0/8, 192.0.2.7")
+	configuration, loadError := Load("")
+	if loadError != nil {
+		t.Fatal(loadError)
+	}
+	if got := configuration.HTTP.TrustedProxyPrefixes(); len(got) != 2 || got[0].String() != "10.0.0.0/8" || got[1].String() != "192.0.2.7/32" {
+		t.Fatalf("trusted proxies = %v", got)
+	}
+}
+
+func TestAPIQueryLimitsHaveSafeDefaultsAndRejectBadValues(t *testing.T) {
+	clearConfigEnvironment(t)
+	t.Setenv("TRACEPILOT_DATABASE_URL", "postgres://test")
+	configuration, loadError := Load("")
+	if loadError != nil {
+		t.Fatal(loadError)
+	}
+	if configuration.HTTP.MaxConcurrentQueries != 4 || configuration.HTTP.RequestTimeout != 20*time.Second || configuration.HTTP.RequestTimeout >= configuration.HTTP.WriteTimeout {
+		t.Fatalf("defaults = %d slots, %s timeout, %s write timeout", configuration.HTTP.MaxConcurrentQueries, configuration.HTTP.RequestTimeout, configuration.HTTP.WriteTimeout)
+	}
+	for name, value := range map[string]string{
+		"TRACEPILOT_HTTP_MAX_CONCURRENT_QUERIES": "0",
+		"TRACEPILOT_HTTP_REQUEST_TIMEOUT":        "0s",
+		"TRACEPILOT_HTTP_REQUEST_TIMEOUT ":       "45s", // longer than write_timeout: the client would see a closed connection
+	} {
+		clearConfigEnvironment(t)
+		t.Setenv("TRACEPILOT_DATABASE_URL", "postgres://test")
+		t.Setenv(strings.TrimSpace(name), value)
+		if _, loadError := Load(""); loadError == nil {
+			t.Fatalf("%s=%s was accepted", name, value)
+		}
 	}
 }
