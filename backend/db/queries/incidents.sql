@@ -91,9 +91,21 @@ FOR UPDATE;
 UPDATE incidents SET status = @status, updated_at = @changed_at
 WHERE project_id = @project_id AND environment_id = @environment_id AND id = @id;
 
+-- actor_key_id is NULL for changes made by the system, such as a reopen.
 -- name: InsertIncidentStatusChange :exec
 INSERT INTO incident_status_changes (id, project_id, incident_id, previous_status, status, actor_key_id, changed_at)
-VALUES (@id, @project_id, @incident_id, @previous_status, @status, @actor_key_id, @changed_at);
+VALUES (@id, @project_id, @incident_id, @previous_status, @status, sqlc.narg(actor_key_id), @changed_at);
+
+-- Reopens a RESOLVED incident only when the failure happened after it was
+-- resolved, so late events from before the fix never undo it. IGNORED stays
+-- ignored. Reports how many rows changed so callers record history once.
+-- name: ReopenResolvedIncident :execrows
+UPDATE incidents SET status = 'OPEN', updated_at = @reopened_at
+WHERE incidents.project_id = @project_id AND incidents.id = @id AND incidents.status = 'RESOLVED'
+  AND @latest_event_at::timestamptz > COALESCE((
+      SELECT max(changed_at) FROM incident_status_changes AS change
+      WHERE change.project_id = incidents.project_id AND change.incident_id = incidents.id AND change.status = 'RESOLVED'
+  ), '-infinity'::timestamptz);
 
 -- Serializes writers of one fingerprint until the transaction ends.
 -- name: LockIncidentFingerprint :exec

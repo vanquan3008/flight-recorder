@@ -12,7 +12,7 @@ import (
 // their daily partition live in events_default and are deleted in batches. It
 // returns the number of events removed.
 func (store *PartitionStore) DeleteEventsBefore(ctx context.Context, before time.Time, batchSize int) (int64, error) {
-	dropped, dropError := store.dropExpiredPartitions(ctx, eventPartitionedTables, before)
+	dropped, dropError := store.dropExpiredPartitions(ctx, eventPartitionedTables, before, store.countRows)
 	if dropError != nil {
 		return dropped, fmt.Errorf("drop expired event partitions: %w", dropError)
 	}
@@ -57,7 +57,7 @@ func (store *PartitionStore) CountEventsBefore(ctx context.Context, before time.
 // DeleteMetricsBefore expires metric data points the same way as events: whole
 // daily partitions are dropped and the default partition is trimmed in batches.
 func (store *PartitionStore) DeleteMetricsBefore(ctx context.Context, before time.Time, batchSize int) (int64, error) {
-	dropped, dropError := store.dropExpiredPartitions(ctx, []string{"metric_data_points"}, before)
+	dropped, dropError := store.dropExpiredPartitions(ctx, []string{"metric_data_points"}, before, store.countRows)
 	if dropError != nil {
 		return dropped, fmt.Errorf("drop expired metric partitions: %w", dropError)
 	}

@@ -1,4 +1,4 @@
-import { Navigate, Route, Routes, useParams } from "react-router-dom";
+import { Navigate, Route, Routes } from "react-router-dom";
 import { Welcome } from "./welcome";
 import { FlowPage } from "../features/flow/page";
 import { IncidentPage, OperationsPage } from "../features/operations/page";
@@ -20,13 +20,6 @@ export function AppRoutes({ isAuthenticated }: { isAuthenticated: boolean }) {
     <Route path="/topology" element={<TopologyPage />} />
     <Route path="/incidents" element={<OperationsPage />} />
     <Route path="/incidents/:incidentID" element={<IncidentPage />} />
-    <Route path="/telemetry" element={<Navigate replace to="/incidents" />} />
-    <Route path="/telemetry/:incidentID" element={<LegacyIncidentRedirect />} />
     <Route path="*" element={<Navigate replace to="/overview" />} />
   </Routes>;
-}
-
-function LegacyIncidentRedirect() {
-  const { incidentID = "" } = useParams();
-  return <Navigate replace to={`/incidents/${incidentID}`} />;
 }

@@ -1,8 +1,18 @@
 version: "2"
+# `sqlc vet` enforces these. Run it with `make sqlc-check`.
+rules:
+  - name: mutation-needs-where
+    message: "an UPDATE or DELETE statement needs a WHERE clause"
+    rule: >
+      query.sql.matches("(?i)(^|\\n)\\s*(UPDATE|DELETE)\\s") && !query.sql.contains("WHERE")
 sql:
   - engine: postgresql
-    schema: db/migrations
+    schema:
+      - db/migrations
+      - db/external
     queries: db/queries
+    rules:
+      - mutation-needs-where
     gen:
       go:
         package: sqlc

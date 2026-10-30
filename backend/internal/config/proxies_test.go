@@ -8,7 +8,7 @@ func TestEmptyTrustedProxiesFromTheEnvironmentTemplateTrustsNoOne(t *testing.T) 
 	clearConfigEnvironment(t)
 	t.Setenv("TRACEPILOT_DATABASE_URL", "postgres://test")
 	t.Setenv("TRACEPILOT_HTTP_TRUSTED_PROXIES", "")
-	configuration, loadError := Load("")
+	configuration, loadError := Load()
 	if loadError != nil {
 		t.Fatalf(".env.example ships an empty value and must load: %v", loadError)
 	}
@@ -21,7 +21,7 @@ func TestTrustedProxiesAreReadFromTheEnvironment(t *testing.T) {
 	clearConfigEnvironment(t)
 	t.Setenv("TRACEPILOT_DATABASE_URL", "postgres://test")
 	t.Setenv("TRACEPILOT_HTTP_TRUSTED_PROXIES", "10.0.0.0/8, 192.0.2.7")
-	configuration, loadError := Load("")
+	configuration, loadError := Load()
 	if loadError != nil {
 		t.Fatal(loadError)
 	}

@@ -270,10 +270,11 @@ type InsertIncidentStatusChangeParams struct {
 	IncidentID     string
 	PreviousStatus string
 	Status         string
-	ActorKeyID     string
+	ActorKeyID     *string
 	ChangedAt      time.Time
 }
 
+// actor_key_id is NULL for changes made by the system, such as a reopen.
 func (q *Queries) InsertIncidentStatusChange(ctx context.Context, arg InsertIncidentStatusChangeParams) error {
 	_, err := q.db.Exec(ctx, insertIncidentStatusChange,
 		arg.ID,
@@ -497,7 +498,7 @@ type ListIncidentStatusChangesRow struct {
 	ID             string
 	PreviousStatus string
 	Status         string
-	ActorKeyID     string
+	ActorKeyID     *string
 	ChangedAt      time.Time
 }
 
@@ -686,6 +687,38 @@ func (q *Queries) LockIncidentStatus(ctx context.Context, arg LockIncidentStatus
 	var status string
 	err := row.Scan(&status)
 	return status, err
+}
+
+const reopenResolvedIncident = `-- name: ReopenResolvedIncident :execrows
+UPDATE incidents SET status = 'OPEN', updated_at = $1
+WHERE incidents.project_id = $2 AND incidents.id = $3 AND incidents.status = 'RESOLVED'
+  AND $4::timestamptz > COALESCE((
+      SELECT max(changed_at) FROM incident_status_changes AS change
+      WHERE change.project_id = incidents.project_id AND change.incident_id = incidents.id AND change.status = 'RESOLVED'
+  ), '-infinity'::timestamptz)
+`
+
+type ReopenResolvedIncidentParams struct {
+	ReopenedAt    time.Time
+	ProjectID     string
+	ID            string
+	LatestEventAt time.Time
+}
+
+// Reopens a RESOLVED incident only when the failure happened after it was
+// resolved, so late events from before the fix never undo it. IGNORED stays
+// ignored. Reports how many rows changed so callers record history once.
+func (q *Queries) ReopenResolvedIncident(ctx context.Context, arg ReopenResolvedIncidentParams) (int64, error) {
+	result, err := q.db.Exec(ctx, reopenResolvedIncident,
+		arg.ReopenedAt,
+		arg.ProjectID,
+		arg.ID,
+		arg.LatestEventAt,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const setIncidentStatus = `-- name: SetIncidentStatus :exec

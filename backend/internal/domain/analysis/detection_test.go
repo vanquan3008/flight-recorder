@@ -51,3 +51,33 @@ func TestMetricPolicyRecognizesCompleteTokensAndUnits(t *testing.T) {
 		t.Fatal("zero throughput was excluded")
 	}
 }
+
+func TestServiceDetectionNeedsEnoughCallsForLatencyAndThroughput(t *testing.T) {
+	slow := func(calls int64) (WindowStats, WindowStats) {
+		return WindowStats{Calls: calls, LatencyNanos: float64(400 * time.Millisecond)}, WindowStats{Calls: calls, LatencyNanos: float64(100 * time.Millisecond)}
+	}
+	has := func(signals []Signal, metric string) bool {
+		for _, signal := range signals {
+			if signal.Metric == metric {
+				return true
+			}
+		}
+		return false
+	}
+	current, baseline := slow(minLatencyCalls - 1)
+	if has(EvaluateService(current, baseline, 5*time.Minute, 30*time.Minute), "latency") {
+		t.Fatal("a handful of calls opened a latency incident")
+	}
+	current, baseline = slow(minLatencyCalls)
+	if !has(EvaluateService(current, baseline, 5*time.Minute, 30*time.Minute), "latency") {
+		t.Fatal("a real latency regression with enough calls was missed")
+	}
+	quiet := WindowStats{Calls: minThroughputBaselineCalls - 1}
+	if has(EvaluateService(WindowStats{}, quiet, 5*time.Minute, 30*time.Minute), "throughput") {
+		t.Fatal("a nearly idle service was reported as having lost traffic")
+	}
+	busy := WindowStats{Calls: minThroughputBaselineCalls}
+	if !has(EvaluateService(WindowStats{}, busy, 5*time.Minute, 30*time.Minute), "throughput") {
+		t.Fatal("silence on a busy service was missed")
+	}
+}

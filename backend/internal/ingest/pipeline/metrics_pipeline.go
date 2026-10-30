@@ -12,6 +12,9 @@ import (
 	"golang.org/x/sync/semaphore"
 )
 
+// errOversizedBatch marks a request whose points can never fit the byte budget.
+var errOversizedBatch = errors.New("metrics request exceeds the pipeline byte budget")
+
 // batchStoreTimeout is the maximum time allowed for a single metrics batch write.
 const batchStoreTimeout = 5 * time.Second
 
@@ -27,6 +30,7 @@ type MetricsStoreFunc func(context.Context, []telemetry.MetricDataPoint) error
 type MetricsPipeline struct {
 	queue         chan metricBatch
 	byteBudget    *semaphore.Weighted
+	maxBytes      int64
 	store         MetricsStoreFunc
 	batchSize     int
 	workers       int
@@ -77,6 +81,7 @@ func NewMetricsPipeline(cfg MetricsPipelineConfig, store MetricsStoreFunc) *Metr
 	return &MetricsPipeline{
 		queue:      make(chan metricBatch, cfg.QueueSize),
 		byteBudget: semaphore.NewWeighted(cfg.QueueMaxBytes),
+		maxBytes:   cfg.QueueMaxBytes,
 		store:      store,
 		batchSize:  cfg.BatchSize,
 		workers:    cfg.Workers,
@@ -116,6 +121,10 @@ func (p *MetricsPipeline) SubmitMetrics(ctx context.Context, points []telemetry.
 		return 0, 0, err
 	}
 	batch, admitError := p.admit(points)
+	if errors.Is(admitError, errOversizedBatch) {
+		// No retry can succeed, so report the points as rejected rather than 503.
+		return 0, len(points), nil
+	}
 	if admitError != nil {
 		return 0, 0, admitError
 	}
@@ -150,6 +159,10 @@ func (p *MetricsPipeline) admit(points []telemetry.MetricDataPoint) (metricBatch
 	var bytes int64
 	for _, point := range points {
 		bytes += estimateMetricBytes(point)
+	}
+	if bytes > p.maxBytes {
+		p.queued.Add(-count)
+		return metricBatch{}, errOversizedBatch
 	}
 	if !p.byteBudget.TryAcquire(bytes) {
 		p.queued.Add(-count)
@@ -186,6 +199,10 @@ func (p *MetricsPipeline) reject(count int, reason string, cause error) error {
 	}
 	return cause
 }
+
+// Ready reports whether the pipeline accepts requests: false before Start and
+// once Shutdown has begun.
+func (p *MetricsPipeline) Ready() bool { return p.ready.Load() }
 
 // DroppedTotal returns the cumulative count of data points refused at
 // admission because the queue or byte budget was full.

@@ -26,8 +26,6 @@ func run(args []string) int {
 		return runServer(args[1:])
 	case "migrate":
 		return runMigrations(args[1:])
-	case "mockdata":
-		return runMockData(args[1:])
 	case "version":
 		fmt.Printf("TracePilot %s\ncommit: %s\nbuilt: %s\n", version, commit, buildTime)
 		return 0
@@ -40,5 +38,5 @@ func run(args []string) int {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: tracepilot <serve|migrate|mockdata|healthcheck|version>")
+	fmt.Fprintln(os.Stderr, "usage: tracepilot <serve|migrate|healthcheck|version>")
 }

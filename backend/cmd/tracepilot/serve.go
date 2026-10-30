@@ -26,7 +26,6 @@ import (
 func runServer(arguments []string) int {
 	flags := flag.NewFlagSet("Serve", flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
-	configFile := flags.String("config", "", "Path to a versioned YAML configuration file")
 	if parseError := flags.Parse(arguments); parseError != nil {
 		return 2
 	}
@@ -34,7 +33,7 @@ func runServer(arguments []string) int {
 		fmt.Fprintln(os.Stderr, "serve does not accept positional arguments")
 		return 2
 	}
-	cfg, loadError := config.Load(*configFile)
+	cfg, loadError := config.Load()
 	if loadError != nil {
 		fmt.Fprintf(os.Stderr, "invalid configuration: %v\n", loadError)
 		return 2
@@ -86,7 +85,7 @@ func runServer(arguments []string) int {
 	otlpReceiver := buildOTLPReceiver(cfg, ingestionPipeline, metricsPipeline, selfMetrics, database)
 	otlpServer := ingestotlp.NewServer(cfg, otlpReceiver)
 
-	managementServer := httpapi.New(cfg, logger, buildReadinessCheck(ingestionPipeline, otlpServer, database), selfMetrics, database, replayService)
+	managementServer := httpapi.New(cfg, logger, buildReadinessCheck(database, ingestionPipeline, metricsPipeline, otlpServer), selfMetrics, database, replayService)
 	var webhookService *notification.Service
 	if cfg.Notifications.Enabled {
 		webhookService = notification.NewService(database, logger, notification.Config{

@@ -80,28 +80,6 @@ var configEnvironment = []string{
 	"TRACEPILOT_REPLAY_MAX_CONCURRENT",
 }
 
-func TestLoadYAMLThenEnvironmentOverride(t *testing.T) {
-	clearConfigEnvironment(t)
-	configFile := filepath.Join(t.TempDir(), "tracepilot.yaml")
-	contents := []byte("version: 1\nhttp:\n  address: ':9000'\ndatabase:\n  url: postgres://file\n  max_connections: 8\nlog_level: debug\n")
-	if writeError := os.WriteFile(configFile, contents, 0o600); writeError != nil {
-		t.Fatal(writeError)
-	}
-	t.Setenv("TRACEPILOT_HTTP_ADDRESS", ":9100")
-	t.Setenv("TRACEPILOT_DATABASE_URL", "postgres://environment")
-
-	configuration, loadError := Load(configFile)
-	if loadError != nil {
-		t.Fatal(loadError)
-	}
-	if configuration.HTTP.Address != ":9100" || configuration.Database.URL != "postgres://environment" {
-		t.Fatalf("environment did not override YAML: %+v", configuration)
-	}
-	if configuration.Database.MaxConnections != 8 || configuration.HTTP.ReadTimeout != 15*time.Second {
-		t.Fatalf("YAML/default merge failed: %+v", configuration)
-	}
-}
-
 func TestNotificationsRequireValidEncryptionKeyWhenEnabled(t *testing.T) {
 	configuration := defaultConfig()
 	configuration.Database.URL = "postgres://test"
@@ -122,7 +100,7 @@ func TestLoadRateLimitEnvironmentOverrides(t *testing.T) {
 	t.Setenv("TRACEPILOT_HTTP_RATE_LIMIT_WINDOW", "30s")
 	t.Setenv("TRACEPILOT_HTTP_RATE_LIMIT_AUTH_REQUESTS", "3")
 	t.Setenv("TRACEPILOT_HTTP_RATE_LIMIT_REPLAY_REQUESTS", "2")
-	configuration, loadError := Load("")
+	configuration, loadError := Load()
 	if loadError != nil {
 		t.Fatal(loadError)
 	}
@@ -131,41 +109,19 @@ func TestLoadRateLimitEnvironmentOverrides(t *testing.T) {
 	}
 }
 
-func TestLoadRejectsUnknownYAMLField(t *testing.T) {
-	clearConfigEnvironment(t)
-	configFile := filepath.Join(t.TempDir(), "tracepilot.yaml")
-	if writeError := os.WriteFile(configFile, []byte("version: 1\ndatabase:\n  url: postgres://test\nunknown: true\n"), 0o600); writeError != nil {
-		t.Fatal(writeError)
-	}
-	if _, loadError := Load(configFile); loadError == nil {
-		t.Fatal("expected unknown field to fail")
-	}
-}
-
-func TestLoadRequiresYAMLVersion(t *testing.T) {
-	clearConfigEnvironment(t)
-	configFile := filepath.Join(t.TempDir(), "tracepilot.yaml")
-	if writeError := os.WriteFile(configFile, []byte("database:\n  url: postgres://test\n"), 0o600); writeError != nil {
-		t.Fatal(writeError)
-	}
-	if _, loadError := Load(configFile); loadError == nil {
-		t.Fatal("expected missing configuration version to fail")
-	}
-}
-
 func TestLoadRejectsInvalidConnectionBounds(t *testing.T) {
 	clearConfigEnvironment(t)
 	t.Setenv("TRACEPILOT_DATABASE_URL", "postgres://test")
 	t.Setenv("TRACEPILOT_DATABASE_MAX_CONNECTIONS", "2")
 	t.Setenv("TRACEPILOT_DATABASE_MIN_CONNECTIONS", "3")
-	if _, loadError := Load(""); loadError == nil {
+	if _, loadError := Load(); loadError == nil {
 		t.Fatal("expected invalid connection bounds to fail")
 	}
 }
 
 func TestLoadRequiresDatabaseURL(t *testing.T) {
 	clearConfigEnvironment(t)
-	if _, loadError := Load(""); loadError == nil {
+	if _, loadError := Load(); loadError == nil {
 		t.Fatal("expected missing database URL to fail")
 	}
 }
@@ -186,7 +142,7 @@ func TestLoadReadsRepositoryEnvironmentFile(t *testing.T) {
 	}
 	t.Chdir(backendDirectory)
 
-	configuration, loadError := Load("")
+	configuration, loadError := Load()
 	if loadError != nil {
 		t.Fatal(loadError)
 	}
@@ -205,7 +161,7 @@ func TestLoadAllowsDisabledRetention(t *testing.T) {
 	clearConfigEnvironment(t)
 	t.Setenv("TRACEPILOT_DATABASE_URL", "postgres://test")
 	t.Setenv("TRACEPILOT_RETENTION_MAX_AGE", "0s")
-	configuration, loadError := Load("")
+	configuration, loadError := Load()
 	if loadError != nil {
 		t.Fatal(loadError)
 	}
@@ -217,7 +173,7 @@ func TestLoadAllowsDisabledRetention(t *testing.T) {
 func TestRetentionDefaultsKeepTelemetryShorterThanHistory(t *testing.T) {
 	clearConfigEnvironment(t)
 	t.Setenv("TRACEPILOT_DATABASE_URL", "postgres://test")
-	configuration, loadError := Load("")
+	configuration, loadError := Load()
 	if loadError != nil {
 		t.Fatal(loadError)
 	}
@@ -233,7 +189,7 @@ func TestRetentionRejectsNegativeAges(t *testing.T) {
 		clearConfigEnvironment(t)
 		t.Setenv("TRACEPILOT_DATABASE_URL", "postgres://test")
 		t.Setenv("TRACEPILOT_RETENTION_"+name, "-1h")
-		if _, loadError := Load(""); loadError == nil {
+		if _, loadError := Load(); loadError == nil {
 			t.Fatalf("negative %s was accepted", name)
 		}
 	}
@@ -259,7 +215,7 @@ func clearConfigEnvironment(t *testing.T) {
 func TestAPIQueryLimitsHaveSafeDefaultsAndRejectBadValues(t *testing.T) {
 	clearConfigEnvironment(t)
 	t.Setenv("TRACEPILOT_DATABASE_URL", "postgres://test")
-	configuration, loadError := Load("")
+	configuration, loadError := Load()
 	if loadError != nil {
 		t.Fatal(loadError)
 	}
@@ -274,8 +230,25 @@ func TestAPIQueryLimitsHaveSafeDefaultsAndRejectBadValues(t *testing.T) {
 		clearConfigEnvironment(t)
 		t.Setenv("TRACEPILOT_DATABASE_URL", "postgres://test")
 		t.Setenv(strings.TrimSpace(name), value)
-		if _, loadError := Load(""); loadError == nil {
+		if _, loadError := Load(); loadError == nil {
 			t.Fatalf("%s=%s was accepted", name, value)
 		}
+	}
+}
+
+func TestLoadAppliesDefaultsThenEnvironment(t *testing.T) {
+	clearConfigEnvironment(t)
+	t.Setenv("TRACEPILOT_DATABASE_URL", "postgres://environment")
+	t.Setenv("TRACEPILOT_HTTP_ADDRESS", ":9100")
+	t.Setenv("TRACEPILOT_DATABASE_MAX_CONNECTIONS", "8")
+	configuration, loadError := Load()
+	if loadError != nil {
+		t.Fatal(loadError)
+	}
+	if configuration.HTTP.Address != ":9100" || configuration.Database.MaxConnections != 8 {
+		t.Fatalf("environment was not applied: %+v", configuration)
+	}
+	if configuration.HTTP.ReadTimeout != 15*time.Second {
+		t.Fatalf("a setting left unset must keep its default: %+v", configuration.HTTP)
 	}
 }

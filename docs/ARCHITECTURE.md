@@ -1,8 +1,8 @@
 # Kiến trúc và flow TracePilot
 
 Đối chiếu working tree ngày 13/10/2026. Hướng đã chọn: một ứng dụng Go,
-React embed vào binary và PostgreSQL riêng. Trạng thái kiểm chứng ở
-[REVIEW.md](REVIEW.md); điều kiện triển khai ở [OPERATIONS.md](OPERATIONS.md).
+React là ứng dụng frontend riêng và PostgreSQL riêng. Điều kiện triển khai,
+việc còn lại và trạng thái kiểm chứng ở [OPERATIONS.md](OPERATIONS.md).
 
 ## Source theo trách nhiệm
 
@@ -42,14 +42,13 @@ backend/
     auth/                   Principal, scopes và API key model
     query/                  Contract truy vấn không phụ thuộc PostgreSQL
     observability/metrics/  Prometheus cho chính TracePilot
-    webui/                  Embedded assets và SPA fallback
   db/migrations/            Migration theo version (golang-migrate)
   db/queries/               Toàn bộ SQL của storage, một file mỗi chức năng
 frontend/src/
   app/                      Router, auth, application shell
   features/                 Giao diện theo chức năng
   shared/                   API client, query helper, UI, types dùng chung
-compose.yaml                Compose duy nhất, local PostgreSQL qua profile
+backend/Dockerfile          Image chạy server (PostgreSQL là dịch vụ ngoài)
 .env / .env.example         Config thực / mẫu duy nhất ở root
 ```
 
@@ -59,8 +58,7 @@ PostgreSQL triển khai chúng, cmd nối dependency. Di chuyển package giữ 
 API và schema.
 
 Domain không import application, auth, config, ingest, query, metrics hoặc
-adapter. Application không import config, ingest, storage, HTTP transport hoặc
-webui. Transport và ingest không import storage; storage không import
+adapter. Application không import config, ingest, storage hoặc HTTP transport. Transport và ingest không import storage; storage không import
 application. [Architecture test](../backend/internal/architecture/dependencies_test.go)
 kiểm tra các ranh giới này, kể cả subpackage.
 
@@ -85,8 +83,8 @@ Ngoại lệ được liệt kê trong [storage SQL test](../backend/internal/ar
 kiểm tra `schema_migrations` (bảng của golang-migrate), DDL partition và xóa ở
 default partition (tên bảng không thể là tham số, được quote bằng
 `pgx.Identifier`) và savepoint. Test chặn mọi chuỗi SQL khác trong Go.
-Định danh dependency (database/queue/external) là ba hàm SQL `IMMUTABLE` ở
-migration 000002, dùng chung cho topology và detection; planner inline chúng.
+Định danh dependency (database/queue/external) là ba hàm SQL `IMMUTABLE` trong
+baseline schema, dùng chung cho topology và detection; planner inline chúng.
 
 `GET /traces/{id}` trả span theo trang (tối đa 500 span và 8 MiB mỗi trang, keyset
 theo `started_at, event_id`); `next_cursor` có mặt khi còn span, nên client luôn biết
@@ -112,18 +110,17 @@ deploy đơn giản khi chưa có số đo cần scale riêng ingest/API/worker.
 ## Khởi động
 
 [serve.go](../backend/cmd/tracepilot/serve.go) đọc config, kiểm tra schema đúng
-version 2 và không dirty, mở pool, tạo partition, ingestion scope và bootstrap
+version 1 và không dirty, mở pool, tạo partition, ingestion scope và bootstrap
 key. [wiring.go](../backend/cmd/tracepilot/wiring.go) nối dependency, rồi khởi
 động hai pipeline, management HTTP, OTLP và các background workflow.
 Serve không tự migrate; operator chạy migrate ở bước riêng.
 
-Config ưu tiên: process environment → file .env đầu tiên ở thư mục chạy hoặc
-thư mục cha → YAML → defaults. Config sai làm startup thất bại.
+Config có một luồng duy nhất: defaults → file .env đầu tiên ở thư mục chạy hoặc
+thư mục cha → process environment (ưu tiên cao nhất). Config sai làm startup thất bại.
 Trong repo chỉ dùng .env ở root; go -C backend đọc ../.env khi backend/.env
-không tồn tại. Compose dùng env_file: .env để chuyển toàn bộ giá trị thành
-environment trong container; không mount file secret vào image. Không tạo
-thêm backend/.env hoặc deploy/.env. File YAML vẫn là tùy chọn CLI tương thích,
-không cần để chạy cấu hình chuẩn của repo.
+không tồn tại. Chạy bằng container thì truyền file này qua `docker run --env-file .env`;
+không đóng gói secret vào image. Không tạo
+thêm backend/.env hoặc deploy/.env. Không có file cấu hình YAML hay cờ --config.
 Một server có một ingestion project/environment từ cấu hình. Read API lấy
 project từ principal và environment từ server, không tin scope client gửi lên.
 
@@ -200,9 +197,12 @@ Read analysis lấy evidence và dependency rồi gọi BuildRCA xếp hạng gi
 RCA có evidence nhưng không phải xác suất hoặc kết luận chắc chắn về nguyên nhân.
 Chưa có LLM hoặc tự remediation.
 
-Console gọi REST qua shared/api.ts và React Query. Mỗi feature sở hữu giao diện
-của mình. Vite build vào internal/webui/dist; Go embed để image không cần một
-web server thứ hai.
+Console là một ứng dụng frontend riêng, backend chỉ phục vụ API (`/api/v1`, `/health`,
+`/metrics`, `/openapi.json`). Console gọi REST qua shared/api.ts và React Query. Khi
+chạy dev hoặc preview, Vite proxy `/api` và `/health` về backend nên cùng origin. Khi
+host console tách khỏi API, build với `VITE_API_BASE_URL` trỏ tới backend và thêm origin
+của console vào `TRACEPILOT_HTTP_ALLOWED_ORIGINS`. Header bảo mật (CSP, X-Frame-Options)
+của trang do nơi host console đặt, không còn do backend.
 
 ## Partition, retention và shutdown
 
@@ -223,15 +223,33 @@ tham chiếu có thể đã hết retention. Nhiều replica cùng dọn là an 
 batch idempotent. Retention không giới hạn tổng kích thước DB.
 
 Khi dừng: listeners ngừng nhận và chờ request trong budget, sau đó pipeline
-drain trong budget tiếp theo. Default shutdown_timeout=15s, Compose stop grace=35s.
+drain trong budget tiếp theo. Default shutdown_timeout=15s; đặt thời gian chờ dừng của container (`docker stop -t`) ≥ 35s.
 Tăng grace nếu tăng timeout. Exporter retry khi tiến trình bị kill trước ACK.
 Readiness kiểm tra pipeline, OTLP runtime và DB; liveness kiểm tra tiến trình.
 
 ## Schema hiện hành
 
-Schema gồm 000001_init (baseline) và 000002_dependency_functions (ba hàm
-định danh dependency); CurrentVersion=2. Server từ chối DB khác version, nên
-deploy bản này cần chạy `migrate up` trước. 000002 chỉ thêm hàm, không đổi
-bảng; `migrate down 1` gỡ hàm và giữ nguyên dữ liệu. Baseline đã gộp từ lịch
-sử cũ; không phải đường nâng cấp DB version 15. Không recreate DB có dữ liệu để
-chạy source mới. Nếu có DB cũ, cần data migration hoặc binary tương thích.
+Schema là một migration duy nhất, `000001_init` (CurrentVersion=1), gồm các bảng, ba hàm
+định danh dependency, index và ràng buộc. Server từ chối DB khác version, nên cần
+chạy `migrate up` trước khi khởi động. Các quyết định thiết kế nằm ngay trong file
+SQL dưới dạng comment: `events` cố ý không có index phụ (chỉ được tra theo
+`(project_id, id)`), `spans_window_idx` phục vụ truy vấn cửa sổ gần đây, và
+`incident_status_changes.actor_key_id` cho phép NULL cho thay đổi do hệ thống ghi.
+`migrate down 1` xóa toàn bộ schema; chỉ dùng trên database dùng một lần. Mỗi kết nối pool đặt `statement_timeout`,
+`lock_timeout`, `idle_in_transaction_session_timeout` và `application_name`
+(`storage/postgres/session.go`); migration dùng kết nối riêng nên không bị giới hạn.
+Incident RESOLVED tái phát (occurrence mới hơn lúc resolve, trong cửa sổ dedup 1 giờ)
+được mở lại, ghi lịch sử với actor "system" và phát `incident.opened` kèm
+`reopened: true`; IGNORED không bao giờ tự mở lại và event cũ hơn lúc resolve không
+mở lại.
+
+Baseline này gộp từ lịch sử cũ. Một DB đã tạo bằng bản có version 2 đến 5 có schema
+giống hệt: đặt lại sổ ghi version rồi chạy bình thường, không mất dữ liệu:
+
+```sql
+UPDATE schema_migrations SET version = 1, dirty = false;
+```
+
+DB ở version 1 của bản cũ (trước khi gộp) thiếu hàm dependency, đổi cột actor và các
+index mới, và DB version 15 không nâng cấp tại chỗ được. Không recreate DB có dữ
+liệu; nếu có DB cũ, cần data migration hoặc binary tương thích. Nếu có DB cũ, cần data migration hoặc binary tương thích.

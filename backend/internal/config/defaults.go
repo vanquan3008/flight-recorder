@@ -7,7 +7,6 @@ import (
 
 func defaultConfig() Config {
 	return Config{
-		Version: CurrentVersion,
 		HTTP: HTTPConfig{
 			Address:                 ":8080",
 			ReadHeaderTimeout:       5 * time.Second,
@@ -44,6 +43,9 @@ func defaultConfig() Config {
 			BatchTimeout:           5 * time.Second,
 			FlushInterval:          200 * time.Millisecond,
 			Workers:                2,
+			AuthFailureLimit:       60,
+			AuthFailureWindow:      time.Minute,
+			ScrubFreeText:          true,
 		},
 		Database: DatabaseConfig{
 			MaxConnections:        20,
@@ -53,6 +55,11 @@ func defaultConfig() Config {
 			HealthCheckPeriod:     time.Minute,
 			ReadinessTimeout:      2 * time.Second,
 			MigrationsPath:        "./db/migrations",
+			// Above http.request_timeout (20s) so the API answers 504 first and the
+			// database timeout only catches work nobody is waiting for.
+			StatementTimeout:         30 * time.Second,
+			LockTimeout:              10 * time.Second,
+			IdleInTransactionTimeout: 30 * time.Second,
 		},
 		Replay: ReplayConfig{
 			Timeout:          5 * time.Second,

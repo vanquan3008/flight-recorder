@@ -128,7 +128,7 @@ func (service *Service) dispatch(ctx context.Context, deliveryID string, hook no
 	success := response.StatusCode >= 200 && response.StatusCode < 300
 	if success {
 		service.observe("success")
-		if recordError := service.store.RecordDeliveryAttempt(ctx, deliveryID, hook.ID, projectID, response.StatusCode, "", true); recordError != nil {
+		if recordError := service.recordAttempt(ctx, deliveryID, hook.ID, projectID, response.StatusCode, "", true); recordError != nil {
 			service.logger.Error("record webhook success failed", "delivery_id", deliveryID, "error", recordError)
 		}
 		return
@@ -138,10 +138,23 @@ func (service *Service) dispatch(ctx context.Context, deliveryID string, hook no
 
 func (service *Service) recordFailure(ctx context.Context, deliveryID string, hook notificationdomain.WebhookRecord, projectID string, status int, deliveryError error) {
 	service.observe("failure")
-	if recordError := service.store.RecordDeliveryAttempt(ctx, deliveryID, hook.ID, projectID, status, deliveryError.Error(), false); recordError != nil {
+	if recordError := service.recordAttempt(ctx, deliveryID, hook.ID, projectID, status, deliveryError.Error(), false); recordError != nil {
 		service.logger.Error("record webhook failure failed", "delivery_id", deliveryID, "error", recordError)
 	}
 	service.logger.Warn("webhook delivery failed", "webhook_id", hook.ID, "status", status, "error", deliveryError)
+}
+
+// recordTimeout bounds writing a delivery outcome after shutdown has begun.
+const recordTimeout = 5 * time.Second
+
+// recordAttempt stores the outcome of one delivery. It runs on a context cut
+// loose from ctx: shutdown cancels ctx while a request may already have been
+// delivered, and losing that result would make the lease expire and the same
+// notification be sent again.
+func (service *Service) recordAttempt(ctx context.Context, deliveryID, webhookID, projectID string, status int, lastError string, success bool) error {
+	recordContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), recordTimeout)
+	defer cancel()
+	return service.store.RecordDeliveryAttempt(recordContext, deliveryID, webhookID, projectID, status, lastError, success)
 }
 
 func (service *Service) observe(outcome string) {

@@ -15,3 +15,6 @@ DROP TABLE IF EXISTS events;
 DROP TABLE IF EXISTS services;
 DROP TABLE IF EXISTS environments;
 DROP TABLE IF EXISTS projects;
+DROP FUNCTION IF EXISTS span_dependency_name(jsonb);
+DROP FUNCTION IF EXISTS span_dependency_type(jsonb);
+DROP FUNCTION IF EXISTS span_is_dependency(jsonb, integer);

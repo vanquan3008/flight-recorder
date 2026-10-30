@@ -11,8 +11,7 @@ import (
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 )
 
-// CurrentVersion is the schema version the binary expects; bump it with every new migration.
-const CurrentVersion uint = 2
+const CurrentVersion uint = 1
 
 func EnsureCurrent(databaseURL, migrationsPath string) (runError error) {
 	migrationRunner, openError := open(databaseURL, migrationsPath)

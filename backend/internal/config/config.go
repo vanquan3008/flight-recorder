@@ -1,21 +1,16 @@
 package config
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"time"
 
 	"github.com/joho/godotenv"
-	"go.yaml.in/yaml/v3"
 )
 
 const (
-	CurrentVersion                 = 1
-	maxConfigFileSize              = 1 << 20
 	maxIngestionRecords            = 100_000
 	maxIngestionAttributes         = 1_024
 	maxIngestionAttributeBytes     = 1 << 20
@@ -28,86 +23,100 @@ const (
 )
 
 type Config struct {
-	Version         int                 `yaml:"version" env:"-"`
-	Production      bool                `yaml:"production"`
-	HTTP            HTTPConfig          `yaml:"http"`
-	Ingestion       IngestionConfig     `yaml:"ingestion"`
-	Database        DatabaseConfig      `yaml:"database"`
-	Auth            AuthConfig          `yaml:"auth"`
-	TLS             TLSConfig           `yaml:"tls"`
-	Retention       RetentionConfig     `yaml:"retention"`
-	Replay          ReplayConfig        `yaml:"replay"`
-	Notifications   NotificationsConfig `yaml:"notifications"`
-	ShutdownTimeout time.Duration       `yaml:"shutdown_timeout"`
-	LogLevel        slog.Level          `yaml:"log_level"`
+	Production      bool                `config:"production"`
+	HTTP            HTTPConfig          `config:"http"`
+	Ingestion       IngestionConfig     `config:"ingestion"`
+	Database        DatabaseConfig      `config:"database"`
+	Auth            AuthConfig          `config:"auth"`
+	TLS             TLSConfig           `config:"tls"`
+	Retention       RetentionConfig     `config:"retention"`
+	Replay          ReplayConfig        `config:"replay"`
+	Notifications   NotificationsConfig `config:"notifications"`
+	ShutdownTimeout time.Duration       `config:"shutdown_timeout"`
+	LogLevel        slog.Level          `config:"log_level"`
 }
 
 type IngestionConfig struct {
-	GRPCAddress            string        `yaml:"grpc_address"`
-	HTTPAddress            string        `yaml:"http_address"`
-	ProjectID              string        `yaml:"project_id"`
-	ProjectSlug            string        `yaml:"project_slug"`
-	ProjectName            string        `yaml:"project_name"`
-	EnvironmentID          string        `yaml:"environment_id"`
-	EnvironmentName        string        `yaml:"environment_name"`
-	MaxRequestBytes        int64         `yaml:"max_request_bytes"`
-	MaxRecordsPerRequest   int           `yaml:"max_records_per_request"`
-	MaxConcurrentRequests  int           `yaml:"max_concurrent_requests"`
-	MaxAttributesPerRecord int           `yaml:"max_attributes_per_record"`
-	MaxAttributeValueBytes int           `yaml:"max_attribute_value_bytes"`
-	MaxAttributeDepth      int           `yaml:"max_attribute_depth"`
-	QueueSize              int           `yaml:"queue_size"`
-	QueueMaxBytes          int64         `yaml:"queue_max_bytes"`
-	EnqueueTimeout         time.Duration `yaml:"enqueue_timeout"`
-	BatchSize              int           `yaml:"batch_size"`
-	BatchTimeout           time.Duration `yaml:"batch_timeout"`
-	FlushInterval          time.Duration `yaml:"flush_interval"`
-	Workers                int           `yaml:"workers"`
-	RedactedKeys           []string      `yaml:"redacted_keys"`
+	GRPCAddress            string        `config:"grpc_address"`
+	HTTPAddress            string        `config:"http_address"`
+	ProjectID              string        `config:"project_id"`
+	ProjectSlug            string        `config:"project_slug"`
+	ProjectName            string        `config:"project_name"`
+	EnvironmentID          string        `config:"environment_id"`
+	EnvironmentName        string        `config:"environment_name"`
+	MaxRequestBytes        int64         `config:"max_request_bytes"`
+	MaxRecordsPerRequest   int           `config:"max_records_per_request"`
+	MaxConcurrentRequests  int           `config:"max_concurrent_requests"`
+	MaxAttributesPerRecord int           `config:"max_attributes_per_record"`
+	MaxAttributeValueBytes int           `config:"max_attribute_value_bytes"`
+	MaxAttributeDepth      int           `config:"max_attribute_depth"`
+	QueueSize              int           `config:"queue_size"`
+	QueueMaxBytes          int64         `config:"queue_max_bytes"`
+	EnqueueTimeout         time.Duration `config:"enqueue_timeout"`
+	BatchSize              int           `config:"batch_size"`
+	BatchTimeout           time.Duration `config:"batch_timeout"`
+	FlushInterval          time.Duration `config:"flush_interval"`
+	Workers                int           `config:"workers"`
+	RedactedKeys           []string      `config:"redacted_keys"`
+	// AuthFailureLimit is how many failed authentications one client address may
+	// make per AuthFailureWindow before OTLP answers without a database lookup.
+	// 0 turns the limit off.
+	AuthFailureLimit  int           `config:"auth_failure_limit"`
+	AuthFailureWindow time.Duration `config:"auth_failure_window"`
+	// ScrubFreeText masks credentials inside free text (log bodies, exception
+	// messages, URLs) as well as under sensitive attribute names.
+	ScrubFreeText bool `config:"scrub_free_text"`
 }
 
 type HTTPConfig struct {
-	Address        string   `yaml:"address"`
-	AllowedOrigins []string `yaml:"allowed_origins"`
-	TrustedProxies []string `yaml:"trusted_proxies"`
+	Address        string   `config:"address"`
+	AllowedOrigins []string `config:"allowed_origins"`
+	TrustedProxies []string `config:"trusted_proxies"`
 	// MaxConcurrentQueries bounds the management API requests running at once.
 	// They share the database pool with ingestion and the background workers, so
 	// the cap keeps a burst of heavy reads from taking every connection.
-	MaxConcurrentQueries int `yaml:"max_concurrent_queries"`
+	MaxConcurrentQueries int `config:"max_concurrent_queries"`
 	// RequestTimeout cancels a management API request, and the database work
 	// behind it, after this long. Keep it below WriteTimeout so the client gets
 	// an answer instead of a closed connection.
-	RequestTimeout          time.Duration `yaml:"request_timeout"`
-	ReadHeaderTimeout       time.Duration `yaml:"read_header_timeout"`
-	ReadTimeout             time.Duration `yaml:"read_timeout"`
-	WriteTimeout            time.Duration `yaml:"write_timeout"`
-	IdleTimeout             time.Duration `yaml:"idle_timeout"`
-	MaxHeaderBytes          int           `yaml:"max_header_bytes"`
-	ManagementMaxBodyBytes  int64         `yaml:"management_max_body_bytes"`
-	RateLimitRequests       int           `yaml:"rate_limit_requests"`
-	RateLimitWindow         time.Duration `yaml:"rate_limit_window"`
-	RateLimitAuthRequests   int           `yaml:"rate_limit_auth_requests"`
-	RateLimitReplayRequests int           `yaml:"rate_limit_replay_requests"`
+	RequestTimeout          time.Duration `config:"request_timeout"`
+	ReadHeaderTimeout       time.Duration `config:"read_header_timeout"`
+	ReadTimeout             time.Duration `config:"read_timeout"`
+	WriteTimeout            time.Duration `config:"write_timeout"`
+	IdleTimeout             time.Duration `config:"idle_timeout"`
+	MaxHeaderBytes          int           `config:"max_header_bytes"`
+	ManagementMaxBodyBytes  int64         `config:"management_max_body_bytes"`
+	RateLimitRequests       int           `config:"rate_limit_requests"`
+	RateLimitWindow         time.Duration `config:"rate_limit_window"`
+	RateLimitAuthRequests   int           `config:"rate_limit_auth_requests"`
+	RateLimitReplayRequests int           `config:"rate_limit_replay_requests"`
 }
 
 type DatabaseConfig struct {
-	URL                   string        `yaml:"url"`
-	MaxConnections        int32         `yaml:"max_connections"`
-	MinConnections        int32         `yaml:"min_connections"`
-	MaxConnectionLifetime time.Duration `yaml:"max_connection_lifetime"`
-	MaxConnectionIdleTime time.Duration `yaml:"max_connection_idle_time"`
-	HealthCheckPeriod     time.Duration `yaml:"health_check_period"`
-	ReadinessTimeout      time.Duration `yaml:"readiness_timeout"`
-	MigrationsPath        string        `yaml:"migrations_path" env:"TRACEPILOT_MIGRATIONS_PATH"`
+	URL                   string        `config:"url"`
+	MaxConnections        int32         `config:"max_connections"`
+	MinConnections        int32         `config:"min_connections"`
+	MaxConnectionLifetime time.Duration `config:"max_connection_lifetime"`
+	MaxConnectionIdleTime time.Duration `config:"max_connection_idle_time"`
+	HealthCheckPeriod     time.Duration `config:"health_check_period"`
+	ReadinessTimeout      time.Duration `config:"readiness_timeout"`
+	MigrationsPath        string        `config:"migrations_path" env:"TRACEPILOT_MIGRATIONS_PATH"`
+	// Session limits applied to every pooled connection. They keep one runaway
+	// query, a lock queue or an abandoned transaction from holding a connection
+	// the rest of the service needs. 0 leaves the server default. A URL parameter
+	// of the same name wins. Migrations use their own connection and are not capped.
+	StatementTimeout         time.Duration `config:"statement_timeout"`
+	LockTimeout              time.Duration `config:"lock_timeout"`
+	IdleInTransactionTimeout time.Duration `config:"idle_in_transaction_timeout"`
 }
 
 type AuthConfig struct {
-	BootstrapAPIKey string `yaml:"bootstrap_api_key"`
+	BootstrapAPIKey string `config:"bootstrap_api_key"`
 }
 
 type TLSConfig struct {
-	CertificateFile string `yaml:"certificate_file"`
-	PrivateKeyFile  string `yaml:"private_key_file"`
+	CertificateFile string `config:"certificate_file"`
+	PrivateKeyFile  string `config:"private_key_file"`
 }
 
 // RetentionConfig sets how long each group of data is kept; zero keeps the
@@ -115,47 +124,41 @@ type TLSConfig struct {
 // points). Incidents expire with their evidence, occurrences, status history
 // and replay results, and only once resolved or ignored.
 type RetentionConfig struct {
-	MaxAge         time.Duration `yaml:"max_age"`
-	IncidentMaxAge time.Duration `yaml:"incident_max_age"`
-	AuditMaxAge    time.Duration `yaml:"audit_max_age"`
-	DeliveryMaxAge time.Duration `yaml:"delivery_max_age"`
-	CheckInterval  time.Duration `yaml:"check_interval"`
-	BatchSize      int           `yaml:"batch_size"`
+	MaxAge         time.Duration `config:"max_age"`
+	IncidentMaxAge time.Duration `config:"incident_max_age"`
+	AuditMaxAge    time.Duration `config:"audit_max_age"`
+	DeliveryMaxAge time.Duration `config:"delivery_max_age"`
+	CheckInterval  time.Duration `config:"check_interval"`
+	BatchSize      int           `config:"batch_size"`
 }
 
 type ReplayConfig struct {
-	Enabled          bool          `yaml:"enabled"`
-	AllowedHosts     []string      `yaml:"allowed_hosts"`
-	AllowPrivate     bool          `yaml:"allow_private"`
-	Timeout          time.Duration `yaml:"timeout"`
-	MaxRequestBytes  int64         `yaml:"max_request_bytes"`
-	MaxResponseBytes int64         `yaml:"max_response_bytes"`
-	MaxConcurrent    int           `yaml:"max_concurrent"`
+	Enabled          bool          `config:"enabled"`
+	AllowedHosts     []string      `config:"allowed_hosts"`
+	AllowPrivate     bool          `config:"allow_private"`
+	Timeout          time.Duration `config:"timeout"`
+	MaxRequestBytes  int64         `config:"max_request_bytes"`
+	MaxResponseBytes int64         `config:"max_response_bytes"`
+	MaxConcurrent    int           `config:"max_concurrent"`
 }
 
 type NotificationsConfig struct {
-	Enabled        bool          `yaml:"enabled"`
-	EncryptionKey  string        `yaml:"encryption_key" env:"TRACEPILOT_WEBHOOK_ENCRYPTION_KEY"`
-	PollInterval   time.Duration `yaml:"poll_interval" env:"TRACEPILOT_WEBHOOK_POLL_INTERVAL"`
-	Workers        int           `yaml:"workers" env:"TRACEPILOT_WEBHOOK_WORKERS"`
-	RequestTimeout time.Duration `yaml:"request_timeout" env:"TRACEPILOT_WEBHOOK_REQUEST_TIMEOUT"`
+	Enabled        bool          `config:"enabled"`
+	EncryptionKey  string        `config:"encryption_key" env:"TRACEPILOT_WEBHOOK_ENCRYPTION_KEY"`
+	PollInterval   time.Duration `config:"poll_interval" env:"TRACEPILOT_WEBHOOK_POLL_INTERVAL"`
+	Workers        int           `config:"workers" env:"TRACEPILOT_WEBHOOK_WORKERS"`
+	RequestTimeout time.Duration `config:"request_timeout" env:"TRACEPILOT_WEBHOOK_REQUEST_TIMEOUT"`
 }
 
-func Load(configFile string) (Config, error) {
+// Load builds the configuration from one flow: built-in defaults, then the
+// first .env file found (see readEnvironmentFile), then the process
+// environment, which wins. Every field maps to TRACEPILOT_<SECTION>_<FIELD>.
+func Load() (Config, error) {
 	fileValues, fileError := readEnvironmentFile()
 	if fileError != nil {
 		return Config{}, fileError
 	}
 	configuration := defaultConfig()
-	if configFile == "" {
-		configFile, _ = environmentValue("TRACEPILOT_CONFIG_FILE", fileValues)
-	}
-	if configFile != "" {
-		configuration.Version = 0
-		if decodeError := decodeFile(configFile, &configuration); decodeError != nil {
-			return Config{}, decodeError
-		}
-	}
 	if environmentError := applyEnvironment(&configuration, fileValues); environmentError != nil {
 		return Config{}, environmentError
 	}
@@ -180,31 +183,4 @@ func readEnvironmentFile() (map[string]string, error) {
 		return values, nil
 	}
 	return nil, nil
-}
-
-func decodeFile(configFile string, configuration *Config) error {
-	file, openError := os.Open(configFile)
-	if openError != nil {
-		return fmt.Errorf("open configuration file: %w", openError)
-	}
-	defer file.Close()
-	contents, readError := io.ReadAll(io.LimitReader(file, maxConfigFileSize+1))
-	if readError != nil {
-		return fmt.Errorf("read configuration file: %w", readError)
-	}
-	if len(contents) > maxConfigFileSize {
-		return fmt.Errorf("configuration file exceeds %d bytes", maxConfigFileSize)
-	}
-	decoder := yaml.NewDecoder(bytes.NewReader(contents))
-	decoder.KnownFields(true)
-	if decodeError := decoder.Decode(configuration); decodeError != nil {
-		return fmt.Errorf("decode configuration file: %w", decodeError)
-	}
-	if trailingError := decoder.Decode(&struct{}{}); !errors.Is(trailingError, io.EOF) {
-		if trailingError == nil {
-			return errors.New("configuration file must contain exactly one YAML document")
-		}
-		return fmt.Errorf("decode trailing configuration: %w", trailingError)
-	}
-	return nil
 }

@@ -210,3 +210,38 @@ func TestMetricByteEstimateIncludesHistogramAndMetadata(t *testing.T) {
 		t.Fatalf("histogram estimate = %d, metadata estimate = %d", size, withoutBuckets)
 	}
 }
+
+func TestMetricsPipelineReadyOnlyWhileAcceptingRequests(t *testing.T) {
+	pipeline := NewMetricsPipeline(MetricsPipelineConfig{QueueSize: 1, BatchSize: 1, Workers: 1}, func(context.Context, []telemetry.MetricDataPoint) error { return nil })
+	if pipeline.Ready() {
+		t.Fatal("ready before Start")
+	}
+	pipeline.Start()
+	if !pipeline.Ready() {
+		t.Fatal("not ready after Start")
+	}
+	if err := pipeline.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if pipeline.Ready() {
+		t.Fatal("still ready after Shutdown")
+	}
+}
+
+func TestMetricsRequestThatCanNeverFitIsRejectedNotRetried(t *testing.T) {
+	stored := false
+	pipeline := NewMetricsPipeline(MetricsPipelineConfig{QueueSize: 4, BatchSize: 4, Workers: 1, QueueMaxBytes: 1024}, func(context.Context, []telemetry.MetricDataPoint) error {
+		stored = true
+		return nil
+	})
+	pipeline.Start()
+	defer func() { _ = pipeline.Shutdown(context.Background()) }()
+
+	persisted, rejected, err := pipeline.SubmitMetrics(context.Background(), []telemetry.MetricDataPoint{{MetricName: "requests"}})
+	if err != nil || persisted != 0 || rejected != 1 || stored {
+		t.Fatalf("persisted=%d rejected=%d err=%v stored=%t; a request over the byte budget cannot succeed on retry", persisted, rejected, err, stored)
+	}
+	if pipeline.DroppedTotal() != 0 {
+		t.Fatalf("a rejected request must not count as dropped by backpressure: %d", pipeline.DroppedTotal())
+	}
+}

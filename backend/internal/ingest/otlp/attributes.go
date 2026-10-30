@@ -80,7 +80,7 @@ func (builder *attributeBuilder) value(value *commonpb.AnyValue, depth int) (any
 		if containsNUL(typedValue.StringValue) {
 			return nil, errNULText
 		}
-		return typedValue.StringValue, nil
+		return builder.normalizer.scrub(typedValue.StringValue), nil
 	case *commonpb.AnyValue_BoolValue:
 		return typedValue.BoolValue, nil
 	case *commonpb.AnyValue_IntValue:

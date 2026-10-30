@@ -91,7 +91,7 @@ export function errorGuidance(error: unknown): ErrorGuidance {
         title: "TracePilot isn't responding",
         message: "The service is not reachable right now. Wait a moment and try again. If it keeps happening, contact your administrator.",
         statusText: "502 Bad Gateway",
-        hint: "docker compose up -d",
+        hint: "go run ./backend/cmd/tracepilot serve",
       };
     }
     if (error.status === 503 || error.status === 504) {
@@ -111,7 +111,7 @@ export function errorGuidance(error: unknown): ErrorGuidance {
       title: "No connection to TracePilot",
       message: "Check your network connection and try again. If you're online, the service may be down; contact your administrator.",
       statusText: "Connection refused",
-      hint: "docker compose up -d",
+      hint: "go run ./backend/cmd/tracepilot serve",
     };
   }
   return { kind: "error", title: "We couldn't load this view", message };

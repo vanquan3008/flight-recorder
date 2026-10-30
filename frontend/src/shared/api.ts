@@ -2,6 +2,12 @@ import { useInfiniteQuery } from "@tanstack/react-query";
 import type { QueryKey } from "@tanstack/react-query";
 import type { Page } from "./types";
 
+// Where the backend lives. Empty means the same origin, which is how the Vite dev
+// and preview servers reach it through their proxy. Set VITE_API_BASE_URL when the
+// console is hosted separately from the API (the backend must then list that origin
+// in TRACEPILOT_HTTP_ALLOWED_ORIGINS).
+const apiBase = (import.meta.env.VITE_API_BASE_URL ?? "").replace(/\/$/, "");
+
 export class APIError extends Error {
   constructor(
     readonly status: number,
@@ -20,7 +26,7 @@ export async function api<T>(
   const headers = new Headers(init.headers);
   headers.set("X-API-Key", apiKey);
   if (init.body) headers.set("Content-Type", "application/json");
-  const response = await fetch(path, { ...init, headers });
+  const response = await fetch(apiBase + path, { ...init, headers });
   if (response.status === 204) return undefined as T;
   if (!response.ok) {
     let body: { error?: { code?: string; message?: string } } | undefined;

@@ -43,7 +43,7 @@ func (store *IncidentStore) UpdateIncidentStatus(ctx context.Context, projectID,
 		if insertError := queries.InsertIncidentStatusChange(ctx, sqlcstore.InsertIncidentStatusChangeParams{
 			ID:        telemetry.DeterministicID(changedAt, "incident-status", projectID, incidentID, previous, status, actorKeyID),
 			ProjectID: projectID, IncidentID: incidentID, PreviousStatus: previous, Status: status,
-			ActorKeyID: actorKeyID, ChangedAt: changedAt,
+			ActorKeyID: &actorKeyID, ChangedAt: changedAt,
 		}); insertError != nil {
 			return fmt.Errorf("record incident status change: %w", insertError)
 		}

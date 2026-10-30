@@ -6,6 +6,7 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -126,9 +127,15 @@ func (server *Server) observeHTTPRequest(signal, outcome string, duration time.D
 }
 
 func (server *Server) authorizeHTTP(responseWriter http.ResponseWriter, request *http.Request) string {
-	err := server.receiver.authorize(request.Context(), httpAPIKey(request))
+	err := server.receiver.authorize(request.Context(), httpAPIKey(request), server.receiver.clientAddress(request.RemoteAddr, request.Header.Values("X-Forwarded-For")))
 	if err == nil {
 		return ""
+	}
+	var throttled *throttledError
+	if errors.As(err, &throttled) {
+		responseWriter.Header().Set("Retry-After", strconv.Itoa(retryAfterSeconds(throttled.retryAfter)))
+		server.writeHTTPError(responseWriter, responseEncoding(request), http.StatusTooManyRequests, "too many failed authentication attempts")
+		return "throttled"
 	}
 	if errors.Is(err, auth.ErrUnauthorized) {
 		server.writeHTTPError(responseWriter, responseEncoding(request), http.StatusUnauthorized, "OTLP authentication failed")
@@ -136,6 +143,15 @@ func (server *Server) authorizeHTTP(responseWriter http.ResponseWriter, request 
 	}
 	server.writeHTTPError(responseWriter, responseEncoding(request), http.StatusServiceUnavailable, "OTLP authentication temporarily unavailable")
 	return "unavailable"
+}
+
+// retryAfterSeconds rounds up so a client never retries before the window ends.
+func retryAfterSeconds(wait time.Duration) int {
+	seconds := int((wait + time.Second - 1) / time.Second)
+	if seconds < 1 {
+		return 1
+	}
+	return seconds
 }
 
 // admitHTTP runs after authentication and before the body is read, so an

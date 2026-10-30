@@ -226,3 +226,31 @@ func BenchmarkSubmitBatch(b *testing.B) {
 		}
 	})
 }
+
+func TestSubmitRejectsAnEventThatCanNeverFitInsteadOfFailingTheRequest(t *testing.T) {
+	var stored []string
+	ingestionPipeline := New(Config{QueueSize: 4, QueueMaxBytes: 2048, BatchSize: 4, Workers: 1, EnqueueTimeout: time.Second, BatchTimeout: time.Second, FlushInterval: time.Millisecond}, func(_ context.Context, events []telemetry.Event) error {
+		for _, event := range events {
+			stored = append(stored, event.ID)
+		}
+		return nil
+	}, metrics.New("test", "test", "test"))
+	ingestionPipeline.Start()
+	defer func() {
+		shutdownContext, cancelShutdown := context.WithTimeout(context.Background(), time.Second)
+		defer cancelShutdown()
+		_ = ingestionPipeline.Shutdown(shutdownContext)
+	}()
+
+	huge := telemetry.Event{ID: "huge", ErrorMessage: string(make([]byte, 8192))}
+	persisted, rejected, submitError := ingestionPipeline.Submit(context.Background(), []telemetry.Event{{ID: "before"}, huge, {ID: "after"}})
+	if submitError != nil {
+		t.Fatalf("an oversized event failed the whole request with a retryable error: %v", submitError)
+	}
+	if persisted != 2 || rejected != 1 {
+		t.Fatalf("persisted=%d rejected=%d, want 2 and 1", persisted, rejected)
+	}
+	if len(stored) != 2 {
+		t.Fatalf("stored %v; the other events in the request must still commit", stored)
+	}
+}

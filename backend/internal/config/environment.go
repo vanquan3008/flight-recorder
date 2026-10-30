@@ -32,7 +32,7 @@ func bindEnvironment(value reflect.Value, path []string, fileValues map[string]s
 	for index := 0; index < value.NumField(); index++ {
 		field := value.Field(index)
 		fieldType := valueType.Field(index)
-		name := strings.Split(fieldType.Tag.Get("yaml"), ",")[0]
+		name := strings.Split(fieldType.Tag.Get("config"), ",")[0]
 		if name == "-" {
 			continue
 		}

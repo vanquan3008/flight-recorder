@@ -65,6 +65,7 @@ func open(applicationContext context.Context, configuration config.DatabaseConfi
 	poolConfiguration.MaxConnLifetime = configuration.MaxConnectionLifetime
 	poolConfiguration.MaxConnIdleTime = configuration.MaxConnectionIdleTime
 	poolConfiguration.HealthCheckPeriod = configuration.HealthCheckPeriod
+	applySessionParameters(poolConfiguration.ConnConfig, configuration)
 
 	databasePool, openError := pgxpool.NewWithConfig(applicationContext, poolConfiguration)
 	if openError != nil {
@@ -98,16 +99,12 @@ func (database *Database) Ready(readinessContext context.Context) error {
 		return fmt.Errorf("database ping failed: %w", pingError)
 	}
 
-	// schema_migrations is owned by golang-migrate and is not part of the sqlc
-	// schema, so this is the one query written here.
-	var version uint
-	var dirty bool
-	queryError := database.pool.QueryRow(readinessContext, "SELECT version, dirty FROM schema_migrations LIMIT 1").Scan(&version, &dirty)
+	state, queryError := sqlcstore.New(database.pool).GetSchemaVersion(readinessContext)
 	if queryError != nil {
 		return fmt.Errorf("read schema version: %w", queryError)
 	}
-	if dirty || version != migrations.CurrentVersion {
-		return fmt.Errorf("schema version is %d (dirty=%t), expected %d", version, dirty, migrations.CurrentVersion)
+	if state.Dirty || uint(state.Version) != migrations.CurrentVersion {
+		return fmt.Errorf("schema version is %d (dirty=%t), expected %d", state.Version, state.Dirty, migrations.CurrentVersion)
 	}
 	return nil
 }

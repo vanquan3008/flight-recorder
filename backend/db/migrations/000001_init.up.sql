@@ -1,15 +1,3 @@
--- TracePilot baseline schema. Squashed from the former migrations 000001-000015;
--- security analytics and payload artifact tables were intentionally dropped.
---
--- events, spans, logs and metric_data_points are RANGE-partitioned by day on
--- their event time so retention can DROP whole partitions instead of deleting
--- rows. PostgreSQL requires every unique key on a partitioned table to contain
--- the partition key, so those keys end in the timestamp (event ids already
--- embed it, so a retried record always maps to the same key). Foreign keys
--- *to* these tables are intentionally absent: a referenced partition cannot be
--- dropped. The application creates the daily partitions (see
--- storage/postgres/partitions.go); rows outside them land in the *_default
--- partitions rather than failing the insert.
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
 CREATE TABLE projects (
@@ -258,7 +246,7 @@ CREATE TABLE incident_status_changes (
     incident_id     uuid NOT NULL,
     previous_status text NOT NULL,
     status          text NOT NULL,
-    actor_key_id    uuid NOT NULL,
+    actor_key_id    uuid,  -- NULL when TracePilot made the change itself, such as reopening a recurring incident
     changed_at      timestamptz NOT NULL,
     FOREIGN KEY (project_id, incident_id) REFERENCES incidents(project_id, id) ON DELETE CASCADE,
     FOREIGN KEY (project_id, actor_key_id) REFERENCES api_keys(project_id, id),
@@ -352,15 +340,64 @@ CREATE INDEX incidents_status_idx
     ON incidents (project_id, status, severity, last_seen_at DESC);
 CREATE INDEX incidents_fingerprint_idx
     ON incidents (project_id, environment_id, fingerprint, last_seen_at DESC);
-CREATE INDEX events_trace_idx
-    ON events (project_id, trace_id, occurred_at, id) WHERE trace_id IS NOT NULL;
-CREATE INDEX events_request_idx
-    ON events (project_id, request_id, occurred_at, id) WHERE request_id IS NOT NULL;
-CREATE INDEX events_service_time_idx
-    ON events (project_id, environment_id, service_name, occurred_at DESC, id DESC);
-CREATE INDEX events_log_search_idx
-    ON events (project_id, environment_id, service_name, severity, occurred_at DESC)
-    WHERE event_type = 'LOG';
+-- Dependency identity of a span, shared by topology and detection queries so
+-- both name the same database, queue or external target. Single-statement
+-- IMMUTABLE SQL functions are inlined by the planner, so they cost nothing
+-- per row compared with writing the expressions in each query.
+
+-- A span calls a dependency when it is a database or messaging operation, or
+-- any CLIENT span (kind 3).
+CREATE FUNCTION span_is_dependency(span_attributes jsonb, span_kind integer)
+RETURNS boolean
+LANGUAGE sql IMMUTABLE PARALLEL SAFE
+AS $$
+    SELECT span_attributes ? 'db.system'
+        OR span_attributes ? 'db.system.name'
+        OR span_attributes ? 'messaging.system'
+        OR span_kind = 3
+$$;
+
+CREATE FUNCTION span_dependency_type(span_attributes jsonb)
+RETURNS text
+LANGUAGE sql IMMUTABLE PARALLEL SAFE
+AS $$
+    SELECT CASE
+        WHEN span_attributes ? 'db.system' OR span_attributes ? 'db.system.name' THEN 'database'
+        WHEN span_attributes ? 'messaging.system' THEN 'queue'
+        ELSE 'external'
+    END
+$$;
+
+CREATE FUNCTION span_dependency_name(span_attributes jsonb)
+RETURNS text
+LANGUAGE sql IMMUTABLE PARALLEL SAFE
+AS $$
+    SELECT CASE
+        WHEN span_attributes ? 'db.system' OR span_attributes ? 'db.system.name' THEN
+            COALESCE(
+                NULLIF(span_attributes->>'db.namespace', ''),
+                NULLIF(span_attributes->>'db.name', ''),
+                NULLIF(span_attributes->>'server.address', ''),
+                NULLIF(span_attributes->>'db.system.name', ''),
+                span_attributes->>'db.system')
+        WHEN span_attributes ? 'messaging.system' THEN
+            COALESCE(
+                NULLIF(span_attributes->>'messaging.destination.name', ''),
+                NULLIF(span_attributes->>'messaging.destination', ''),
+                span_attributes->>'messaging.system')
+        ELSE
+            COALESCE(
+                NULLIF(span_attributes->>'peer.service', ''),
+                NULLIF(span_attributes->>'server.address', ''),
+                NULLIF(span_attributes->>'http.host', ''),
+                NULLIF(span_attributes->>'url.full', ''))
+    END
+$$;
+
+-- events keeps every signal but has no secondary indexes on purpose. Reads go
+-- through spans, logs and metric_data_points; events is only joined by
+-- (project_id, id) for incident evidence and counted by time for retention.
+-- Four indexes that no query used cost about 29% of insert throughput.
 CREATE INDEX incident_occurrences_time_idx
     ON incident_occurrences (incident_id, occurred_at DESC, id DESC);
 CREATE UNIQUE INDEX incident_occurrences_project_event_idx
@@ -377,6 +414,13 @@ CREATE INDEX spans_trace_time_idx
     ON spans (project_id, trace_id, started_at, event_id);
 CREATE INDEX spans_service_time_idx
     ON spans (project_id, environment_id, service_name, started_at DESC, event_id DESC);
+-- Detection, topology and quality queries read one environment's spans in a
+-- recent window. Without a time-led index the planner read the whole daily
+-- partition to find a 5 to 35 minute slice. Measured on 2M spans: detection
+-- window 28 ms -> 12 ms, quality check 100 ms -> 31 ms, about 18% slower span
+-- inserts. A BRIN index was tried and lost (coarse ranges, slower than a scan).
+CREATE INDEX spans_window_idx
+    ON spans (project_id, environment_id, started_at);
 CREATE INDEX logs_time_idx
     ON logs (project_id, environment_id, occurred_at DESC, event_id DESC);
 CREATE INDEX logs_trace_idx

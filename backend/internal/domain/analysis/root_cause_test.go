@@ -53,3 +53,24 @@ func TestRCARankingIsStableAcrossInputOrderAndZeroBaselineUnits(t *testing.T) {
 		t.Fatal("zero-baseline score depends on unit")
 	}
 }
+
+func TestRCARankNeverPlacesWeakerEvidenceAboveStronger(t *testing.T) {
+	evidence := []Evidence{
+		// An external dependency with no measured baseline scores 0.55.
+		{ID: "weak-external", EntityID: "external:payments", EntityType: "external", MetricName: "latency", Direction: "increase", BaselineValue: 0, ObservedValue: 2},
+		// A tenfold error-rate jump on the service itself scores far higher.
+		{ID: "strong-error", EntityID: "service:api", EntityType: "service", MetricName: "error_rate", Direction: "increase", BaselineValue: 0.01, ObservedValue: 0.5, ChangeRatio: 50},
+	}
+	result := BuildRCA("incident", "api", evidence, nil)
+	if len(result.Hypotheses) != 2 {
+		t.Fatalf("hypotheses = %d", len(result.Hypotheses))
+	}
+	if result.Hypotheses[0].EvidenceIDs[0] != "strong-error" {
+		t.Fatalf("top hypothesis is %v, want the strongest evidence", result.Hypotheses[0].EvidenceIDs)
+	}
+	for index := 1; index < len(result.Hypotheses); index++ {
+		if result.Hypotheses[index].Confidence > result.Hypotheses[index-1].Confidence {
+			t.Fatalf("rank %d has higher confidence than rank %d", index+1, index)
+		}
+	}
+}

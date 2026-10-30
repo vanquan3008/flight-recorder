@@ -40,6 +40,9 @@ func (configuration Config) validateRuntime() error {
 		if err := validateProductionDatabaseTLS(configuration.Database.URL); err != nil {
 			return err
 		}
+		if err := validateProductionSecrets(configuration); err != nil {
+			return err
+		}
 	}
 	if configuration.Auth.BootstrapAPIKey != "" && len(configuration.Auth.BootstrapAPIKey) < 32 {
 		return errors.New("auth.bootstrap_api_key must contain at least 32 characters")

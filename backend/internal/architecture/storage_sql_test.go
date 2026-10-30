@@ -14,7 +14,6 @@ import (
 // handwrittenSQL lists the only storage files allowed to pass SQL text to the
 // database, with the reason sqlc cannot hold it.
 var handwrittenSQL = map[string]string{
-	"database.go":               "schema_migrations belongs to golang-migrate, outside the sqlc schema",
 	"maintenance/partitions.go": "partition DDL names tables, which cannot be parameters; savepoints are transaction control",
 	"maintenance/retention.go":  "trims a default partition named at run time",
 }

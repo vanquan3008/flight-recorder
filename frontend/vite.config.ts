@@ -1,4 +1,3 @@
-import { fileURLToPath, URL } from "node:url";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
@@ -6,8 +5,7 @@ import tailwindcss from "@tailwindcss/vite";
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   build: {
-    outDir: fileURLToPath(new URL("../backend/internal/webui/dist", import.meta.url)),
-    emptyOutDir: true,
+    outDir: "dist",
     assetsDir: "assets",
   },
   server: {

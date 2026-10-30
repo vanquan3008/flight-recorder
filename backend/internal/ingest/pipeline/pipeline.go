@@ -112,6 +112,13 @@ func (pipeline *Pipeline) Submit(ctx context.Context, events []telemetry.Event) 
 	// every event while still allowing workers to finish batches independently.
 	ack := make(chan error, len(events))
 	accepted := 0
+	// Events that can never fit the byte budget are rejected like events storage
+	// refuses: retrying the request cannot help, so it must not fail with 503.
+	oversized := 0
+	wait := func(admissionError error) (int, int, error) {
+		persisted, rejected, err := pipeline.waitForAcks(ctx, ack, accepted, admissionError)
+		return persisted, rejected + oversized, err
+	}
 	pipeline.submitMutex.RLock()
 	if !pipeline.accepting {
 		pipeline.submitMutex.RUnlock()
@@ -120,15 +127,15 @@ func (pipeline *Pipeline) Submit(ctx context.Context, events []telemetry.Event) 
 	for _, event := range events {
 		eventBytes := estimateBytes(event)
 		if eventBytes > pipeline.maxBytes {
-			pipeline.submitMutex.RUnlock()
-			return pipeline.waitForAcks(ctx, ack, accepted, ErrUnavailable)
+			oversized++
+			continue
 		}
 		if acquireError := pipeline.byteBudget.Acquire(admissionContext, eventBytes); acquireError != nil {
 			if errors.Is(acquireError, context.DeadlineExceeded) {
 				pipeline.observeAdmissionTimeout()
 			}
 			pipeline.submitMutex.RUnlock()
-			return pipeline.waitForAcks(ctx, ack, accepted, errors.Join(ErrUnavailable, acquireError))
+			return wait(errors.Join(ErrUnavailable, acquireError))
 		}
 		pipeline.setIngestionBytes(pipeline.inflightBytes.Add(eventBytes))
 		pipeline.setIngestionInflight(pipeline.inflightEvents.Add(1))
@@ -143,11 +150,11 @@ func (pipeline *Pipeline) Submit(ctx context.Context, events []telemetry.Event) 
 			}
 			pipeline.releaseBytes(queued.bytes)
 			pipeline.submitMutex.RUnlock()
-			return pipeline.waitForAcks(ctx, ack, accepted, errors.Join(ErrUnavailable, admissionContext.Err()))
+			return wait(errors.Join(ErrUnavailable, admissionContext.Err()))
 		}
 	}
 	pipeline.submitMutex.RUnlock()
-	return pipeline.waitForAcks(ctx, ack, accepted, nil)
+	return wait(nil)
 }
 
 func (pipeline *Pipeline) waitForAcks(ctx context.Context, ack <-chan error, accepted int, admissionError error) (persisted, rejected int, err error) {

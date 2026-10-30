@@ -19,6 +19,14 @@ type Signal struct {
 	Baseline  float64
 }
 
+// Sample-size floors. Latency is a mean, so a handful of calls lets one slow
+// request open an incident; throughput needs a baseline busy enough that
+// halving it means something. Both were lower and produced noise at low traffic.
+const (
+	minLatencyCalls            = 10
+	minThroughputBaselineCalls = 30
+)
+
 // EvaluateService separates policy from SQL and requires measured baselines.
 func EvaluateService(current, baseline WindowStats, currentDuration, baselineDuration time.Duration) []Signal {
 	signals := make([]Signal, 0, 3)
@@ -29,10 +37,10 @@ func EvaluateService(current, baseline WindowStats, currentDuration, baselineDur
 			signals = append(signals, Signal{"error_rate", "increase", observed, reference})
 		}
 	}
-	if current.Calls >= 3 && baseline.Calls >= 3 && current.LatencyNanos >= baseline.LatencyNanos*1.5 && current.LatencyNanos-baseline.LatencyNanos >= float64(50*time.Millisecond) {
+	if current.Calls >= minLatencyCalls && baseline.Calls >= minLatencyCalls && current.LatencyNanos >= baseline.LatencyNanos*1.5 && current.LatencyNanos-baseline.LatencyNanos >= float64(50*time.Millisecond) {
 		signals = append(signals, Signal{"latency", "increase", current.LatencyNanos, baseline.LatencyNanos})
 	}
-	if baseline.Calls >= 6 && currentDuration > 0 && baselineDuration > 0 {
+	if baseline.Calls >= minThroughputBaselineCalls && currentDuration > 0 && baselineDuration > 0 {
 		observed := float64(current.Calls) / currentDuration.Seconds()
 		reference := float64(baseline.Calls) / baselineDuration.Seconds()
 		if observed < reference*0.5 {
