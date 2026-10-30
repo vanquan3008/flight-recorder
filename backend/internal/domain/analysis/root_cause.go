@@ -12,11 +12,13 @@ func BuildRCA(incidentID, primaryService string, evidence []Evidence, dependenci
 	ordered := append([]Evidence{}, evidence...)
 	sort.Slice(ordered, func(left, right int) bool {
 		a, b := ordered[left], ordered[right]
-		if evidencePriority(a) != evidencePriority(b) {
-			return evidencePriority(a) < evidencePriority(b)
-		}
+		// Strength of evidence ranks first so a hypothesis never outranks one with
+		// better support; the kind of evidence only breaks ties.
 		if confidence(a) != confidence(b) {
 			return confidence(a) > confidence(b)
+		}
+		if evidencePriority(a) != evidencePriority(b) {
+			return evidencePriority(a) < evidencePriority(b)
 		}
 		for _, pair := range [][2]string{{a.EntityID, b.EntityID}, {a.MetricName, b.MetricName}, {a.SeriesID, b.SeriesID}, {a.ID, b.ID}} {
 			if pair[0] != pair[1] {

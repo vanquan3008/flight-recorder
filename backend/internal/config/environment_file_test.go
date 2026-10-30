@@ -15,7 +15,7 @@ func TestEnvironmentFileDoesNotMutateProcessAndCanReload(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Setenv("TRACEPILOT_HTTP_ADDRESS", ":9300")
-		configuration, err := Load("")
+		configuration, err := Load()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -40,7 +40,7 @@ func TestNativeBackendCommandReadsRepositoryRootEnvironment(t *testing.T) {
 	}
 	for _, directory := range []string{root, backend} {
 		t.Chdir(directory)
-		configuration, err := Load("")
+		configuration, err := Load()
 		if err != nil || configuration.Database.URL != "postgres://root-file" {
 			t.Fatalf("load root .env from %s: configuration=%+v error=%v", directory, configuration, err)
 		}
@@ -61,7 +61,7 @@ func TestInvalidLocalEnvironmentFileDoesNotFallBackOrExposeContents(t *testing.T
 	if err := os.WriteFile(".env", []byte("SENSITIVE='private-value-without-closing-quote"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, err := Load("")
+	_, err := Load()
 	if err == nil {
 		t.Fatal("invalid .env silently fell back to parent file")
 	}

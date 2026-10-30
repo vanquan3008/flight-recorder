@@ -145,7 +145,7 @@ type IncidentStatusChange struct {
 	IncidentID     string
 	PreviousStatus string
 	Status         string
-	ActorKeyID     string
+	ActorKeyID     *string
 	ChangedAt      time.Time
 }
 
@@ -278,6 +278,11 @@ type ReplayExecution struct {
 	Comparison  []byte
 	CreatedBy   string
 	CreatedAt   time.Time
+}
+
+type SchemaMigration struct {
+	Version int64
+	Dirty   bool
 }
 
 type Service struct {

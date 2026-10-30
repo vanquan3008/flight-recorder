@@ -14,7 +14,6 @@ import (
 	incidentapp "github.com/vanquan3008/tracepilot/internal/application/incident"
 	"github.com/vanquan3008/tracepilot/internal/config"
 	"github.com/vanquan3008/tracepilot/internal/observability/metrics"
-	"github.com/vanquan3008/tracepilot/internal/webui"
 )
 
 type Server struct {
@@ -91,7 +90,6 @@ func New(configuration config.Config, logger *slog.Logger, readinessCheck func(c
 		server.requestTimeout = defaultRequestTimeout
 	}
 	router := http.NewServeMux()
-	router.Handle("GET /", webui.New())
 	router.HandleFunc("GET /openapi.json", server.openAPI)
 	router.HandleFunc("GET /health/live", server.live)
 	router.HandleFunc("GET /health/ready", server.readiness)

@@ -65,6 +65,12 @@ func (configuration Config) validateIngestionLimits() error {
 	if configuration.Ingestion.MaxAttributeDepth <= 0 || configuration.Ingestion.MaxAttributeDepth > 16 {
 		return errors.New("ingestion.max_attribute_depth must be between 1 and 16")
 	}
+	if configuration.Ingestion.AuthFailureLimit < 0 {
+		return errors.New("ingestion.auth_failure_limit must not be negative (0 disables it)")
+	}
+	if configuration.Ingestion.AuthFailureLimit > 0 && configuration.Ingestion.AuthFailureWindow <= 0 {
+		return errors.New("ingestion.auth_failure_window must be positive when auth_failure_limit is set")
+	}
 	return nil
 }
 

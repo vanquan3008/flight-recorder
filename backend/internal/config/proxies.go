@@ -1,6 +1,7 @@
 package config
 
 import (
+	"net"
 	"net/netip"
 	"strings"
 )
@@ -30,4 +31,52 @@ func (configuration HTTPConfig) TrustedProxyPrefixes() []netip.Prefix {
 		}
 	}
 	return prefixes
+}
+
+// ClientAddress is the address a request is attributed to for rate limits and
+// failure budgets. Forwarded headers are written by the client unless a proxy
+// overwrites them, so X-Forwarded-For is read only when the TCP peer is one of
+// the trusted proxies. It is read from the right: each hop appends the address
+// it received from, so skipping trusted proxies leaves the first address a
+// trusted party actually saw. A leftmost value is whatever the client chose to
+// send and is never used. forwarded holds every X-Forwarded-For header value.
+func ClientAddress(remoteAddr string, forwarded []string, trusted []netip.Prefix) string {
+	host, _, splitError := net.SplitHostPort(remoteAddr)
+	if splitError != nil {
+		host = strings.TrimSpace(remoteAddr)
+	}
+	peer, peerError := netip.ParseAddr(host)
+	if peerError != nil {
+		if host == "" {
+			return "unknown"
+		}
+		return host
+	}
+	peer = peer.Unmap()
+	if !containsAddress(trusted, peer) {
+		return peer.String()
+	}
+	var hops []string
+	for _, header := range forwarded {
+		hops = append(hops, strings.Split(header, ",")...)
+	}
+	for index := len(hops) - 1; index >= 0; index-- {
+		hop, hopError := netip.ParseAddr(strings.TrimSpace(hops[index]))
+		if hopError != nil {
+			return peer.String() // a malformed chain is not evidence of anything
+		}
+		if hop = hop.Unmap(); !containsAddress(trusted, hop) {
+			return hop.String()
+		}
+	}
+	return peer.String()
+}
+
+func containsAddress(prefixes []netip.Prefix, address netip.Addr) bool {
+	for _, prefix := range prefixes {
+		if prefix.Contains(address) {
+			return true
+		}
+	}
+	return false
 }

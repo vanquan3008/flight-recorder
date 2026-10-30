@@ -25,6 +25,7 @@ const incidentDeduplicationWindow = time.Hour
 type incidentOccurrences struct {
 	id         string
 	created    bool
+	reopened   bool // a RESOLVED incident that failed again after it was resolved
 	lastSeenAt time.Time
 	events     []telemetry.Event // oldest first
 }
@@ -47,14 +48,18 @@ func RecordOccurrences(ctx context.Context, transaction pgx.Tx, ingestion config
 			return storeError
 		}
 		for _, record := range touched {
-			if !record.created {
+			if !record.created && !record.reopened {
 				continue
 			}
 			opening := record.events[0]
-			if enqueueError := outbox.EnqueueDeliveries(ctx, transaction, ingestion.ProjectID, "incident.opened", map[string]any{
+			payload := map[string]any{
 				"incident_id": record.id, "environment_id": ingestion.EnvironmentID, "service": opening.ServiceName,
 				"title": incident.Title(opening), "severity": incident.Severity(opening),
-			}); enqueueError != nil {
+			}
+			if record.reopened {
+				payload["reopened"], payload["previous_status"] = true, "RESOLVED"
+			}
+			if enqueueError := outbox.EnqueueDeliveries(ctx, transaction, ingestion.ProjectID, "incident.opened", payload); enqueueError != nil {
 				return enqueueError
 			}
 		}
@@ -112,6 +117,14 @@ func storeFingerprintOccurrences(ctx context.Context, transaction pgx.Tx, ingest
 		target.events = append(target.events, event)
 		if event.Timestamp.After(target.lastSeenAt) {
 			target.lastSeenAt = event.Timestamp
+		}
+	}
+
+	for _, record := range touched {
+		if !record.created {
+			if reopenError := reopenIfResolved(ctx, queries, ingestion, record); reopenError != nil {
+				return nil, reopenError
+			}
 		}
 	}
 
@@ -180,4 +193,31 @@ func findIncident(ctx context.Context, queries *sqlcstore.Queries, ingestion con
 		return nil, fmt.Errorf("find incident: %w", queryError)
 	}
 	return &incidentOccurrences{id: row.ID, lastSeenAt: row.LastSeenAt}, nil
+}
+
+// reopenIfResolved reopens a RESOLVED incident that failed again after it was
+// resolved and records the change with no actor. Resolved no longer means the
+// failure stopped: without this an operator would see no signal that it
+// returned. Occurrences already recorded were filtered out earlier, so a retried
+// batch cannot reopen twice.
+func reopenIfResolved(ctx context.Context, queries *sqlcstore.Queries, ingestion config.IngestionConfig, record *incidentOccurrences) error {
+	reopenedAt := time.Now().UTC()
+	latest := record.events[len(record.events)-1]
+	changed, reopenError := queries.ReopenResolvedIncident(ctx, sqlcstore.ReopenResolvedIncidentParams{
+		ProjectID: ingestion.ProjectID, ID: record.id, ReopenedAt: reopenedAt, LatestEventAt: latest.Timestamp,
+	})
+	if reopenError != nil {
+		return fmt.Errorf("reopen incident: %w", reopenError)
+	}
+	if changed == 0 {
+		return nil
+	}
+	record.reopened = true
+	if insertError := queries.InsertIncidentStatusChange(ctx, sqlcstore.InsertIncidentStatusChangeParams{
+		ID:        telemetry.DeterministicID(reopenedAt, "incident-reopen", ingestion.ProjectID, record.id, latest.ID),
+		ProjectID: ingestion.ProjectID, IncidentID: record.id, PreviousStatus: "RESOLVED", Status: "OPEN", ChangedAt: reopenedAt,
+	}); insertError != nil {
+		return fmt.Errorf("record incident reopen: %w", insertError)
+	}
+	return nil
 }

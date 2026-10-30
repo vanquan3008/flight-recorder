@@ -114,3 +114,79 @@ func TestValidateTrustedProxies(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateDatabaseSessionLimits(t *testing.T) {
+	valid := defaultConfig()
+	valid.Database.URL = "postgres://test"
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("defaults must validate: %v", err)
+	}
+	for name, change := range map[string]func(*Config){
+		"statement timeout below the API request timeout": func(c *Config) { c.Database.StatementTimeout = c.HTTP.RequestTimeout - 1 },
+		"negative lock timeout":                           func(c *Config) { c.Database.LockTimeout = -1 },
+		"negative idle in transaction timeout":            func(c *Config) { c.Database.IdleInTransactionTimeout = -1 },
+	} {
+		configuration := valid
+		change(&configuration)
+		if err := configuration.Validate(); err == nil {
+			t.Errorf("%s was accepted", name)
+		}
+	}
+	off := valid
+	off.Database.StatementTimeout, off.Database.LockTimeout, off.Database.IdleInTransactionTimeout = 0, 0, 0
+	if err := off.Validate(); err != nil {
+		t.Fatalf("0 must keep the server defaults: %v", err)
+	}
+}
+
+func TestValidateOTLPAuthFailureLimit(t *testing.T) {
+	configuration := defaultConfig()
+	configuration.Database.URL = "postgres://test"
+	configuration.Ingestion.AuthFailureLimit = -1
+	if err := configuration.Validate(); err == nil {
+		t.Fatal("negative limit accepted")
+	}
+	configuration.Ingestion.AuthFailureLimit = 5
+	configuration.Ingestion.AuthFailureWindow = 0
+	if err := configuration.Validate(); err == nil {
+		t.Fatal("a limit without a window was accepted")
+	}
+	configuration.Ingestion.AuthFailureLimit = 0
+	if err := configuration.Validate(); err != nil {
+		t.Fatalf("limit 0 turns the guard off: %v", err)
+	}
+}
+
+func TestValidateProductionRejectsSampleSecrets(t *testing.T) {
+	production := func() Config {
+		configuration := defaultConfig()
+		configuration.Production = true
+		configuration.Database.URL = "postgres://tracepilot:s3cure-random-pw@db.internal/tracepilot?sslmode=verify-full"
+		configuration.Auth.BootstrapAPIKey = "b0f3a1c9e7d24a6f8c15e2d97a40b3c6f1e8d205"
+		configuration.TLS.CertificateFile = "certificate.pem"
+		configuration.TLS.PrivateKeyFile = "private-key.pem"
+		return configuration
+	}
+	if err := production().Validate(); err != nil {
+		t.Fatalf("a real production configuration was rejected: %v", err)
+	}
+	for name, change := range map[string]func(*Config){
+		"bootstrap key from .env.example": func(c *Config) { c.Auth.BootstrapAPIKey = "tracepilot-development-bootstrap-key-000000" },
+		"bootstrap key with a marker":     func(c *Config) { c.Auth.BootstrapAPIKey = "my-ChangeMe-key-0000000000000000000000000" },
+		"database password from the sample": func(c *Config) {
+			c.Database.URL = "postgres://tracepilot:tracepilot-dev-only@db.internal/tracepilot?sslmode=verify-full"
+		},
+	} {
+		configuration := production()
+		change(&configuration)
+		if err := configuration.Validate(); err == nil {
+			t.Errorf("%s was accepted in production", name)
+		}
+	}
+	development := defaultConfig()
+	development.Database.URL = "postgres://tracepilot:tracepilot-dev-only@localhost/tracepilot?sslmode=disable"
+	development.Auth.BootstrapAPIKey = "tracepilot-development-bootstrap-key-000000"
+	if err := development.Validate(); err != nil {
+		t.Fatalf("the sample secrets must keep working outside production: %v", err)
+	}
+}

@@ -5,16 +5,23 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"time"
 
 	"github.com/vanquan3008/tracepilot/internal/domain/analysis"
 	"github.com/vanquan3008/tracepilot/internal/storage/postgres/pgvalue"
 	sqlcstore "github.com/vanquan3008/tracepilot/internal/storage/postgres/sqlc"
 )
 
+// parentLookback is how far before a window a parent span may have started and
+// still be matched to a child inside it. Bounding the lookup keeps it from
+// probing every daily partition; see the note on ListTopologyEdges.
+const parentLookback = time.Hour
+
 func (store *AnalyticsStore) ListTopology(ctx context.Context, projectID string, filter analysis.Filter) (analysis.Topology, error) {
 	rows, err := store.queries.ListTopologyEdges(ctx, sqlcstore.ListTopologyEdgesParams{
 		ProjectID: projectID, EnvironmentID: filter.EnvironmentID,
 		FromTime: filter.From, ToTime: filter.To, Service: pgvalue.OrNil(filter.Service),
+		ParentWindowStart: filter.From.Add(-parentLookback),
 	})
 	if err != nil {
 		return analysis.Topology{}, fmt.Errorf("list topology: %w", err)
@@ -79,7 +86,7 @@ func (store *AnalyticsStore) ListMetricPoints(ctx context.Context, projectID str
 func (store *AnalyticsStore) TelemetryQuality(ctx context.Context, projectID string, filter analysis.Filter) (analysis.Quality, error) {
 	row, err := store.queries.TelemetryQuality(ctx, sqlcstore.TelemetryQualityParams{
 		ProjectID: projectID, EnvironmentID: filter.EnvironmentID, FromTime: filter.From, ToTime: filter.To,
-		Service: pgvalue.OrNil(filter.Service),
+		Service: pgvalue.OrNil(filter.Service), ParentWindowStart: filter.From.Add(-parentLookback),
 	})
 	if err != nil {
 		return analysis.Quality{}, fmt.Errorf("telemetry quality: %w", err)

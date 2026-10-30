@@ -731,7 +731,9 @@ func (q *Queries) ListServices(ctx context.Context, arg ListServicesParams) ([]L
 
 const listTopologyEdges = `-- name: ListTopologyEdges :many
 WITH window_spans AS (
-    SELECT event_id, project_id, environment_id, trace_id, span_id, parent_span_id, trace_state, span_name, span_kind, started_at, ended_at, status_code, status_message, flags, service_name, service_version, resource_schema_url, resource_attributes, scope_name, scope_version, scope_schema_url, scope_attributes, span_attributes, span_events, span_links, dropped_attributes_count, dropped_events_count, dropped_links_count FROM spans
+    SELECT spans.project_id, spans.environment_id, spans.trace_id, spans.parent_span_id, spans.service_name,
+           spans.status_code, spans.started_at, spans.ended_at, spans.span_attributes, spans.span_kind
+    FROM spans
     WHERE spans.project_id = $2
       AND spans.environment_id = $3
       AND spans.started_at >= $4::timestamptz
@@ -746,6 +748,8 @@ WITH window_spans AS (
      AND parent.environment_id = child.environment_id
      AND parent.trace_id = child.trace_id
      AND parent.span_id = child.parent_span_id
+     AND parent.started_at >= $6::timestamptz
+     AND parent.started_at < $5::timestamptz
     WHERE parent.service_name <> child.service_name
     UNION ALL
     SELECT window_spans.service_name, span_dependency_type(window_spans.span_attributes),
@@ -772,11 +776,12 @@ ORDER BY raw_edges.source_name, raw_edges.target_type, raw_edges.target_name
 `
 
 type ListTopologyEdgesParams struct {
-	Service       *string
-	ProjectID     string
-	EnvironmentID string
-	FromTime      time.Time
-	ToTime        time.Time
+	Service           *string
+	ProjectID         string
+	EnvironmentID     string
+	FromTime          time.Time
+	ToTime            time.Time
+	ParentWindowStart time.Time
 }
 
 type ListTopologyEdgesRow struct {
@@ -793,6 +798,10 @@ type ListTopologyEdgesRow struct {
 
 // Edges between services (parent span -> child span in another service) and
 // from services to the databases, queues and external targets they call.
+// A parent starts before its child, so the parent lookup is bounded to the
+// window plus one hour before it (parent_window_start, set by the caller). Without that bound each child probed every
+// daily partition, including the empty ones for future days, and a parent that
+// began more than an hour before the window is no longer matched.
 func (q *Queries) ListTopologyEdges(ctx context.Context, arg ListTopologyEdgesParams) ([]ListTopologyEdgesRow, error) {
 	rows, err := q.db.Query(ctx, listTopologyEdges,
 		arg.Service,
@@ -800,6 +809,7 @@ func (q *Queries) ListTopologyEdges(ctx context.Context, arg ListTopologyEdgesPa
 		arg.EnvironmentID,
 		arg.FromTime,
 		arg.ToTime,
+		arg.ParentWindowStart,
 	)
 	if err != nil {
 		return nil, err
@@ -843,7 +853,9 @@ SELECT
        AND NOT EXISTS (
            SELECT 1 FROM spans AS p
            WHERE p.project_id = s.project_id AND p.environment_id = s.environment_id
-             AND p.trace_id = s.trace_id AND p.span_id = s.parent_span_id)) AS orphan_spans,
+             AND p.trace_id = s.trace_id AND p.span_id = s.parent_span_id
+             AND p.started_at >= $6::timestamptz
+             AND p.started_at <= $4::timestamptz)) AS orphan_spans,
     (SELECT count(*) FROM logs AS l
      WHERE l.project_id = $1 AND l.environment_id = $2
        AND l.occurred_at BETWEEN $3::timestamptz AND $4::timestamptz
@@ -860,11 +872,12 @@ SELECT
 `
 
 type TelemetryQualityParams struct {
-	ProjectID     string
-	EnvironmentID string
-	FromTime      time.Time
-	ToTime        time.Time
-	Service       *string
+	ProjectID         string
+	EnvironmentID     string
+	FromTime          time.Time
+	ToTime            time.Time
+	Service           *string
+	ParentWindowStart time.Time
 }
 
 type TelemetryQualityRow struct {
@@ -882,6 +895,7 @@ func (q *Queries) TelemetryQuality(ctx context.Context, arg TelemetryQualityPara
 		arg.FromTime,
 		arg.ToTime,
 		arg.Service,
+		arg.ParentWindowStart,
 	)
 	var i TelemetryQualityRow
 	err := row.Scan(

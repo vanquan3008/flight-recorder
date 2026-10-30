@@ -74,10 +74,12 @@ func (normalizer *normalizer) span(resource *resourcepb.Resource, resourceSchema
 	eventType := spanEventType(span, attributes.values)
 	traceID := hex.EncodeToString(span.GetTraceId())
 	spanID := hex.EncodeToString(span.GetSpanId())
+	statusMessage := normalizer.scrub(span.GetStatus().GetMessage())
+	operation := normalizer.scrub(span.GetName())
 	errorType := stringAttribute(attributes.values, "exception.type")
 	errorMessage := stringAttribute(attributes.values, "exception.message")
 	if errorMessage == "" && span.GetStatus().GetCode() == tracepb.Status_STATUS_CODE_ERROR {
-		errorMessage = span.GetStatus().GetMessage()
+		errorMessage = statusMessage
 	}
 	httpStatus, httpStatusError := intAttribute(attributes.values, "http.response.status_code", "http.status_code")
 	if httpStatusError != nil {
@@ -97,7 +99,7 @@ func (normalizer *normalizer) span(resource *resourcepb.Resource, resourceSchema
 		Duration:           endTimestamp.Sub(timestamp),
 		Status:             spanStatus(span),
 		HTTPStatus:         httpStatus,
-		Operation:          span.GetName(),
+		Operation:          operation,
 		ErrorType:          errorType,
 		ErrorMessage:       errorMessage,
 		Attributes:         attributes.values,
@@ -112,7 +114,7 @@ func (normalizer *normalizer) span(resource *resourcepb.Resource, resourceSchema
 		TraceState:         span.GetTraceState(),
 		TraceFlags:         span.GetFlags(),
 		SpanKind:           int32(span.GetKind()),
-		StatusMessage:      span.GetStatus().GetMessage(),
+		StatusMessage:      statusMessage,
 		DroppedAttributes:  span.GetDroppedAttributesCount(),
 		DroppedEvents:      span.GetDroppedEventsCount(),
 		DroppedLinks:       span.GetDroppedLinksCount(),

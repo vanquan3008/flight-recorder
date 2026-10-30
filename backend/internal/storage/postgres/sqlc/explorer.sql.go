@@ -322,7 +322,7 @@ func (q *Queries) ListTraceSpans(ctx context.Context, arg ListTraceSpansParams) 
 
 const listTraces = `-- name: ListTraces :many
 WITH matching_traces AS (
-    SELECT DISTINCT spans.trace_id FROM spans
+    SELECT spans.trace_id, min(spans.started_at) AS first_match, max(spans.started_at) AS last_match FROM spans
     WHERE spans.project_id = $1
       AND spans.environment_id = $2
       AND ($8::text IS NULL OR spans.service_name = $8)
@@ -331,6 +331,11 @@ WITH matching_traces AS (
       AND ($11::text IS NULL OR spans.trace_id = $11)
       AND ($12::timestamptz IS NULL OR spans.started_at >= $12)
       AND ($13::timestamptz IS NULL OR spans.started_at <= $13)
+    GROUP BY spans.trace_id
+), match_bounds AS (
+    SELECT min(matching_traces.first_match) - interval '1 hour' AS earliest,
+           max(matching_traces.last_match) + interval '1 hour' AS latest
+    FROM matching_traces
 )
 SELECT spans.trace_id,
        min(spans.started_at)::timestamptz AS started_at,
@@ -341,8 +346,11 @@ SELECT spans.trace_id,
        count(*) AS span_count,
        count(*) FILTER (WHERE spans.status_code = 'ERROR') AS error_count
 FROM spans
+CROSS JOIN match_bounds
 WHERE spans.project_id = $1
   AND spans.environment_id = $2
+  AND spans.started_at >= match_bounds.earliest
+  AND spans.started_at <= match_bounds.latest
   AND spans.trace_id IN (SELECT matching_traces.trace_id FROM matching_traces)
 GROUP BY spans.trace_id
 HAVING ($3::timestamptz IS NULL
@@ -384,7 +392,11 @@ type ListTracesRow struct {
 }
 
 // A trace matches when any of its spans matches the filters; the summary then
-// covers every span of that trace.
+// covers every span of that trace. The summary scan is bounded to one hour
+// either side of the matching spans: unbounded, it probed every daily
+// partition (including the empty future ones) once per matching trace. Spans of
+// a trace that start more than an hour from every matching span are left out of
+// its summary.
 func (q *Queries) ListTraces(ctx context.Context, arg ListTracesParams) ([]ListTracesRow, error) {
 	rows, err := q.db.Query(ctx, listTraces,
 		arg.ProjectID,

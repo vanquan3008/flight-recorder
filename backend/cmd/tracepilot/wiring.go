@@ -76,13 +76,24 @@ func buildOTLPReceiver(cfg config.Config, pipe *pipeline.Pipeline, metricsPipe *
 	if cfg.Auth.BootstrapAPIKey != "" {
 		authenticateOTLP = database.AuthenticateAPIKey
 	}
-	return ingestotlp.NewReceiver(cfg.Ingestion, pipe, metricsPipe, selfMetrics, authenticateOTLP)
+	return ingestotlp.NewReceiver(cfg.Ingestion, pipe, metricsPipe, selfMetrics, authenticateOTLP).WithTrustedProxies(cfg.HTTP.TrustedProxyPrefixes())
 }
 
-func buildReadinessCheck(pipe *pipeline.Pipeline, otlp *ingestotlp.Server, database *postgres.Database) func(context.Context) error {
+// readyReporter is anything that can say whether it accepts work.
+type readyReporter interface{ Ready() bool }
+
+// databaseProbe checks that the database answers and its schema is current.
+type databaseProbe interface{ Ready(context.Context) error }
+
+// buildReadinessCheck is ready only when every ingestion component is: each
+// pipeline and listener can stop on its own, and a silent one would leave the
+// service reporting healthy while it rejects part of its traffic.
+func buildReadinessCheck(database databaseProbe, components ...readyReporter) func(context.Context) error {
 	return func(ctx context.Context) error {
-		if !pipe.Ready() || !otlp.Ready() {
-			return errors.New("ingestion runtime is not ready")
+		for _, component := range components {
+			if !component.Ready() {
+				return errors.New("ingestion runtime is not ready")
+			}
 		}
 		return database.Ready(ctx)
 	}

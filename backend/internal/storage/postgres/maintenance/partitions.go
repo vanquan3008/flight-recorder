@@ -147,11 +147,19 @@ func partitionEnd(table, name string) (time.Time, bool) {
 	return day.AddDate(0, 0, 1), true
 }
 
+// rowCounter counts the rows of a relation that is about to be dropped.
+type rowCounter func(ctx context.Context, relation string) (int64, error)
+
 // dropExpiredPartitions drops every expired daily partition of `tables`.
 // It returns how many rows the first table held in the dropped partitions:
 // counting costs one scan per partition, but keeps the retention "deleted"
 // signal meaningful, and the drop itself is a metadata-only operation.
-func (store *PartitionStore) dropExpiredPartitions(ctx context.Context, tables []string, cutoff time.Time) (int64, error) {
+//
+// The count is only a signal, so a failed count must never keep the partition:
+// a full scan of a large day can outlast statement_timeout, and retrying that
+// scan forever would stop the drop and fill the disk. Such a partition is
+// dropped uncounted. A cancelled context still stops the run.
+func (store *PartitionStore) dropExpiredPartitions(ctx context.Context, tables []string, cutoff time.Time, count rowCounter) (int64, error) {
 	var rowsDropped int64
 	for index, table := range tables {
 		partitions, listError := store.expiredPartitions(ctx, table, cutoff)
@@ -160,11 +168,12 @@ func (store *PartitionStore) dropExpiredPartitions(ctx context.Context, tables [
 		}
 		for _, partition := range partitions {
 			if index == 0 {
-				count, countError := store.countRows(ctx, partition)
-				if countError != nil {
-					return rowsDropped, countError
+				counted, countError := count(ctx, partition)
+				if countError == nil {
+					rowsDropped += counted
+				} else if ctx.Err() != nil {
+					return rowsDropped, ctx.Err()
 				}
-				rowsDropped += count
 			}
 			if _, dropError := store.pool.Exec(ctx, "DROP TABLE IF EXISTS "+identifier(partition)); dropError != nil {
 				return rowsDropped, fmt.Errorf("drop %s: %w", partition, dropError)

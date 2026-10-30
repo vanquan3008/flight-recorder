@@ -13,7 +13,6 @@ import (
 func runMigrations(arguments []string) int {
 	flags := flag.NewFlagSet("migrate", flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
-	configFile := flags.String("config", "", "path to a versioned YAML configuration file")
 	if parseError := flags.Parse(arguments); parseError != nil {
 		return 2
 	}
@@ -48,7 +47,7 @@ func runMigrations(arguments []string) int {
 		return 2
 	}
 
-	configuration, loadError := config.Load(*configFile)
+	configuration, loadError := config.Load()
 	if loadError != nil {
 		fmt.Fprintf(os.Stderr, "invalid configuration: %v\n", loadError)
 		return 2
@@ -64,5 +63,5 @@ func runMigrations(arguments []string) int {
 }
 
 func migrationUsage() {
-	fmt.Fprintln(os.Stderr, "usage: tracepilot migrate [--config path] <up|down STEPS|version>")
+	fmt.Fprintln(os.Stderr, "usage: tracepilot migrate <up|down STEPS|version>")
 }

@@ -124,13 +124,13 @@ func TestManagementTLSConfigurationUsesModernMinimum(t *testing.T) {
 	}
 }
 
-func TestBackendServesOperatorConsole(t *testing.T) {
+func TestBackendServesNoConsole(t *testing.T) {
+	// The console is a separate frontend; the backend only answers its API paths.
 	httpServer := newTestServer(func(context.Context) error { return nil })
 	responseRecorder := httptest.NewRecorder()
-	httpRequest := httptest.NewRequest(http.MethodGet, "/", nil)
-	httpServer.httpServer.Handler.ServeHTTP(responseRecorder, httpRequest)
-	if responseRecorder.Code != http.StatusOK || !strings.Contains(responseRecorder.Body.String(), "TracePilot Console") {
-		t.Fatalf("unexpected dashboard response: %d %s", responseRecorder.Code, responseRecorder.Body.String())
+	httpServer.httpServer.Handler.ServeHTTP(responseRecorder, httptest.NewRequest(http.MethodGet, "/", nil))
+	if responseRecorder.Code != http.StatusNotFound {
+		t.Fatalf("GET / = %d, want 404 now that the console is not embedded", responseRecorder.Code)
 	}
 }
 

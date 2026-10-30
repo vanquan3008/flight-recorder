@@ -14,6 +14,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 )
 
@@ -30,13 +31,29 @@ func newGRPCServer(receiver *Receiver, maxRecvMsgSize int, tlsConfig *tls.Config
 }
 
 func (receiver *Receiver) authorizeGRPC(ctx context.Context) error {
-	if err := receiver.authorize(ctx, grpcAPIKey(ctx)); err != nil {
-		if errors.Is(err, auth.ErrUnauthorized) {
-			return status.Error(codes.Unauthenticated, "OTLP authentication failed")
-		}
+	err := receiver.authorize(ctx, grpcAPIKey(ctx), receiver.grpcClient(ctx))
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, ErrThrottled):
+		return status.Error(codes.ResourceExhausted, "too many failed authentication attempts")
+	case errors.Is(err, auth.ErrUnauthorized):
+		return status.Error(codes.Unauthenticated, "OTLP authentication failed")
+	default:
 		return status.Error(codes.Unavailable, "OTLP authentication temporarily unavailable")
 	}
-	return nil
+}
+
+func (receiver *Receiver) grpcClient(ctx context.Context) string {
+	remote := ""
+	if caller, found := peer.FromContext(ctx); found && caller.Addr != nil {
+		remote = caller.Addr.String()
+	}
+	var forwarded []string
+	if incoming, found := metadata.FromIncomingContext(ctx); found {
+		forwarded = incoming.Get("x-forwarded-for")
+	}
+	return receiver.clientAddress(remote, forwarded)
 }
 
 // admitGRPC runs after authentication so unauthenticated callers cannot occupy

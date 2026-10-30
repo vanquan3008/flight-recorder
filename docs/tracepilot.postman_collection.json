@@ -1,0 +1,1336 @@
+{
+  "info": {
+    "name": "TracePilot API",
+    "description": "Smoke and hardening tests for TracePilot.\n\n1. Start TracePilot (`go -C backend run ./cmd/tracepilot serve`) and set the variables below if your ports or bootstrap key differ.\n2. Run folders 1-5 in order with the Collection Runner (or send requests one by one).\n3. `adminKey` is the bootstrap key from .env (TRACEPILOT_AUTH_BOOTSTRAP_API_KEY). `ingestKey` and `readKey` are created by folder 2.\n\nProduction endpoints use HTTPS: change baseUrl and otlpUrl and use a key with only the scope you need.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Shared helpers for every request in this collection.",
+          "const hex = (n) => Array.from({ length: n }, () => Math.floor(Math.random() * 16).toString(16)).join('');",
+          "if (!pm.collectionVariables.get('runId')) { pm.collectionVariables.set('runId', hex(8)); }",
+          "const nowMs = Date.now();",
+          "pm.collectionVariables.set('startNs', String(nowMs - 120) + '000000');",
+          "pm.collectionVariables.set('midNs', String(nowMs - 60) + '000000');",
+          "pm.collectionVariables.set('endNs', String(nowMs) + '000000');",
+          "pm.collectionVariables.set('fromIso', new Date(nowMs - 3600 * 1000).toISOString());",
+          "pm.collectionVariables.set('toIso', new Date(nowMs + 60 * 1000).toISOString());"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080"
+    },
+    {
+      "key": "otlpUrl",
+      "value": "http://localhost:4318"
+    },
+    {
+      "key": "adminKey",
+      "value": "tracepilot-development-bootstrap-key-000000",
+      "description": "Bootstrap key from .env. Replace it for any shared environment."
+    },
+    {
+      "key": "ingestKey",
+      "value": ""
+    },
+    {
+      "key": "ingestKeyId",
+      "value": ""
+    },
+    {
+      "key": "readKey",
+      "value": ""
+    },
+    {
+      "key": "runId",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "1. Health and docs",
+      "item": [
+        {
+          "name": "Live",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/health/live",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "health",
+                "live"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Ready (database reachable)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/health/ready",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "health",
+                "ready"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "OpenAPI contract",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/openapi.json",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "openapi.json"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Prometheus metrics",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{adminKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/metrics",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "metrics"
+              ]
+            },
+            "description": "In production this needs a key with the read scope; in development it is open."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('exposes TracePilot metrics', function () { pm.expect(pm.response.text()).to.include('tracepilot_build_info'); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "2. API keys (admin)",
+      "item": [
+        {
+          "name": "Create ingest key",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{adminKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/api-keys",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "api-keys"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"postman-ingest-{{runId}}\",\n  \"scopes\": [\n    \"ingest\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Saves ingestKey for the OTLP requests. The secret is shown only once by the API."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 201', function () { pm.response.to.have.status(201); });",
+                  "const b = pm.response.json();",
+                  "pm.collectionVariables.set('ingestKey', b.key);",
+                  "pm.collectionVariables.set('ingestKeyId', b.api_key.id);",
+                  "pm.test('secret returned once', function () { pm.expect(b.key).to.be.a('string').and.not.empty; });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create read key",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{adminKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/api-keys",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "api-keys"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"postman-read-{{runId}}\",\n  \"scopes\": [\n    \"read\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 201', function () { pm.response.to.have.status(201); });",
+                  "pm.collectionVariables.set('readKey', pm.response.json().key);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List API keys",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{adminKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/api-keys",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "api-keys"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "description": "Run these first. They create the keys the other folders use."
+    },
+    {
+      "name": "3. OTLP ingest (HTTP/JSON, port 4318)",
+      "item": [
+        {
+          "name": "Traces: normal request with a database child span",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{ingestKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{otlpUrl}}/v1/traces",
+              "host": [
+                "{{otlpUrl}}"
+              ],
+              "path": [
+                "v1",
+                "traces"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"resourceSpans\": [\n    {\n      \"resource\": {\n        \"attributes\": [\n          {\n            \"key\": \"service.name\",\n            \"value\": {\n              \"stringValue\": \"postman-demo\"\n            }\n          },\n          {\n            \"key\": \"service.version\",\n            \"value\": {\n              \"stringValue\": \"1.0.0\"\n            }\n          }\n        ]\n      },\n      \"scopeSpans\": [\n        {\n          \"scope\": {\n            \"name\": \"postman\"\n          },\n          \"spans\": [\n            {\n              \"traceId\": \"{{traceId}}\",\n              \"spanId\": \"{{spanId}}\",\n              \"name\": \"GET /orders\",\n              \"kind\": 2,\n              \"startTimeUnixNano\": \"{{startNs}}\",\n              \"endTimeUnixNano\": \"{{endNs}}\",\n              \"attributes\": [\n                {\n                  \"key\": \"http.response.status_code\",\n                  \"value\": {\n                    \"intValue\": \"200\"\n                  }\n                }\n              ],\n              \"status\": {\n                \"code\": 1\n              }\n            },\n            {\n              \"traceId\": \"{{traceId}}\",\n              \"spanId\": \"{{childSpanId}}\",\n              \"parentSpanId\": \"{{spanId}}\",\n              \"name\": \"SELECT orders\",\n              \"kind\": 3,\n              \"startTimeUnixNano\": \"{{midNs}}\",\n              \"endTimeUnixNano\": \"{{endNs}}\",\n              \"attributes\": [\n                {\n                  \"key\": \"db.system\",\n                  \"value\": {\n                    \"stringValue\": \"postgresql\"\n                  }\n                },\n                {\n                  \"key\": \"db.name\",\n                  \"value\": {\n                    \"stringValue\": \"orders\"\n                  }\n                }\n              ],\n              \"status\": {\n                \"code\": 1\n              }\n            }\n          ]\n        }\n      ]\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Creates a new traceId, saved as {{traceId}} for the verify folder. The child span has db.system, so it shows as a dependency in topology."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const hex = (n) => Array.from({ length: n }, () => Math.floor(Math.random() * 16).toString(16)).join('');",
+                  "pm.collectionVariables.set('traceId', hex(32));",
+                  "pm.collectionVariables.set('spanId', hex(16));",
+                  "pm.collectionVariables.set('childSpanId', hex(16));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('nothing rejected', function () { const b = pm.response.json(); pm.expect(b.partialSuccess || {}).to.not.have.any.keys('rejectedSpans', 'rejectedLogRecords', 'rejectedDataPoints'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Traces: failed request (secrets in status message, name and event)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{ingestKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{otlpUrl}}/v1/traces",
+              "host": [
+                "{{otlpUrl}}"
+              ],
+              "path": [
+                "v1",
+                "traces"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"resourceSpans\": [\n    {\n      \"resource\": {\n        \"attributes\": [\n          {\n            \"key\": \"service.name\",\n            \"value\": {\n              \"stringValue\": \"postman-checkout\"\n            }\n          }\n        ]\n      },\n      \"scopeSpans\": [\n        {\n          \"scope\": {\n            \"name\": \"postman\"\n          },\n          \"spans\": [\n            {\n              \"traceId\": \"{{traceId}}\",\n              \"spanId\": \"{{spanId}}\",\n              \"name\": \"POST /checkout?token=abc123\",\n              \"kind\": 2,\n              \"startTimeUnixNano\": \"{{startNs}}\",\n              \"endTimeUnixNano\": \"{{endNs}}\",\n              \"attributes\": [\n                {\n                  \"key\": \"http.response.status_code\",\n                  \"value\": {\n                    \"intValue\": \"500\"\n                  }\n                }\n              ],\n              \"events\": [\n                {\n                  \"name\": \"exception\",\n                  \"timeUnixNano\": \"{{midNs}}\",\n                  \"attributes\": [\n                    {\n                      \"key\": \"exception.type\",\n                      \"value\": {\n                        \"stringValue\": \"PaymentError\"\n                      }\n                    },\n                    {\n                      \"key\": \"exception.message\",\n                      \"value\": {\n                        \"stringValue\": \"card declined api_key=sk_live_abc123\"\n                      }\n                    }\n                  ]\n                }\n              ],\n              \"status\": {\n                \"code\": 2,\n                \"message\": \"payment failed password=hunter2\"\n              }\n            }\n          ]\n        }\n      ]\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Status 500 with exception. The span name, status message and exception.message contain credentials that must be stored as [REDACTED]."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const hex = (n) => Array.from({ length: n }, () => Math.floor(Math.random() * 16).toString(16)).join('');",
+                  "pm.collectionVariables.set('traceId', hex(32));",
+                  "pm.collectionVariables.set('spanId', hex(16));",
+                  "pm.collectionVariables.set('childSpanId', hex(16));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('nothing rejected', function () { const b = pm.response.json(); pm.expect(b.partialSuccess || {}).to.not.have.any.keys('rejectedSpans', 'rejectedLogRecords', 'rejectedDataPoints'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Logs: error linked to the trace",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{ingestKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{otlpUrl}}/v1/logs",
+              "host": [
+                "{{otlpUrl}}"
+              ],
+              "path": [
+                "v1",
+                "logs"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"resourceLogs\": [\n    {\n      \"resource\": {\n        \"attributes\": [\n          {\n            \"key\": \"service.name\",\n            \"value\": {\n              \"stringValue\": \"postman-demo\"\n            }\n          }\n        ]\n      },\n      \"scopeLogs\": [\n        {\n          \"scope\": {\n            \"name\": \"postman\"\n          },\n          \"logRecords\": [\n            {\n              \"timeUnixNano\": \"{{endNs}}\",\n              \"severityNumber\": 17,\n              \"severityText\": \"ERROR\",\n              \"body\": {\n                \"stringValue\": \"postman-{{runId}} payment failed for order 42\"\n              },\n              \"traceId\": \"{{traceId}}\",\n              \"spanId\": \"{{spanId}}\",\n              \"attributes\": [\n                {\n                  \"key\": \"order.id\",\n                  \"value\": {\n                    \"stringValue\": \"42\"\n                  }\n                }\n              ]\n            }\n          ]\n        }\n      ]\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('nothing rejected', function () { const b = pm.response.json(); pm.expect(b.partialSuccess || {}).to.not.have.any.keys('rejectedSpans', 'rejectedLogRecords', 'rejectedDataPoints'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Logs: free-text secrets (must be masked)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{ingestKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{otlpUrl}}/v1/logs",
+              "host": [
+                "{{otlpUrl}}"
+              ],
+              "path": [
+                "v1",
+                "logs"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"resourceLogs\": [\n    {\n      \"resource\": {\n        \"attributes\": [\n          {\n            \"key\": \"service.name\",\n            \"value\": {\n              \"stringValue\": \"postman-demo\"\n            }\n          }\n        ]\n      },\n      \"scopeLogs\": [\n        {\n          \"scope\": {\n            \"name\": \"postman\"\n          },\n          \"logRecords\": [\n            {\n              \"timeUnixNano\": \"{{endNs}}\",\n              \"severityNumber\": 17,\n              \"severityText\": \"ERROR\",\n              \"body\": {\n                \"stringValue\": \"postman-{{runId}} login failed password=hunter2 Authorization: Bearer abcdefgh12345678 db=postgres://app:p4ssw0rd@db.internal/x\"\n              },\n              \"attributes\": [\n                {\n                  \"key\": \"exception.message\",\n                  \"value\": {\n                    \"stringValue\": \"session token=abcdef123456 expired\"\n                  }\n                },\n                {\n                  \"key\": \"http.url\",\n                  \"value\": {\n                    \"stringValue\": \"https://app.test/reset?token=abc123&user=7\"\n                  }\n                },\n                {\n                  \"key\": \"http.request.header.authorization\",\n                  \"value\": {\n                    \"stringValue\": \"Bearer should-be-masked-by-key-name\"\n                  }\n                }\n              ]\n            }\n          ]\n        }\n      ]\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Body, exception.message and a URL carry credentials. Check them with 'Logs: secrets were masked' in folder 4."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('nothing rejected', function () { const b = pm.response.json(); pm.expect(b.partialSuccess || {}).to.not.have.any.keys('rejectedSpans', 'rejectedLogRecords', 'rejectedDataPoints'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Metrics: gauge",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{ingestKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{otlpUrl}}/v1/metrics",
+              "host": [
+                "{{otlpUrl}}"
+              ],
+              "path": [
+                "v1",
+                "metrics"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"resourceMetrics\": [\n    {\n      \"resource\": {\n        \"attributes\": [\n          {\n            \"key\": \"service.name\",\n            \"value\": {\n              \"stringValue\": \"postman-demo\"\n            }\n          }\n        ]\n      },\n      \"scopeMetrics\": [\n        {\n          \"scope\": {\n            \"name\": \"postman\"\n          },\n          \"metrics\": [\n            {\n              \"name\": \"postman.queue.depth\",\n              \"unit\": \"1\",\n              \"gauge\": {\n                \"dataPoints\": [\n                  {\n                    \"timeUnixNano\": \"{{endNs}}\",\n                    \"asInt\": \"7\",\n                    \"attributes\": [\n                      {\n                        \"key\": \"queue\",\n                        \"value\": {\n                          \"stringValue\": \"orders\"\n                        }\n                      }\n                    ]\n                  }\n                ]\n              }\n            }\n          ]\n        }\n      ]\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('nothing rejected', function () { const b = pm.response.json(); pm.expect(b.partialSuccess || {}).to.not.have.any.keys('rejectedSpans', 'rejectedLogRecords', 'rejectedDataPoints'); });"
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "description": "Each request is acknowledged after the data is committed to PostgreSQL, so folder 4 can read it right away."
+    },
+    {
+      "name": "4. Verify what was stored (read key)",
+      "item": [
+        {
+          "name": "Traces: list",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{readKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/traces?service=postman-demo&limit=10",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "traces"
+              ],
+              "query": [
+                {
+                  "key": "service",
+                  "value": "postman-demo"
+                },
+                {
+                  "key": "limit",
+                  "value": "10"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('has data', function () { pm.expect(pm.response.json().data).to.be.an('array'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Trace: detail",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{readKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/traces/{{traceId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "traces",
+                "{{traceId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Trace: correlated logs",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{readKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/traces/{{traceId}}/logs",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "traces",
+                "{{traceId}}",
+                "logs"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Logs: search this run",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{readKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/logs?search=postman-{{runId}}&from={{fromIso}}&to={{toIso}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "logs"
+              ],
+              "query": [
+                {
+                  "key": "search",
+                  "value": "postman-{{runId}}"
+                },
+                {
+                  "key": "from",
+                  "value": "{{fromIso}}"
+                },
+                {
+                  "key": "to",
+                  "value": "{{toIso}}"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('finds the run logs', function () { pm.expect(pm.response.json().data.length).to.be.above(0); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Logs: secrets were masked",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{readKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/logs?search=postman-{{runId}}&from={{fromIso}}&to={{toIso}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "logs"
+              ],
+              "query": [
+                {
+                  "key": "search",
+                  "value": "postman-{{runId}}"
+                },
+                {
+                  "key": "from",
+                  "value": "{{fromIso}}"
+                },
+                {
+                  "key": "to",
+                  "value": "{{toIso}}"
+                }
+              ]
+            },
+            "description": "Fails if any of the credentials sent by 'Logs: free-text secrets' is stored. Needs ScrubFreeText enabled (the default)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "const text = pm.response.text();",
+                  "pm.test('no credential reaches storage', function () {",
+                  "  ['hunter2', 'abcdefgh12345678', 'p4ssw0rd', 'abcdef123456', 'abc123', 'should-be-masked'].forEach(function (secret) {",
+                  "    pm.expect(text, secret).to.not.include(secret);",
+                  "  });",
+                  "});",
+                  "pm.test('masking is visible', function () { pm.expect(text).to.include('[REDACTED]'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Services",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{readKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/services",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "services"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Topology",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{readKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/topology",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "topology"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Incidents",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{readKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/incidents",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "incidents"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Metric points",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{readKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/metrics/query?metric=postman.queue.depth",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "metrics",
+                "query"
+              ],
+              "query": [
+                {
+                  "key": "metric",
+                  "value": "postman.queue.depth"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Telemetry quality",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{readKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/telemetry/quality",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "telemetry",
+                "quality"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "5. Hardening checks",
+      "item": [
+        {
+          "name": "OTLP without a key -> 401",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{otlpUrl}}/v1/logs",
+              "host": [
+                "{{otlpUrl}}"
+              ],
+              "path": [
+                "v1",
+                "logs"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 401', function () { pm.response.to.have.status(401); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "OTLP with a read-only key -> 401",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{readKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{otlpUrl}}/v1/logs",
+              "host": [
+                "{{otlpUrl}}"
+              ],
+              "path": [
+                "v1",
+                "logs"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 401', function () { pm.response.to.have.status(401); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Management API with an ingest key -> 403",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{ingestKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/traces",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "traces"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 403', function () { pm.response.to.have.status(403); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Management API without a key -> 401",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/traces",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "traces"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 401', function () { pm.response.to.have.status(401); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "OTLP body over the size limit -> 413",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{ingestKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{otlpUrl}}/v1/logs",
+              "host": [
+                "{{otlpUrl}}"
+              ],
+              "path": [
+                "v1",
+                "logs"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{{bigBody}}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "5 MiB, above the default 4 MiB ingestion.max_request_bytes."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.variables.set('bigBody', '{\"pad\":\"' + 'x'.repeat(5 * 1024 * 1024) + '\"}');"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 413', function () { pm.response.to.have.status(413); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Bad key, repeat 65x (Collection Runner) -> 401 then 429",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "junk-{{$randomUUID}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{otlpUrl}}/v1/logs",
+              "host": [
+                "{{otlpUrl}}"
+              ],
+              "path": [
+                "v1",
+                "logs"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Run only this request, 65 iterations, no delay. After 60 failures from one address OTLP answers 429 without touching the database. WARNING: the whole address is blocked for the next minute, valid keys included. Wait one minute before the other folders."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('rejected, then throttled', function () { pm.expect([401, 429]).to.include(pm.response.code); });",
+                  "if (pm.response.code === 429) { pm.test('Retry-After is set', function () { pm.expect(pm.response.headers.get('Retry-After')).to.be.ok; }); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Revoke the ingest key -> 204",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{adminKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/api-keys/{{ingestKeyId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "api-keys",
+                "{{ingestKeyId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 204', function () { pm.response.to.have.status(204); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Revoked ingest key stops working at once -> 401",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{ingestKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{otlpUrl}}/v1/logs",
+              "host": [
+                "{{otlpUrl}}"
+              ],
+              "path": [
+                "v1",
+                "logs"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Accepted keys are never cached, so revocation applies to the next request."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 401', function () { pm.response.to.have.status(401); });"
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "description": "Negative cases. Keep the last two requests in this order: they revoke the key created in folder 2."
+    }
+  ]
+}

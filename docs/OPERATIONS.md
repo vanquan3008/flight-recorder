@@ -3,7 +3,7 @@
 Mục tiêu hiện tại: một TracePilot replica, PostgreSQL riêng trên mạng tin cậy,
 TLS cho management/OTLP và database, image cố định bằng digest.
 Đây là runbook nghiệm thu, không phải tuyên bố source đã được chứng nhận production.
-Kết quả kiểm tra ở [REVIEW.md](REVIEW.md); ưu tiên ở [ROADMAP.md](ROADMAP.md).
+Việc còn lại và giới hạn đã biết ở mục cuối tài liệu này.
 
 ## Checklist trước khi mở traffic
 
@@ -26,28 +26,31 @@ Các giá trị do chủ repo chốt, không suy ra từ default:
 
 1. Xác định có DB cũ không. Source hiện chỉ có baseline schema 1, không nâng cấp
    tại chỗ DB dùng lịch sử migration cũ. Giữ backup và binary tương thích cho DB đó.
-2. Dùng cùng compose.yaml và .env ở root, lấy .env.example làm mẫu. Đặt
-   COMPOSE_PROFILES= để tắt PostgreSQL local, TRACEPILOT_PRODUCTION=true,
-   TRACEPILOT_IMAGE thành release digest và DATABASE_URL thành DB riêng.
-   Dùng bootstrap key riêng đủ mạnh; tạo key ingest/read riêng theo nhiệm vụ.
+2. Dùng một file `.env` ở root, lấy `.env.example` làm mẫu. Đặt
+   `TRACEPILOT_PRODUCTION=true`, `TRACEPILOT_DATABASE_URL` trỏ DB ngoài và chạy image
+   cố định bằng release digest. Dùng bootstrap key riêng đủ mạnh; tạo key ingest/read
+   riêng theo nhiệm vụ.
 3. Xem lại bốn giá trị retention (mục Retention) và dung lượng đĩa theo volume thực.
    Mặc định đã bật xóa tự động; 0s trên một nhóm giữ nhóm đó mãi.
 4. PostgreSQL dùng sslmode=verify-full và hostname khớp certificate. Với CA riêng,
    mount CA read-only trong container và đặt sslrootcert tới đường dẫn đó.
    Validator hiện vẫn chấp nhận require/verify-ca; đó không thay thế việc chọn
    verify-full cho deployment này.
-5. TRACEPILOT_TLS_DIRECTORY chứa tls.crt, tls.key, ca.crt, cho UID nonroot đọc
-   được; mount tại /run/tracepilot/tls. Bật các field TLS/healthcheck đã có comment
-   trong .env.example. HEALTHCHECK_SERVER_NAME phải khớp DNS certificate. Chỉ mở listener
-   tới interface tin cậy; management mặc định bind loopback trên host.
-6. Validate Compose, chạy migrate riêng trên DB đã xác minh, rồi start:
+5. Thư mục TLS chứa tls.crt, tls.key, ca.crt, cho UID nonroot đọc được; mount read-only
+   vào container tại /run/tracepilot/tls và bật các biến TLS/healthcheck cuối `.env.example`.
+   HEALTHCHECK_SERVER_NAME phải khớp DNS certificate. Chỉ mở cổng tới interface tin cậy.
+6. Chạy migrate riêng trên DB đã xác minh, rồi chạy server (cùng một image, cùng `.env`):
 
 ```powershell
-docker compose config --quiet
-docker compose --profile tools pull tracepilot migrate
-docker compose run --rm migrate
-docker compose up --no-build -d tracepilot
+docker pull ghcr.io/vanquan3008/tracepilot@sha256:<release-digest>
+docker run --rm --env-file .env <image> migrate up
+docker run -d --name tracepilot --env-file .env -v <thư-mục-tls>:/run/tracepilot/tls:ro `
+  -p 8080:8080 -p 4317:4317 -p 4318:4318 --restart unless-stopped --stop-timeout 35 <image>
 ```
+
+Host `localhost` trong `TRACEPILOT_DATABASE_URL` nghĩa là chính container; dùng tên host hay IP
+mà container tới được. Image chạy nonroot; thêm `--read-only --tmpfs /tmp
+--security-opt no-new-privileges` để khóa chặt hơn.
 
 Kiểm tra healthcheck container và /health/ready qua HTTPS tin cậy. Query một
 trace/log bằng key read; gửi thử bằng key ingest. /metrics yêu cầu quyền read.
@@ -55,11 +58,8 @@ Không ghi config có secret, API key hoặc raw telemetry vào log vận hành.
 Revoke bootstrap sau khi đã có admin key thay thế; restart cùng bootstrap key
 không tự bỏ trạng thái revoke.
 
-env_file: .env chuyển toàn bộ cấu hình từ file root vào container, gồm rate
-limit/retention/queue và các field mới. Không dùng --env-file để chọn thêm một
-file runtime khác: tham số đó chỉ đổi nguồn nội suy của Compose, env_file trong
-service vẫn trỏ .env ở root. Secret manager cần cấp file root này hoặc dùng
-environment override rõ ràng. Kiểm tra [Docker env_file](https://docs.docker.com/compose/how-tos/environment-variables/set-environment-variables/).
+Mọi cấu hình đi qua một file `.env` (hoặc biến môi trường của container, có ưu tiên cao
+hơn). Nếu dùng secret manager, cấp đúng file này hoặc đặt biến môi trường tương ứng.
 
 ## Chứng minh dữ liệu và phục hồi
 
@@ -67,7 +67,7 @@ Trước release, chạy trên staging có thể bỏ đi và lưu evidence theo
 
 | Drill | Điều kiện đạt |
 | --- | --- |
-| Schema | Up → down 1 → up (000002 gỡ rồi tạo lại ba hàm dependency, dữ liệu giữ nguyên) và integration suite pass trên DB sạch; startup từ chối schema dirty/sai version. Down tiếp xuống baseline xóa schema. |
+| Schema | Up → down 1 → up trên DB sạch (down 1 xóa cả schema baseline) và integration suite pass; startup từ chối schema dirty/sai version. |
 | Restore | Backup phục hồi vào DB khác; so row counts, scope, sample trace/log/incident/evidence/metrics/outbox; start server trên DB restore rồi kiểm tra readiness/API. |
 | Auth/storage outage | Ngắt DB test, OTLP trả retryable, không ACK trước commit; reconnect, retry cùng payload không tăng unique rows. |
 | Shutdown | Gửi tải và SIGTERM; ACK chỉ cho dữ liệu commit, không vượt grace, không panic/deadlock; exporter phục hồi phần chưa ACK. |
@@ -76,19 +76,21 @@ Trước release, chạy trên staging có thể bỏ đi và lưu evidence theo
 
 Dùng pg_dump/pg_restore hoặc backup/PITR của managed database; định kỳ thực sự
 restore vào DB riêng. Chốt RPO (mức dữ liệu được phép mất) và RTO (thời gian
-khôi phục) trước khi triển khai. Chỉ rollback image nếu schema tương thích;
-migrate down không phải cách rollback production. Ngoại lệ đã kiểm chứng: image
-trước version 2 yêu cầu schema version 1, nên rollback về đó cần `migrate down 1`;
-bước này chỉ gỡ ba hàm của 000002, không chạm dữ liệu.
+khôi phục) trước khi triển khai. Chỉ rollback image nếu schema tương thích; migrate down không phải cách rollback
+production vì baseline chỉ có một bước và down xóa toàn bộ schema. Muốn đổi schema,
+thêm migration mới tương thích với image trước (chỉ thêm, không xóa hay đổi nghĩa
+cột) để rollback image không cần động đến database.
 
-Wrapper migration destructive có guard, chỉ dành cho disposable DB:
+Mỗi kết nối pool có `TRACEPILOT_DATABASE_STATEMENT_TIMEOUT` (30s, phải không thấp
+hơn `HTTP_REQUEST_TIMEOUT` để API trả 504 trước), `..._LOCK_TIMEOUT` (10s) và
+`..._IDLE_IN_TRANSACTION_TIMEOUT` (30s); 0 giữ mặc định của server, tham số cùng tên
+trên URL được ưu tiên. Kết nối hiện `application_name=tracepilot` trong
+`pg_stat_activity`. Nếu bảo trì partition hoặc retention báo hết hạn khóa/lệnh trên
+bảng lớn, tăng giá trị thay vì tắt.
 
-```powershell
-./scripts/upgrade-rollback-drill.ps1 -DatabaseUrl $env:TRACEPILOT_DISPOSABLE_DATABASE_URL -AllowDestructive
-```
-
-Không chạy nếu chưa xác minh đúng DB test. Script không tự kiểm chứng tương
-thích application N/N-1; cần thử image thật trong staging.
+Repo hiện không có helper tự động hóa migration rollback drill. Chỉ thử nâng cấp
+và rollback trên database disposable sau khi xác minh URL; cần kiểm tra tương
+thích application N/N-1 bằng image thật trong staging.
 
 ## Tải và giới hạn bộ nhớ
 
@@ -96,16 +98,10 @@ Chốt events/giây, metric points/giây, kích thước payload, concurrent exp
 cardinality, retention và p95/p99 ACK trước khi đặt SLO. Chạy 2x peak dự kiến,
 ghi CPU/RSS, queue, DB pool/WAL, disk/index growth và latency truy vấn.
 
-```powershell
-./scripts/load-test.ps1 -Requests 1000 -Concurrency 8 -RecordsPerRequest 20 -ApiKey $env:TRACEPILOT_LOAD_API_KEY -Output ./load-result.json
-./scripts/load-test.ps1 -DurationMinutes 5 -Concurrency 8 -MaxP95Ms 2000 -ApiKey $env:TRACEPILOT_LOAD_API_KEY
-```
-
-Script này chỉ đo OTLP HTTP JSON logs; 2000 ms là ví dụ threshold, không phải SLO
-đã được chứng minh. Mỗi request có record identity riêng. accepted_records là số
-được OTLP chấp nhận, không phải phép đếm unique rows trong DB. Đối chiếu rows và
-counter storage với expected count trên DB test; partial rejection là failure.
-Retry/idempotency cần drill riêng gửi lại chính payload cũ.
+Repo hiện không có load-test runner. Đo lại trên staging/DB disposable bằng một
+harness được kiểm soát; không coi số liệu lịch sử hoặc ví dụ threshold là SLO.
+Đối chiếu số rows và counter storage với expected count; partial rejection là
+failure. Retry/idempotency cần drill riêng bằng cách gửi lại chính payload cũ.
 
 Queue byte budget là ước lượng và áp dụng riêng cho events/metrics. Nó không
 giới hạn tổng RSS; đặc biệt gRPC decode xảy ra trước admission handler. OTLP
@@ -113,18 +109,18 @@ metrics ACK sau commit giống trace/log: lỗi DB trả 503/Unavailable để e
 gửi lại, điểm lưu được không bị mất sau ACK. Chỉ metrics Prometheus của chính
 TracePilot (`/metrics`) nằm trong bộ nhớ và mất khi tiến trình chết.
 
-Đo baseline bằng `scripts/loadgen` (tốc độ cố định, ingest và đọc tách riêng):
-
-```powershell
-go build -o loadgen.exe ./scripts/loadgen/main.go ./scripts/loadgen/report.go
-./loadgen.exe -api-key $env:KEY -spans-per-second 1000 -spans-per-request 100 -duration 30s
-./loadgen.exe -api-key $env:KEY -reads-per-second 100 -duration 30s
-./loadgen.exe -api-key $env:KEY -spans-per-second 1000 -reads-per-second 100   # chia sẻ tài nguyên
-```
-
 Rate limit mặc định (120 request/phút mỗi IP) thấp hơn tải đo; nâng
 `TRACEPILOT_HTTP_RATE_LIMIT_REQUESTS` chỉ cho phiên đo trên staging. Kết quả đã
-đo và giới hạn môi trường ở [REVIEW](REVIEW.md).
+đo và giới hạn môi trường ở mục "Việc còn lại" cuối tài liệu.
+
+Cổng OTLP đếm xác thực thất bại theo địa chỉ kết nối: quá
+`TRACEPILOT_INGESTION_AUTH_FAILURE_LIMIT` (60) lần trong cửa sổ
+`TRACEPILOT_INGESTION_AUTH_FAILURE_WINDOW` (1m) thì trả 429 (gRPC RESOURCE_EXHAUSTED)
+không truy vấn DB, và key bị từ chối được nhớ 5 giây. Key hợp lệ không bao giờ được
+cache nên revoke có hiệu lực ngay. Sau reverse proxy hoặc NAT mọi client dùng chung
+một địa chỉ (OTLP chưa đọc X-Forwarded-For), nên giữ giới hạn rộng; theo dõi
+`tracepilot_otlp_requests_total{outcome="throttled"}`. Event đơn lẻ vượt ngân sách byte
+của queue được báo là rejected (partial success) thay vì 503, vì gửi lại không giúp ích.
 
 API quản trị chạy tối đa `TRACEPILOT_HTTP_MAX_CONCURRENT_QUERIES` (4) request cùng
 lúc, mỗi request tối đa `TRACEPILOT_HTTP_REQUEST_TIMEOUT` (20s); phần vượt trả
@@ -192,3 +188,92 @@ Stop grace mặc định 35s cho hai budget 15s; tăng grace nếu đổi shutdo
 
 Chưa có phép đo tải hoặc SLO được duyệt. Chỉ mở production traffic sau khi
 các drill, CI trên commit release và policy dữ liệu ở trên có evidence.
+
+## Việc còn lại trước production và giới hạn đã biết
+
+Kiểm tra gần nhất (30/10/2026, máy phát triển, PostgreSQL 17 dùng một lần): unit,
+architecture và integration test pass, staticcheck 2026.1 sạch, migration up/down/up
+version 1 đạt, collection Postman 41/41 trên server thật, frontend typecheck và 64 test
+pass. **Chưa chạy:** `-race` (cần CGO), Playwright e2e lần cuối, govulncheck, soak/tải,
+backup/restore, TLS, nhiều replica trên Linux staging. Không gọi các kết quả trên là
+chứng nhận production.
+
+| # | Việc | Trạng thái và điều kiện xong |
+| --- | --- | --- |
+| 1 | Peak tải, SLO p95/p99, RSS, tăng trưởng đĩa | Chưa đo. Công cụ tải cũ đã bị xóa khỏi repo; dùng `telemetrygen` theo mục "Đo tải" bên dưới, đối chiếu số dòng lưu với số đã ACK. |
+| 2 | RPO/RTO và restore | Chưa chốt, chưa diễn tập. Restore vào DB riêng, so row count và gọi thử API. |
+| 3 | DB cũ | Baseline hiện không nâng cấp tại chỗ DB dùng lịch sử migration cũ. Hỏi rõ dữ liệu đang có; không tự recreate. |
+| 4 | Endpoint tổng hợp (services, topology, danh sách trace, performance) | **Đã giảm phần dễ:** tra parent/span cùng trace giới hạn theo thời gian (±1 giờ) thay vì dò mọi partition, và index theo thời gian cho `spans` (`spans_window_idx`). Trên 2M span: topology 176 → 31 ms, danh sách trace 47 → 15 ms, kiểm tra chất lượng 100 → 31 ms, cửa sổ phát hiện 28 → 12 ms. Vẫn quét toàn bộ span của cửa sổ nên chi phí tăng tuyến tính theo lưu lượng; ở tải cao vẫn cần bảng rollup theo phút. Đo lại trên dữ liệu thật (đây là số của máy dev, 243k span/ngày). Đánh đổi: span cũ hơn 1 giờ so với cửa sổ không được ghép làm parent/cùng trace. |
+| 5 | Secret trong free-text | Đã che pattern phổ biến (`ingest/otlp/scrub.go`, bật mặc định). Văn xuôi như "the password is X" và PII không nhận diện được: lọc thêm ở SDK/Collector, chốt policy. |
+| 6 | Incident RESOLVED tái phát | **Đã xử lý:** tự mở lại khi có occurrence mới hơn lúc resolve (cột `actor_key_id` của lịch sử trạng thái cho phép NULL), IGNORED giữ nguyên. Cần theo dõi thực tế xem cửa sổ dedup 1 giờ có phù hợp quy trình on-call không. |
+| 7 | Secret mẫu trong production | **Đã xử lý:** `PRODUCTION=true` từ chối khóa bootstrap và mật khẩu DB chứa dấu hiệu mẫu (`development`, `dev-only`, `example`, `changeme`...). |
+| 8 | Cổng OTLP sau reverse proxy | **Đã xử lý:** `TRACEPILOT_HTTP_TRUSTED_PROXIES` dùng chung cho REST và OTLP (HTTP và gRPC `x-forwarded-for`); chỉ tin header khi kết nối đến từ proxy đã khai báo. |
+| 9 | Cảnh báo cho metrics của TracePilot | Rule mẫu ở mục "Cảnh báo mẫu" bên dưới; cần nạp vào hệ thống giám sát của bạn. |
+| 10 | Độ nhạy detection và RCA | **Đã chỉnh:** latency cần ≥ 10 call ở cả hai cửa sổ, throughput cần baseline ≥ 30 call; RCA xếp hạng theo độ tin cậy trước, loại evidence chỉ phân định khi bằng nhau. Ngưỡng vẫn là giá trị khởi điểm, đo lại trên dữ liệu thật. |
+| 11 | Index và truy vấn | Trigram GIN của `logs.body` tốn ~20% thông lượng ghi nhưng cần cho tìm nội dung log (đánh đổi do chủ repo chọn). `ListTraces` còn lượt quét thứ hai không có điều kiện thời gian; cần EXPLAIN trên dữ liệu đại diện. |
+| 12 | Rate limit nhiều replica | Theo từng tiến trình; đặt ở reverse proxy khi chạy nhiều replica. |
+| 13 | Giao diện | Chưa duyệt thủ công: zoom 200%, screen reader, contrast; chưa xem trên dữ liệu thật. |
+
+Giới hạn giữ có chủ đích: hai pipeline có ngân sách byte riêng, không phải giới hạn
+tổng RSS (gRPC decode trước admission); một server phục vụ một environment cấu hình;
+chỉ metrics Prometheus của chính TracePilot nằm trong bộ nhớ và mất khi tiến trình chết;
+RCA là giả thuyết deterministic có evidence, chưa đánh giá trên incident thật.
+
+Sau khi các mục trên có evidence, hướng tiếp theo (chỉ làm khi có số đo): ngưỡng/SLO theo
+service, RCA nhiều service với deployment events, tóm tắt bằng LLM tùy chọn không bịa
+evidence, và tách tiến trình từ module có bottleneck đã chứng minh. Chưa chọn broker,
+graph/vector database hay LLM.
+
+### Cảnh báo mẫu (Prometheus)
+
+Metrics của TracePilot ở `/metrics` (cần key `read` khi `PRODUCTION=true`). Ngưỡng là
+điểm khởi đầu, chỉnh theo tải đo được. Chưa có rule nào được nạp sẵn trong repo.
+
+```yaml
+groups:
+  - name: tracepilot
+    rules:
+      - alert: TracePilotDatabaseNotReady
+        expr: tracepilot_database_ready == 0
+        for: 2m
+      - alert: TracePilotIngestUnavailable      # exporter nhận 503 và phải gửi lại
+        expr: sum(rate(tracepilot_otlp_requests_total{outcome=~"unavailable|overloaded|Unavailable"}[5m])) > 0.5
+        for: 5m
+      - alert: TracePilotQueueBacklog
+        expr: tracepilot_ingestion_queue_depth > 0.8 * 4096   # queue_size mặc định
+        for: 5m
+      - alert: TracePilotStorageErrors
+        expr: increase(tracepilot_event_storage_errors_total[10m]) > 0
+      - alert: TracePilotAuthFloodThrottled     # có client sai key liên tục
+        expr: sum(rate(tracepilot_otlp_requests_total{outcome=~"throttled|ResourceExhausted"}[5m])) > 0
+        for: 10m
+      - alert: TracePilotRetentionFailing       # đĩa sẽ đầy dần
+        expr: increase(tracepilot_retention_errors_total[2h]) > 0
+      - alert: TracePilotRetentionBacklog
+        expr: tracepilot_retention_backlog_events > 0
+        for: 6h
+      - alert: TracePilotDetectionFailing
+        expr: increase(tracepilot_incident_detection_runs_total{outcome="error"}[15m]) > 3
+      - alert: TracePilotWebhookFailing
+        expr: increase(tracepilot_webhook_delivery_attempts_total{outcome=~"failure|claim_error"}[15m]) > 5
+```
+
+Cần theo dõi thêm ngoài TracePilot: ngày hết hạn certificate, tuổi bản backup gần nhất,
+dung lượng đĩa PostgreSQL và số kết nối. Kiểm tra từng rule bằng cách tạo đúng tình
+huống (dừng DB, gửi key sai liên tục) trên staging.
+
+### Đo tải
+
+Dùng `telemetrygen` của OpenTelemetry Collector contrib (không thêm dependency vào repo).
+Chạy trên staging hoặc DB dùng một lần, ví dụ 60 giây, 20 worker, 200 span/giây mỗi worker:
+
+```powershell
+docker run --rm --network host ghcr.io/open-telemetry/opentelemetry-collector-contrib/telemetrygen:latest `
+  traces --otlp-http --otlp-insecure --otlp-endpoint localhost:4318 `
+  --otlp-header 'x-api-key="<ingest-key>"' --workers 20 --rate 200 --duration 60s
+```
+
+Đối chiếu số span đã lưu (`SELECT count(*) FROM spans WHERE ...`) với số `telemetrygen` báo
+đã gửi, ghi p95/p99 từ `tracepilot_otlp_request_duration_seconds`, RSS của container và tăng
+trưởng đĩa; thay `logs` hoặc `metrics` cho từng tín hiệu và tăng `--workers` đến khi p99
+vượt ngân sách. Phần đó là capacity thật của phần cứng; giới hạn cấu hình thì không phải.

@@ -8,9 +8,6 @@ import (
 )
 
 func (configuration Config) Validate() error {
-	if configuration.Version != CurrentVersion {
-		return fmt.Errorf("configuration version must be %d", CurrentVersion)
-	}
 	if err := configuration.validateHTTP(); err != nil {
 		return err
 	}
@@ -114,7 +111,7 @@ func (configuration Config) validateDatabase() error {
 	if strings.TrimSpace(configuration.Database.MigrationsPath) == "" {
 		return errors.New("database.migrations_path must not be empty")
 	}
-	return nil
+	return configuration.validateDatabaseSessionLimits()
 }
 
 func validUUID(value string) bool {

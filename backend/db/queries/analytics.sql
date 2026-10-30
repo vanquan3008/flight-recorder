@@ -1,8 +1,14 @@
 -- Edges between services (parent span -> child span in another service) and
 -- from services to the databases, queues and external targets they call.
+-- A parent starts before its child, so the parent lookup is bounded to the
+-- window plus one hour before it (parent_window_start, set by the caller). Without that bound each child probed every
+-- daily partition, including the empty ones for future days, and a parent that
+-- began more than an hour before the window is no longer matched.
 -- name: ListTopologyEdges :many
 WITH window_spans AS (
-    SELECT * FROM spans
+    SELECT spans.project_id, spans.environment_id, spans.trace_id, spans.parent_span_id, spans.service_name,
+           spans.status_code, spans.started_at, spans.ended_at, spans.span_attributes, spans.span_kind
+    FROM spans
     WHERE spans.project_id = @project_id
       AND spans.environment_id = @environment_id
       AND spans.started_at >= @from_time::timestamptz
@@ -17,6 +23,8 @@ WITH window_spans AS (
      AND parent.environment_id = child.environment_id
      AND parent.trace_id = child.trace_id
      AND parent.span_id = child.parent_span_id
+     AND parent.started_at >= @parent_window_start::timestamptz
+     AND parent.started_at < @to_time::timestamptz
     WHERE parent.service_name <> child.service_name
     UNION ALL
     SELECT window_spans.service_name, span_dependency_type(window_spans.span_attributes),
@@ -67,7 +75,9 @@ SELECT
        AND NOT EXISTS (
            SELECT 1 FROM spans AS p
            WHERE p.project_id = s.project_id AND p.environment_id = s.environment_id
-             AND p.trace_id = s.trace_id AND p.span_id = s.parent_span_id)) AS orphan_spans,
+             AND p.trace_id = s.trace_id AND p.span_id = s.parent_span_id
+             AND p.started_at >= @parent_window_start::timestamptz
+             AND p.started_at <= @to_time::timestamptz)) AS orphan_spans,
     (SELECT count(*) FROM logs AS l
      WHERE l.project_id = @project_id AND l.environment_id = @environment_id
        AND l.occurred_at BETWEEN @from_time::timestamptz AND @to_time::timestamptz

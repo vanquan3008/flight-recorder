@@ -16,15 +16,18 @@
 - `backend/internal/ingest`: giao thức OTLP, normalization và queue có giới hạn.
 - `backend/internal/transport/httpapi`: REST, auth boundary và response contract.
 - `backend/internal/storage`: SQL, transaction, migration và partition.
-- `web/src/features`: giao diện theo chức năng; phần dùng chung ở `shared`.
-- Cấu hình duy nhất: `.env` ở root, mẫu `.env.example`, triển khai `compose.yaml`.
-  Không thêm env/Compose riêng cho dev/prod; PostgreSQL local dùng profile `local`.
+- `frontend/src/features`: giao diện theo chức năng; phần dùng chung ở `shared`.
+- Cấu hình duy nhất: `.env` ở root, mẫu `.env.example`. PostgreSQL là dịch vụ ngoài,
+  repo không có Compose; chạy bằng `go run` hoặc image build từ `backend/Dockerfile`.
+  Không thêm env riêng cho dev/prod.
 
 # Kiểm tra
 
 - Thay đổi logic phải có test hồi quy nhỏ; chạy test liên quan, Go vet/build.
-- Thay đổi frontend: typecheck, tests và build lại embedded assets.
+- Thay đổi frontend: typecheck, tests và build.
 - SQL/migration: chạy integration trên PostgreSQL test có thể bỏ đi.
 - Không gọi kết quả unit test là chứng nhận production. Ghi rõ kiểm tra bỏ qua.
-- Bộ docs hiện hành: `ARCHITECTURE`, `DEVELOPMENT`, `OPERATIONS`, `REVIEW`,
-  `ROADMAP` trong `docs/`. Cập nhật đúng nơi, tránh thêm báo cáo chồng chéo.
+- Bộ docs hiện hành: `README.md` (chạy, phát triển, đóng góp, bảo mật),
+  `docs/ARCHITECTURE.md` và `docs/OPERATIONS.md` (kèm việc còn lại trước production).
+  Cập nhật đúng nơi, tránh thêm báo cáo chồng chéo. `docs/tracepilot.postman_collection.json`
+  là bộ kiểm tra API; cập nhật cùng khi đổi route hoặc hành vi ingest.

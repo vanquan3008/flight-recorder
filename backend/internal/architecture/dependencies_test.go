@@ -18,7 +18,7 @@ func TestAdapterDependencies(t *testing.T) {
 		t.Fatal("locate architecture test")
 	}
 	internalRoot := filepath.Dir(filepath.Dir(currentFile))
-	for _, adapter := range []string{"config", "storage", "transport", "ingest", "webui"} {
+	for _, adapter := range []string{"config", "storage", "transport", "ingest"} {
 		assertNoImport(t, filepath.Join(internalRoot, "domain"), "/internal/"+adapter)
 		assertNoImport(t, filepath.Join(internalRoot, "application"), "/internal/"+adapter)
 	}
@@ -28,13 +28,6 @@ func TestAdapterDependencies(t *testing.T) {
 	assertNoImport(t, filepath.Join(internalRoot, "transport"), "/internal/storage")
 	assertNoImport(t, filepath.Join(internalRoot, "ingest"), "/internal/storage")
 	assertNoImport(t, filepath.Join(internalRoot, "storage"), "/internal/application")
-	// The operator UI must remain a self-contained embedded asset. A runtime
-	// filesystem read would make the distroless image depend on host mounts.
-	webuiRoot := filepath.Join(internalRoot, "webui")
-	assertNoImport(t, webuiRoot, "/os")
-	assertNoImport(t, webuiRoot, "/path/filepath")
-	assertNoImport(t, webuiRoot, "/io/ioutil")
-	assertContainsDirective(t, webuiRoot, "//go:embed")
 }
 
 func assertNoImport(t *testing.T, root, forbiddenSuffix string) {

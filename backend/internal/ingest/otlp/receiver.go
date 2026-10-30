@@ -3,6 +3,7 @@ package otlp
 import (
 	"context"
 	"errors"
+	"net/netip"
 	"time"
 
 	"github.com/vanquan3008/tracepilot/internal/auth"
@@ -34,6 +35,8 @@ type Receiver struct {
 	metricsPipeline MetricsSubmitter
 	metrics         *metrics.Registry
 	authenticate    func(context.Context, string) (auth.Principal, error)
+	guard           *authGuard
+	trustedProxies  []netip.Prefix
 	// slots bounds requests that are decoding, normalizing, or waiting on the
 	// pipeline. Without it every concurrent request holds its decoded payload
 	// plus per-record metadata, so memory grows with client concurrency instead
@@ -59,7 +62,21 @@ func NewReceiver(
 		metricsPipeline: metricsPipeline,
 		metrics:         metricRegistry,
 		authenticate:    authenticate,
+		guard:           newAuthGuard(configuration.AuthFailureLimit, configuration.AuthFailureWindow),
 	}
+}
+
+// WithTrustedProxies names the reverse proxies whose X-Forwarded-For is
+// believed, so failed-authentication budgets are kept per real client instead
+// of per proxy. Without it the connection's own address is always used.
+func (receiver *Receiver) WithTrustedProxies(proxies []netip.Prefix) *Receiver {
+	receiver.trustedProxies = proxies
+	return receiver
+}
+
+// clientAddress attributes a request to a client; see config.ClientAddress.
+func (receiver *Receiver) clientAddress(remoteAddr string, forwarded []string) string {
+	return config.ClientAddress(remoteAddr, forwarded, receiver.trustedProxies)
 }
 
 // admit reserves a request slot without waiting. A rejected request is
@@ -76,15 +93,30 @@ func (receiver *Receiver) admit() (release func(), admitted bool) {
 	}
 }
 
-func (receiver *Receiver) authorize(ctx context.Context, rawKey string) error {
+// authorize checks the key for the ingest scope. client identifies the caller
+// for failure accounting. It returns auth.ErrUnauthorized for a bad key, a
+// throttled error while the client is over its failure budget, and any other
+// error for an authentication outage, which callers must treat as retryable.
+func (receiver *Receiver) authorize(ctx context.Context, rawKey, client string) error {
 	if receiver.authenticate == nil {
 		return nil
 	}
+	if retryAfter, blocked := receiver.guard.throttled(client); blocked {
+		return &throttledError{retryAfter: retryAfter}
+	}
+	if receiver.guard.knownBad(rawKey) {
+		receiver.guard.failed(client, rawKey, false)
+		return auth.ErrUnauthorized
+	}
 	principal, authError := receiver.authenticate(ctx, rawKey)
 	if authError != nil {
+		if errors.Is(authError, auth.ErrUnauthorized) {
+			receiver.guard.failed(client, rawKey, true)
+		}
 		return authError
 	}
 	if principal.ProjectID != receiver.normalizer.configuration.ProjectID || !principal.HasScope("ingest") {
+		receiver.guard.failed(client, rawKey, false)
 		return auth.ErrUnauthorized
 	}
 	return nil

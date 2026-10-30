@@ -1,9 +1,8 @@
-COMPOSE := docker compose
 SQLC_IMAGE := sqlc/sqlc:1.31.1
 
-.PHONY: build test test-race bench-pipeline bench-postgres vet staticcheck vulncheck fmt-check size-check sqlc-generate sqlc-check web-install web-check web-test web-build web-dist-check web-ci ci run dev demo migrate migrate-version migration-roundtrip mockdata clean
+.PHONY: build test test-race bench-pipeline bench-postgres vet staticcheck vulncheck fmt-check size-check sqlc-generate sqlc-vet sqlc-check web-install web-check web-test web-build web-dev web-ci ci run dev demo migrate migrate-version migration-roundtrip seed clean
 
-WEB_NPM := npm --prefix web
+FRONTEND_NPM := npm --prefix frontend
 
 build: web-build
 	mkdir -p bin
@@ -12,27 +11,29 @@ build: web-build
 ci: web-ci sqlc-check fmt-check size-check vet staticcheck vulncheck test-race build
 
 web-install:
-	$(WEB_NPM) ci
+	$(FRONTEND_NPM) ci
 
 web-check:
-	$(WEB_NPM) run check
+	$(FRONTEND_NPM) run check
 
 web-test:
-	$(WEB_NPM) run test
+	$(FRONTEND_NPM) run test
 
 web-build:
-	$(WEB_NPM) run build
+	$(FRONTEND_NPM) run build
 
-web-dist-check: web-build
-	git diff --exit-code -- backend/internal/webui/dist
-	@test -z "$$(git ls-files --others --exclude-standard -- backend/internal/webui/dist)" || (echo "Untracked console assets; commit backend/internal/webui/dist." && git ls-files --others --exclude-standard -- backend/internal/webui/dist && exit 1)
+web-dev:
+	$(FRONTEND_NPM) run dev
 
-web-ci: web-install web-check web-test web-dist-check
+web-ci: web-install web-check web-test web-build
 
 sqlc-generate:
 	docker run --rm -v "$$(pwd)/backend:/src" -w /src $(SQLC_IMAGE) generate
 
-sqlc-check: sqlc-generate
+sqlc-vet:
+	docker run --rm -v "$$(pwd)/backend:/src" -w /src $(SQLC_IMAGE) vet
+
+sqlc-check: sqlc-generate sqlc-vet
 	git diff --exit-code -- backend/internal/storage/postgres/sqlc
 
 test:
@@ -65,7 +66,7 @@ size-check:
 		lines=$$(wc -l < "$$file"); \
 		if [ "$$lines" -gt 300 ]; then echo "$$file: $$lines lines (maximum 300)"; failed=1; fi; \
 	done; \
-	for file in $$(find web/src -type f \( -name '*.ts' -o -name '*.tsx' -o -name '*.css' \)); do \
+	for file in $$(find frontend/src -type f \( -name '*.ts' -o -name '*.tsx' -o -name '*.css' \)); do \
 		lines=$$(wc -l < "$$file"); \
 		if [ "$$lines" -gt 300 ]; then echo "$$file: $$lines lines (maximum 300)"; failed=1; fi; \
 	done; \
@@ -74,27 +75,23 @@ size-check:
 run:
 	go -C backend run ./cmd/tracepilot serve
 
-dev: web-build
-	$(COMPOSE) up -d --wait postgres
-	$(COMPOSE) run --build --rm migrate
-	$(COMPOSE) up --build -d tracepilot
+dev: migrate run
 
-demo: dev
-	$(COMPOSE) run --build --rm tracepilot mockdata
+demo: migrate seed run
 
 migrate:
-	$(COMPOSE) run --rm migrate
+	go -C backend run ./cmd/tracepilot migrate up
 
 migrate-version:
-	$(COMPOSE) run --rm migrate migrate version
+	go -C backend run ./cmd/tracepilot migrate version
 
 migration-roundtrip:
-	$(COMPOSE) run --rm migrate migrate up
-	$(COMPOSE) run --rm migrate migrate down 1
-	$(COMPOSE) run --rm migrate migrate up
+	go -C backend run ./cmd/tracepilot migrate up
+	go -C backend run ./cmd/tracepilot migrate down 1
+	go -C backend run ./cmd/tracepilot migrate up
 
-mockdata:
-	$(COMPOSE) run --build --rm tracepilot mockdata
+seed:
+	psql "$$TRACEPILOT_DATABASE_URL" -f backend/db/seed.sql
 
 clean:
 	go -C backend clean
