@@ -1,0 +1,19 @@
+.tabs { margin-bottom: 20px; }
+.settings-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; align-items: start; margin-bottom: 22px; padding: 22px; border: 1px solid var(--line); border-radius: 20px; background: var(--surface-raised); box-shadow: var(--shadow-bento); backdrop-filter: blur(12px); }
+.settings-form label, .settings-form fieldset { display: grid; gap: 6px; min-width: 0; color: var(--muted); font-size: 12px; font-weight: 700; }
+.settings-form fieldset { margin: 0; padding: 0; border: 0; }
+.settings-form legend { margin-bottom: 8px; padding: 0; }
+.settings-form .check { display: flex; align-items: flex-start; gap: 8px; font-weight: 500; }
+.settings-form .check input { margin-top: 3px; }
+.settings-form .check b { color: var(--text); }
+.settings-form .muted { align-self: end; margin: 0; }
+.settings-submit { display: grid; align-content: end; }
+.scope-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.secret-notice { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 16px; align-items: start; margin-bottom: 22px; padding: 18px 22px; border: 1px solid var(--warning); border-radius: 20px; background: var(--warn-bg); color: var(--warn-fg); box-shadow: var(--shadow-bento); }
+.secret-notice p { margin: 2px 0 10px; }
+.secret-notice code { display: block; padding: 10px 14px; border-radius: 12px; background: var(--surface-sunken); color: var(--text); user-select: all; font-family: var(--font-mono); border: 1px solid var(--line-soft); }
+.secret-actions { display: grid; justify-items: end; gap: 10px; }
+@media (max-width: 620px) {
+  .secret-notice { grid-template-columns: 1fr; }
+  .secret-actions { justify-items: start; }
+}

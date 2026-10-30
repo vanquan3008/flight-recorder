@@ -16,7 +16,7 @@
 - `backend/internal/ingest`: giao thức OTLP, normalization và queue có giới hạn.
 - `backend/internal/transport/httpapi`: REST, auth boundary và response contract.
 - `backend/internal/storage`: SQL, transaction, migration và partition.
-- `web/src/features`: giao diện theo chức năng; phần dùng chung ở `shared`.
+- `frontend/src/features`: giao diện theo chức năng; phần dùng chung ở `shared`.
 - Cấu hình duy nhất: `.env` ở root, mẫu `.env.example`, triển khai `compose.yaml`.
   Không thêm env/Compose riêng cho dev/prod; PostgreSQL local dùng profile `local`.
 

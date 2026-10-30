@@ -3,7 +3,7 @@ SQLC_IMAGE := sqlc/sqlc:1.31.1
 
 .PHONY: build test test-race bench-pipeline bench-postgres vet staticcheck vulncheck fmt-check size-check sqlc-generate sqlc-check web-install web-check web-test web-build web-dist-check web-ci ci run dev demo migrate migrate-version migration-roundtrip mockdata clean
 
-WEB_NPM := npm --prefix web
+FRONTEND_NPM := npm --prefix frontend
 
 build: web-build
 	mkdir -p bin
@@ -12,16 +12,16 @@ build: web-build
 ci: web-ci sqlc-check fmt-check size-check vet staticcheck vulncheck test-race build
 
 web-install:
-	$(WEB_NPM) ci
+	$(FRONTEND_NPM) ci
 
 web-check:
-	$(WEB_NPM) run check
+	$(FRONTEND_NPM) run check
 
 web-test:
-	$(WEB_NPM) run test
+	$(FRONTEND_NPM) run test
 
 web-build:
-	$(WEB_NPM) run build
+	$(FRONTEND_NPM) run build
 
 web-dist-check: web-build
 	git diff --exit-code -- backend/internal/webui/dist
@@ -65,7 +65,7 @@ size-check:
 		lines=$$(wc -l < "$$file"); \
 		if [ "$$lines" -gt 300 ]; then echo "$$file: $$lines lines (maximum 300)"; failed=1; fi; \
 	done; \
-	for file in $$(find web/src -type f \( -name '*.ts' -o -name '*.tsx' -o -name '*.css' \)); do \
+	for file in $$(find frontend/src -type f \( -name '*.ts' -o -name '*.tsx' -o -name '*.css' \)); do \
 		lines=$$(wc -l < "$$file"); \
 		if [ "$$lines" -gt 300 ]; then echo "$$file: $$lines lines (maximum 300)"; failed=1; fi; \
 	done; \

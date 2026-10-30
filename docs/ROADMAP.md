@@ -40,9 +40,9 @@ tiết tiếp tục nằm ở [OPERATIONS.md](OPERATIONS.md), không tạo thêm
 | `internal/ingest` | OTLP HTTP/gRPC, validation, normalization, redaction, admission, queue và ACK; giữ regression retry, partial rejection và shutdown. |
 | `internal/transport/httpapi` | Auth/scope, parse request, response/error contract và OpenAPI; server vẫn quyết định quyền truy cập. |
 | `internal/storage` | SQL, transaction, migration, partition và persistence; giữ atomic event/incident/evidence/outbox. |
-| `web/src/app` | Router, session, shell và điều khiển theme; làm rõ kết nối thất bại/hết quyền. |
-| `web/src/features` | Giữ overview, performance, traces, operations và topology theo chức năng; thêm logs và settings khi triển khai các màn tương ứng. Feature sở hữu truy vấn và component của nó. |
-| `web/src/shared` | API client, time window, formatting và UI dùng chung thực sự; không import ngược vào features. |
+| `frontend/src/app` | Router, session, shell và điều khiển theme; làm rõ kết nối thất bại/hết quyền. |
+| `frontend/src/features` | Giữ overview, performance, traces, operations và topology theo chức năng; thêm logs và settings khi triển khai các màn tương ứng. Feature sở hữu truy vấn và component của nó. |
+| `frontend/src/shared` | API client, time window, formatting và UI dùng chung thực sự; không import ngược vào features. |
 
 Giữ architecture test backend. Bổ sung kiểm tra import frontend khi chia module
 để ngăn phụ thuộc vòng và shared phụ thuộc feature. Chỉ tách file theo trách
@@ -84,7 +84,7 @@ trang (500 span/trang, UI đọc tối đa 5.000 và báo khi cắt).
 
 Đã chốt và triển khai (REVIEW, "Đợt quyết định production"): OTLP metrics ACK sau commit;
 retention 7/90/180/30 ngày; trusted proxy cấu hình được; trace phân trang; test đa replica;
-`scripts/loadgen` và baseline ban đầu.
+baseline tải ban đầu.
 
 Còn chờ chủ repo chốt, chưa triển khai: incident reopen (cần migration cho `actor_key_id` của
 status change để ghi actor hệ thống, đổi semantics webhook), server-side redaction free-text

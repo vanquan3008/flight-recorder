@@ -81,14 +81,9 @@ migrate down không phải cách rollback production. Ngoại lệ đã kiểm c
 trước version 2 yêu cầu schema version 1, nên rollback về đó cần `migrate down 1`;
 bước này chỉ gỡ ba hàm của 000002, không chạm dữ liệu.
 
-Wrapper migration destructive có guard, chỉ dành cho disposable DB:
-
-```powershell
-./scripts/upgrade-rollback-drill.ps1 -DatabaseUrl $env:TRACEPILOT_DISPOSABLE_DATABASE_URL -AllowDestructive
-```
-
-Không chạy nếu chưa xác minh đúng DB test. Script không tự kiểm chứng tương
-thích application N/N-1; cần thử image thật trong staging.
+Repo hiện không có helper tự động hóa migration rollback drill. Chỉ thử nâng cấp
+và rollback trên database disposable sau khi xác minh URL; cần kiểm tra tương
+thích application N/N-1 bằng image thật trong staging.
 
 ## Tải và giới hạn bộ nhớ
 
@@ -96,31 +91,16 @@ Chốt events/giây, metric points/giây, kích thước payload, concurrent exp
 cardinality, retention và p95/p99 ACK trước khi đặt SLO. Chạy 2x peak dự kiến,
 ghi CPU/RSS, queue, DB pool/WAL, disk/index growth và latency truy vấn.
 
-```powershell
-./scripts/load-test.ps1 -Requests 1000 -Concurrency 8 -RecordsPerRequest 20 -ApiKey $env:TRACEPILOT_LOAD_API_KEY -Output ./load-result.json
-./scripts/load-test.ps1 -DurationMinutes 5 -Concurrency 8 -MaxP95Ms 2000 -ApiKey $env:TRACEPILOT_LOAD_API_KEY
-```
-
-Script này chỉ đo OTLP HTTP JSON logs; 2000 ms là ví dụ threshold, không phải SLO
-đã được chứng minh. Mỗi request có record identity riêng. accepted_records là số
-được OTLP chấp nhận, không phải phép đếm unique rows trong DB. Đối chiếu rows và
-counter storage với expected count trên DB test; partial rejection là failure.
-Retry/idempotency cần drill riêng gửi lại chính payload cũ.
+Repo hiện không có load-test runner. Đo lại trên staging/DB disposable bằng một
+harness được kiểm soát; không coi số liệu lịch sử hoặc ví dụ threshold là SLO.
+Đối chiếu số rows và counter storage với expected count; partial rejection là
+failure. Retry/idempotency cần drill riêng bằng cách gửi lại chính payload cũ.
 
 Queue byte budget là ước lượng và áp dụng riêng cho events/metrics. Nó không
 giới hạn tổng RSS; đặc biệt gRPC decode xảy ra trước admission handler. OTLP
 metrics ACK sau commit giống trace/log: lỗi DB trả 503/Unavailable để exporter
 gửi lại, điểm lưu được không bị mất sau ACK. Chỉ metrics Prometheus của chính
 TracePilot (`/metrics`) nằm trong bộ nhớ và mất khi tiến trình chết.
-
-Đo baseline bằng `scripts/loadgen` (tốc độ cố định, ingest và đọc tách riêng):
-
-```powershell
-go build -o loadgen.exe ./scripts/loadgen/main.go ./scripts/loadgen/report.go
-./loadgen.exe -api-key $env:KEY -spans-per-second 1000 -spans-per-request 100 -duration 30s
-./loadgen.exe -api-key $env:KEY -reads-per-second 100 -duration 30s
-./loadgen.exe -api-key $env:KEY -spans-per-second 1000 -reads-per-second 100   # chia sẻ tài nguyên
-```
 
 Rate limit mặc định (120 request/phút mỗi IP) thấp hơn tải đo; nâng
 `TRACEPILOT_HTTP_RATE_LIMIT_REQUESTS` chỉ cho phiên đo trên staging. Kết quả đã

@@ -20,24 +20,24 @@ env:
   TRACEPILOT_DATABASE_URL: postgres://tracepilot:tracepilot-test@127.0.0.1:5432/tracepilot?sslmode=disable
 
 jobs:
-  web:
+  frontend:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version-file: web/.nvmrc
+          node-version-file: frontend/.nvmrc
           cache: npm
-          cache-dependency-path: web/package-lock.json
-      - name: Install web dependencies
-        run: npm --prefix web ci
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install frontend dependencies
+        run: npm --prefix frontend ci
       - name: Type check
-        run: npm --prefix web run check
+        run: npm --prefix frontend run check
       - name: Test
-        run: npm --prefix web run test
+        run: npm --prefix frontend run test
       - name: Build embedded console
-        run: npm --prefix web run build
+        run: npm --prefix frontend run build
       - name: Verify generated console assets
         run: |
           git diff --exit-code -- backend/internal/webui/dist
@@ -54,9 +54,6 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Verify generated SQLC
         run: make sqlc-check
-      - name: Verify load tool
-        shell: pwsh
-        run: ./scripts/load-test.tests.ps1
       - name: Verify unified Compose configuration
         shell: pwsh
         run: |
@@ -98,10 +95,6 @@ jobs:
         run: make size-check
       - name: Vet
         run: make vet
-      - name: Load generator
-        run: |
-          go vet scripts/loadgen/main.go scripts/loadgen/report.go
-          go test scripts/loadgen/main.go scripts/loadgen/report.go scripts/loadgen/report_test.go
       - name: Staticcheck
         uses: dominikh/staticcheck-action@672a31696676d1592844bf0164b3bbfd855a4d50 # v1.4.1
         with:
@@ -152,15 +145,15 @@ jobs:
           TRACEPILOT_AUTH_BOOTSTRAP_API_KEY: tracepilot-development-bootstrap-key-000000
           TRACEPILOT_E2E_API_KEY: tracepilot-development-bootstrap-key-000000
         run: |
-          npm --prefix web ci
-          npm --prefix web exec playwright -- install --with-deps chromium
+          npm --prefix frontend ci
+          npm --prefix frontend exec playwright -- install --with-deps chromium
           go -C backend run ./cmd/tracepilot mockdata
           go -C backend run ./cmd/tracepilot serve > tracepilot-e2e.log 2>&1 &
           server_pid=$!
           trap 'kill "$server_pid"' EXIT
           for attempt in $(seq 1 30); do
             if curl --fail --silent http://127.0.0.1:8080/health/ready > /dev/null; then
-              npm --prefix web run test:e2e
+              npm --prefix frontend run test:e2e
               exit 0
             fi
             sleep 1
@@ -176,7 +169,7 @@ jobs:
           fail_ci_if_error: false
 
   docker:
-    needs: [lint, test, web]
+    needs: [lint, test, frontend]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -195,7 +188,7 @@ jobs:
         run: docker run --rm tracepilot:ci version
 
   ci-success:
-    needs: [lint, test, web, docker]
+    needs: [lint, test, frontend, docker]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
@@ -209,5 +202,5 @@ jobs:
           }
           check "${{ needs.lint.result }}"
           check "${{ needs.test.result }}"
-          check "${{ needs.web.result }}"
+          check "${{ needs.frontend.result }}"
           check "${{ needs.docker.result }}"

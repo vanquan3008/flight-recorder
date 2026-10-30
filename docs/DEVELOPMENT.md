@@ -1,13 +1,13 @@
 # Phát triển và kiểm tra
 
 Source map/flow: [ARCHITECTURE.md](ARCHITECTURE.md). Các lệnh chạy từ repo root.
-Go lấy version từ backend/go.mod; Node theo web/.nvmrc. Dùng fixture tổng hợp.
+Go lấy version từ backend/go.mod; Node theo frontend/.nvmrc. Dùng fixture tổng hợp.
 
 ## Docker Compose development
 
 ```powershell
-npm --prefix web ci
-npm --prefix web run build
+npm --prefix frontend ci
+npm --prefix frontend run build
 if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 # Trong .env: COMPOSE_PROFILES=local, DB host là postgres.
 docker compose up -d --wait postgres
@@ -40,8 +40,8 @@ go -C backend run ./cmd/tracepilot serve
 Terminal khác:
 
 ```powershell
-npm --prefix web ci
-npm --prefix web run dev
+npm --prefix frontend ci
+npm --prefix frontend run dev
 ```
 
 Vite proxy API tới :8080. Config chuẩn duy nhất là .env ở root, .env.example chỉ
@@ -61,10 +61,9 @@ workflow dùng .env này. Chi tiết chính thức: [Docker env_file](https://do
 go -C backend test ./...
 go -C backend vet ./...
 go -C backend build ./...
-npm --prefix web run check
-npm --prefix web run test
-npm --prefix web run build
-powershell -NoProfile -File scripts/load-test.tests.ps1
+npm --prefix frontend run check
+npm --prefix frontend run test
+npm --prefix frontend run build
 ```
 
 Linux/macOS dùng pwsh thay powershell. Race detector cần CGO toolchain; CI Linux
@@ -81,8 +80,9 @@ go -C backend run ./cmd/tracepilot migrate up
 go -C backend test ./...
 ```
 
-Baseline down/up xóa schema: chỉ dùng scripts/upgrade-rollback-drill.ps1 có
-guard trên DB disposable. Không dùng migrate down để rollback application.
+Repo hiện không có helper tự động hóa migration rollback drill. Không chạy
+migrate down để rollback application hoặc thử nghiệm trên database thật; chỉ
+thực hiện drill trên database disposable theo quy trình staging đã duyệt.
 Schema hiện là version 2 (000001 baseline, 000002 hàm dependency). Down 1 chỉ
 gỡ hàm của 000002; down tiếp mới xóa schema baseline.
 
@@ -95,29 +95,25 @@ Chạy make sqlc-check với Docker, hoặc generator cùng version ghim trong M
 Không sửa generated code bằng tay. Commit UI source và embedded dist tương ứng.
 CI kiểm tra SQLC và assets khớp source.
 
-## Công cụ tải
+Font (Inter, JetBrains Mono) được self-host qua `@fontsource-variable` trong
+`frontend/src/styles/fonts.css`, chỉ subset latin/latin-ext/vietnamese. Không
+dùng CDN: CSP của backend chỉ cho phép `'self'`. Chỉnh font tại `@theme` trong
+`base.css`.
 
-`scripts/loadgen` (Go, chỉ stdlib, nằm ngoài module backend) phát OTLP trace và đọc API
-với tốc độ cố định rồi in p50/p95/p99, lỗi theo mã trạng thái và số đọc từ `/metrics`
-(queue, pool DB, từ chối). Build và kiểm tra bằng đối số file:
-
-```powershell
-go vet scripts/loadgen/main.go scripts/loadgen/report.go
-go test scripts/loadgen/main.go scripts/loadgen/report.go scripts/loadgen/report_test.go
-go run scripts/loadgen/main.go scripts/loadgen/report.go -help
-```
-
-Cách đo và các giới hạn của môi trường ở [OPERATIONS](OPERATIONS.md) và [REVIEW](REVIEW.md).
+Giao diện kiểu glass: token `--glass*` và `--mesh` ở `base.css`, quy tắc ở
+`styles/glass.css`. Chỉ bề mặt cấp cao nhất làm mờ nền (`--glass-blur`); bề mặt
+lồng bên trong chỉ phủ màu để không blur chồng. Tự chuyển sang nền đặc khi trình
+duyệt thiếu `backdrop-filter` hoặc người dùng bật giảm độ trong suốt/tương phản cao.
 
 ## Browser smoke
 
 Với DB test đã migrate/seed và server đang chạy:
 
 ```powershell
-npm --prefix web exec playwright -- install chromium
+npm --prefix frontend exec playwright -- install chromium
 $env:TRACEPILOT_E2E_BASE_URL = 'http://127.0.0.1:8080'
 $env:TRACEPILOT_E2E_API_KEY = 'tracepilot-development-bootstrap-key-000000'
-npm --prefix web run test:e2e
+npm --prefix frontend run test:e2e
 ```
 
 Chạy binary từ thư mục backend/ (nguồn migration theo cwd) hoặc dùng `go -C backend run`.

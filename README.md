@@ -1,101 +1,183 @@
 # TracePilot
 
-Self-hosted OpenTelemetry observability for small teams. TracePilot accepts
-OTLP traces, application logs and metrics, correlates them with incidents and
-service topology, and ranks RCA hypotheses with inspectable evidence.
+TracePilot là nền tảng quan sát và giám sát hiệu năng ứng dụng (APM & Observability) tự lưu trữ (self-hosted) dành cho các nhóm kỹ thuật. TracePilot tiếp nhận dữ liệu chuẩn OpenTelemetry (OTLP) gồm traces, application logs và metrics; tự động liên kết tương quan giữa sự cố (incidents) và sơ đồ quan hệ phụ thuộc dịch vụ (service topology), đồng thời xếp hạng giả thuyết nguyên nhân gốc rễ (Root Cause Analysis - RCA) với bằng chứng trực quan.
 
-**Status: beta.** Production acceptance requires the checks in
-[Operations](docs/OPERATIONS.md). Traces/logs acknowledge committed PostgreSQL
-transactions, and so do OTLP metrics; only TracePilot's own Prometheus metrics may lose
-points on a crash.
+**Trạng thái hiện tại: Beta.** Quy trình nghiệm thu môi trường vận hành thực tế được quy định tại [OPERATIONS.md](docs/OPERATIONS.md). Dữ liệu traces, logs và OTLP metrics cam kết chỉ phản hồi ACK khi transaction PostgreSQL đã commit thành công.
 
-## Run locally
+---
 
-Requires Docker Compose v2. For frontend development, use the Node version in
-web/.nvmrc; Go follows backend/go.mod.
+## 🌟 Điểm nổi bật
+
+- **Tương thích toàn diện OpenTelemetry (OTLP):** Hỗ trợ đầy đủ giao thức gRPC (`:4317`) và HTTP/JSON (`:4318`) cho `/v1/traces`, `/v1/logs`, `/v1/metrics`.
+- **Kiến trúc tinh gọn (Single-binary Monolith):** Một tiến trình Go duy nhất nhúng sẵn toàn bộ Web Console (React), lưu trữ trực tiếp vào PostgreSQL (riêng biệt). Không cần thêm middleware phức tạp.
+- **Giao diện Web Console hiện đại:** Xây dựng với React và Tailwind CSS, hỗ trợ giao diện Sáng/Tối (Dark/Light mode), thanh điều hướng Capsule Dock nổi, bố cục Bento Card trực quan.
+- **Trace Explorer & Waterfall:** Xem chi tiết luồng thực thi yêu cầu, phân tích cây span, phát hiện điểm nghẽn độ trễ và lỗi phân tán.
+- **Log Correlation:** Tìm kiếm log độc lập theo khung thời gian hoặc truy vết chéo ngay lập tức với trace/span tương ứng.
+- **Bản đồ cấu trúc dịch vụ (Topology Graph):** Trực quan hóa tương tác giữa các service nội bộ và hạ tầng bên thứ ba.
+- **Phát hiện sự cố & Đề xuất RCA:** Tự động phát hiện lỗi bất thường qua baseline tín hiệu, gom nhóm sự cố và đưa ra giả thuyết nguyên nhân gốc rễ kèm bằng chứng định lượng.
+- **Bảo vệ hệ thống & An toàn tài nguyên:** Pipeline tiếp nhận có giới hạn bộ nhớ (byte budget) và hàng đợi có chặn, tự động loại trừ dữ liệu nhạy cảm (redaction), hỗ trợ phân vùng (partition) bảng theo ngày.
+
+---
+
+## 🚀 Khởi chạy nhanh trên Local
+
+Yêu cầu môi trường: **Docker Compose v2**. Nếu phát triển frontend trực tiếp, dùng Node theo `frontend/.nvmrc`; backend Go theo `backend/go.mod`.
+
+### 1. Khởi chạy toàn bộ với Docker Compose
 
 ```powershell
-npm --prefix web ci
-npm --prefix web run build
+# 1. Cài đặt dependency và build giao diện web nhúng
+npm --prefix frontend ci
+npm --prefix frontend run build
+
+# 2. Tạo file cấu hình từ mẫu (nếu chưa có)
 if (-not (Test-Path .env)) { Copy-Item .env.example .env }
-# In .env: use COMPOSE_PROFILES=local and DB host postgres for Compose.
+
+# 3. Khởi chạy PostgreSQL và chạy migrate cấu trúc dữ liệu
 docker compose up -d --wait postgres
 docker compose run --build --rm migrate
+
+# 4. Khởi chạy máy chủ TracePilot
 docker compose up --build -d tracepilot
+
+# 5. Khởi tạo dữ liệu mẫu (mockdata) để trải nghiệm
 docker compose run --rm tracepilot mockdata
 ```
 
-Open http://localhost:8080 and connect with the development-only bootstrap key:
+### 2. Truy cập Web Console
 
+Mở trình duyệt tại: [http://localhost:8080](http://localhost:8080)
+
+Nhập mã khóa khởi tạo dành riêng cho môi trường phát triển (bootstrap key):
 ```text
 tracepilot-development-bootstrap-key-000000
 ```
 
-Create a dedicated ingestion key for your application. The console provides
-OTLP configuration. Use a read key for everyday investigation.
-OTLP endpoints: gRPC :4317; HTTP :4318 with /v1/traces, /v1/logs, /v1/metrics.
-Management API: /api/v1; readiness: /health/ready; liveness: /health/live.
+> [!TIP]
+> Sau khi vào console, hãy vào mục **Settings** để tạo Ingestion API Key riêng cho các ứng dụng cần gửi dữ liệu, và Read API Key cho việc truy vấn hàng ngày.
 
-Configuration lives in one repository-root .env; .env.example is its template.
-The single compose.yaml injects that file into containers. The local profile
-enables PostgreSQL; clear COMPOSE_PROFILES and configure an external database,
-production TLS and a release image digest for production. Native Go uses DB
-host localhost instead of postgres and reads .env (or ../.env with go -C backend).
-See [Development](docs/DEVELOPMENT.md) for precedence and [Operations](docs/OPERATIONS.md)
-for production values. Keep your existing .env when updating the repository.
+---
 
-## Console
+## 🛠️ Chế độ phát triển Native (Go + Vite)
 
-Overview (traffic, errors, latency, incidents needing action), trace explorer
-with span waterfall, log explorer with trace/span correlation, service topology
-graph, incidents with RCA hypotheses, and settings for API keys and webhooks.
-Light and dark themes follow the system and can be switched manually.
+Dành cho nhà phát triển muốn debug backend hoặc làm giao diện frontend với tính năng hot-reload:
 
-## How it works
+```powershell
+# Đảm bảo file .env ở thư mục gốc có TRACEPILOT_DATABASE_URL trỏ về localhost
+# Chạy migration và nạp mockdata qua Go CLI
+go -C backend run ./cmd/tracepilot migrate up
+go -C backend run ./cmd/tracepilot mockdata
+go -C backend run ./cmd/tracepilot serve
+```
 
-SDK/Collector → authenticated OTLP receiver → validation/redaction →
-bounded pipeline → PostgreSQL transaction → ACK → REST/embedded React console.
+Trên một cửa sổ terminal khác:
+```powershell
+npm --prefix frontend ci
+npm --prefix frontend run dev
+```
+Vite Dev Server sẽ chạy tại [http://localhost:5173](http://localhost:5173) và tự động proxy các yêu cầu `/api/v1` và `/health` về backend Go cổng `:8080`.
 
-Error incidents and notification outbox entries are stored with their events.
-A separate scheduled detector compares recent service/dependency/metric signals
-with a baseline. RCA output is a ranked hypothesis, not proof of causality.
-Webhooks are optional, signed, encrypted at rest, and subject to outbound
-network controls. Replay is disabled by default.
+---
 
-One Go process and one PostgreSQL database are the current deployment target.
-Workflow packages live in internal/application; pure rules/models in
-internal/domain; protocol adapters in internal/ingest and internal/transport;
-SQL/transactions in internal/storage. The CLI wires these through small ports.
-React features live in web/src/features.
+## 📡 Cổng giao tiếp & Giao thức
 
-## Current documentation
+| Dịch vụ | Cổng | Giao thức / Đường dẫn | Mô tả |
+| :--- | :--- | :--- | :--- |
+| **OTLP gRPC** | `:4317` | gRPC | Tiếp nhận Traces, Logs, Metrics từ OpenTelemetry SDK/Collector |
+| **OTLP HTTP** | `:4318` | HTTP/Protobuf hoặc JSON | Endpoints: `/v1/traces`, `/v1/logs`, `/v1/metrics` |
+| **Web Console** | `:8080` | HTTP | Giao diện quản trị, tra cứu và điều hành |
+| **Management API**| `:8080` | REST JSON | `/api/v1/...` (xác thực qua HTTP Header `Authorization: Bearer <KEY>`) |
+| **Liveness Probe**| `:8080` | HTTP GET | `/health/live` |
+| **Readiness Probe**| `:8080` | HTTP GET | `/health/ready` |
+| **Internal Metrics**| `:8080` | Prometheus | `/metrics` (đo hiệu năng nội bộ của TracePilot) |
 
-| Guide | Purpose |
-| --- | --- |
-| [Architecture and flow](docs/ARCHITECTURE.md) | Source ownership, dependency rules, runtime sequence and design reasons |
-| [Development](docs/DEVELOPMENT.md) | Native/Compose setup, unit/integration/browser checks and generated assets |
-| [Operations](docs/OPERATIONS.md) | Production config, migration, backup/restore, load, outage and shutdown acceptance |
-| [Source review](docs/REVIEW.md) | Verified findings, fixes, test results and remaining limitations |
-| [Roadmap and alternatives](docs/ROADMAP.md) | Priorities, implementation choices and acceptance criteria |
+---
 
-The guides are written in Vietnamese for the repository owner.
-[CONTRIBUTING.md](CONTRIBUTING.md) describes contribution checks;
-[SECURITY.md](SECURITY.md) describes private vulnerability reporting.
+## 🏗️ Luồng xử lý & Cấu trúc mã nguồn
 
-## Production limits
+```mermaid
+flowchart LR
+    App["Ứng dụng / OTel SDK"] -->|"OTLP gRPC / HTTP"| Ingest["Bộ thu OTLP (Auth & Sanitize)"]
+    Ingest -->|"Batch có kiểm soát bộ nhớ"| Pipeline["Ingest Pipeline & Queue"]
+    Pipeline -->|"Transaction"| DB[("PostgreSQL 17\nPartitioned Tables")]
+    DB -->|"Commit ACK"| App
+    Detector["Background Detector"] -.->|"Phân tích bất thường"| DB
+    Console["React Web Console\n(Tailwind CSS)"] <-->|"REST API (:8080)"| HTTPAPI["HTTP API Layer"]
+    HTTPAPI <--> DB
+```
 
-- The current schema is version 2: baseline 000001_init plus
-  000002_dependency_functions. Run `migrate up` before starting this release.
-  The baseline does not upgrade databases using the former migration history. Preserve existing data and plan
-  a tested data migration before switching such a database.
-- Configure authenticated TLS listeners, PostgreSQL verify-full with a trusted
-  CA, private binds, an immutable image digest, and an explicit data policy.
-- Byte budgets are estimates per pipeline; they do not cap total process RSS.
-- Key-based attribute redaction does not remove every secret from free text.
-- Retention is on by default: telemetry 7 days, incidents 90 days, audit 180 days,
-  finished webhook deliveries 30 days (see Operations before upgrading an existing
-  database). Aggregate read endpoints scan the span window and do not meet the
-  200 ms target at volume; no production throughput SLO is certified.
+Mã nguồn được tổ chức chặt chẽ theo các ranh giới kiến trúc độc lập (mỗi file tuân thủ giới hạn $\le 300$ dòng):
 
-Run the production acceptance drills on staging before admitting real traffic.
-License: [MIT](LICENSE).
+```text
+├── backend/
+│   ├── cmd/tracepilot/          # Khởi động CLI, ghép nối dependency, vòng đời tiến trình
+│   ├── db/                      # File migrations SQL và query templates (SQLC)
+│   └── internal/
+│       ├── application/         # Các use case nghiệp vụ (incident, retention, webhook...)
+│       ├── domain/              # Model và quy tắc nghiệp vụ thuần túy
+│       ├── ingest/              # Bộ chuyển đổi OTLP gRPC/HTTP và pipeline điều tiết
+│       ├── storage/             # Tương tác PostgreSQL, migration, phân vùng
+│       ├── transport/httpapi/   # REST API handler, middleware, rate-limit, OpenAPI
+│       └── webui/               # Adapter nhúng tài nguyên frontend vào binary Go
+├── frontend/
+│   └── src/
+│       ├── app/                 # Shell ứng dụng, router, xác thực phiên
+│       ├── features/            # Các trang chức năng (overview, traces, logs, topology, settings...)
+│       ├── shared/              # Thành phần dùng chung (navigation, paged table, graph layout...)
+│       └── styles/              # Base, components, Tailwind CSS và responsive styles
+├── docs/                        # Tài liệu kỹ thuật chuyên sâu (5 tài liệu tiêu chuẩn)
+└── compose.yaml                 # Cấu hình container tiêu chuẩn cho toàn dự án
+```
+
+---
+
+## ⚙️ Cấu hình môi trường
+
+Tất cả cấu hình hệ thống được định nghĩa thống nhất tại một file độc lập duy nhất: `.env` ở thư mục gốc (tham khảo mẫu `.env.example`).
+
+Các biến cốt lõi:
+- `TRACEPILOT_DATABASE_URL`: Chuỗi kết nối PostgreSQL (ví dụ `postgres://tracepilot:secret@postgres:5432/tracepilot?sslmode=disable`).
+- `TRACEPILOT_ADMIN_API_KEY`: Khóa quản trị hệ thống dùng trong trường hợp bootstrap.
+- `COMPOSE_PROFILES`: Đặt `local` để bật PostgreSQL nội bộ trong Docker Compose; bỏ trống khi triển khai trên production với cơ sở dữ liệu bên ngoài.
+- `TRACEPILOT_RETENTION_TELEMETRY_DAYS`: Số ngày lưu trữ traces/logs/metrics (mặc định: `7` ngày).
+- `TRACEPILOT_RETENTION_INCIDENTS_DAYS`: Số ngày lưu trữ sự cố (mặc định: `90` ngày).
+
+---
+
+## 📚 Danh mục tài liệu kỹ thuật
+
+Toàn bộ tài liệu chi tiết được duy trì tập trung trong thư mục `docs/`:
+
+| Tài liệu | Nội dung chính |
+| :--- | :--- |
+| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Kiến trúc chi tiết, trách nhiệm từng package, luồng dữ liệu và thiết kế phân lớp |
+| [DEVELOPMENT.md](docs/DEVELOPMENT.md) | Hướng dẫn phát triển, thiết lập môi trường Native/Compose, kiểm thử tự động |
+| [OPERATIONS.md](docs/OPERATIONS.md) | Vận hành sản xuất, sao lưu/phục hồi, bảo mật TLS, kiểm thử tải và tiêu chí nghiệm thu |
+| [REVIEW.md](docs/REVIEW.md) | Báo cáo kiểm định chất lượng mã nguồn, kết quả benchmark và các giới hạn đã biết |
+| [ROADMAP.md](docs/ROADMAP.md) | Lộ trình phát triển, các giải pháp cân nhắc và tiêu chuẩn tiếp nhận tính năng |
+
+---
+
+## 🧪 Kiểm tra chất lượng & Tiêu chuẩn đóng góp
+
+Trước khi tích hợp mã nguồn, toàn bộ các bài kiểm thử phải vượt qua:
+
+```powershell
+# 1. Kiểm tra Backend (Go)
+go -C backend test ./...
+go -C backend vet ./...
+go -C backend build ./...
+
+# 2. Kiểm tra Frontend (React + TypeScript)
+npm --prefix frontend run check    # Kiểm tra kiểu TypeScript (tsc --noEmit)
+npm --prefix frontend run test     # Chạy unit/integration test (vitest)
+npm --prefix frontend run build    # Kiểm tra build và đồng bộ embedded assets
+```
+
+Mọi đóng góp vui lòng tham khảo [CONTRIBUTING.md](CONTRIBUTING.md) và báo cáo bảo mật qua [SECURITY.md](SECURITY.md).
+
+---
+
+## 📄 Bản quyền
+
+Dự án được phân phối dưới giấy phép [MIT](LICENSE).

@@ -1,0 +1,25 @@
+.performance-note { margin: 16px 20px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.performance-filters { padding: 0 20px; align-items: end; }
+.performance-filters label { display: grid; gap: 5px; color: var(--muted); font-size: 12px; }
+.performance-dashboard .performance-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 0 20px 20px; gap: 14px; }
+.performance-stats .stat-card { padding: 18px 20px; border-radius: 18px; }
+.performance-trends { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin: 0 20px 24px; }
+.performance-trend { min-width: 0; margin: 0; padding: 18px; border: 1px solid var(--line-soft); border-radius: 20px; background: var(--surface-sunken); box-shadow: var(--shadow-bento); }
+.performance-trend figcaption { display: flex; flex-wrap: wrap; gap: 9px; align-items: center; justify-content: space-between; font-size: 12px; font-weight: 700; }
+.performance-legend { display: flex; gap: 14px; color: var(--muted); font-size: 11px; }
+.performance-legend > span { display: inline-flex; gap: 6px; align-items: center; }
+.performance-legend i { width: 8px; height: 8px; border-radius: 50%; }
+.performance-trend svg { display: block; width: 100%; height: auto; margin-top: 14px; overflow: visible; }
+.performance-trend svg text { fill: var(--muted); font-size: 11px; }
+.performance-chart-window { margin: 8px 0 0; color: var(--faint); font-size: 10.5px; }
+.performance-breakdown { border-top: 1px solid var(--line-soft); }
+.performance-breakdown h3 { display: flex; flex-wrap: wrap; gap: 10px; justify-content: space-between; margin: 0; padding: 16px 20px; font-size: 14px; font-weight: 700; }
+.performance-breakdown h3 span { color: var(--muted); font-size: 11px; font-weight: 500; }
+@media (max-width: 1000px) {
+  .performance-trends { grid-template-columns: 1fr; }
+  .performance-dashboard .performance-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 620px) {
+  .performance-dashboard .performance-stats { margin-inline: 12px; gap: 10px; }
+  .performance-filters label, .performance-filters input { width: 100%; min-width: 0; }
+}

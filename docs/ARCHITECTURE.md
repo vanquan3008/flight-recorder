@@ -45,13 +45,12 @@ backend/
     webui/                  Embedded assets và SPA fallback
   db/migrations/            Migration theo version (golang-migrate)
   db/queries/               Toàn bộ SQL của storage, một file mỗi chức năng
-web/src/
+frontend/src/
   app/                      Router, auth, application shell
   features/                 Giao diện theo chức năng
   shared/                   API client, query helper, UI, types dùng chung
 compose.yaml                Compose duy nhất, local PostgreSQL qua profile
 .env / .env.example         Config thực / mẫu duy nhất ở root
-scripts/                    Load, query plan, certificate, migration drill
 ```
 
 Replay/notification/intelligence/retention được gom vào application để người

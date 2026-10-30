@@ -19,13 +19,13 @@ rebuilt and committed together with its source (CI fails on a stale or
 untracked `backend/internal/webui/dist`):
 
 ```bash
-npm --prefix web ci
-npm --prefix web run check
-npm --prefix web run test
-npm --prefix web run build
+npm --prefix frontend ci
+npm --prefix frontend run check
+npm --prefix frontend run test
+npm --prefix frontend run build
 ```
 
-`make ci` runs the full gate. Browser flows (`npm --prefix web run test:e2e`)
+`make ci` runs the full gate. Browser flows (`npm --prefix frontend run test:e2e`)
 need a migrated, seeded disposable database and a running server; see
 `docs/DEVELOPMENT.md`.
 
