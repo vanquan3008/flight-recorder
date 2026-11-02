@@ -3,6 +3,7 @@ package replay
 import (
 	"context"
 	"errors"
+	"github.com/vanquan3008/tracepilot/internal/auth"
 	"testing"
 
 	"github.com/vanquan3008/tracepilot/internal/application/replay/capture"
@@ -33,7 +34,7 @@ func TestServiceRunsAndRecordsReplay(t *testing.T) {
 	store := &serviceStore{started: true}
 	want := replaydomain.Result{Status: "succeeded", HTTPStatus: 200}
 	outcome, runError := NewService(store, serviceExecutor{result: want}).Run(context.Background(), Command{
-		ProjectID: "project", EnvironmentID: "environment", IncidentID: "incident", ActorKeyID: "key", RequestID: "request",
+		ProjectID: "project", EnvironmentID: "environment", IncidentID: "incident", Actor: auth.Actor{UserID: "key"}, RequestID: "request",
 		Request: capture.Request{Target: "https://example.test/path?secret=value"},
 	})
 	if runError != nil || outcome.ID == "" || outcome.Result.Status != want.Status || store.completed.Status != want.Status {

@@ -18,9 +18,10 @@ func (store *PartitionStore) DeleteIncidentsBefore(ctx context.Context, before t
 	return deleted, nil
 }
 
-// DeleteAuditBefore removes up to batchSize API key audit events older than before.
+// DeleteAuditBefore removes up to batchSize control-plane audit events (accounts, projects,
+// members, ingest tokens) older than before.
 func (store *PartitionStore) DeleteAuditBefore(ctx context.Context, before time.Time, batchSize int) (int64, error) {
-	deleted, deleteError := store.queries.DeleteExpiredAPIKeyEvents(ctx, sqlcstore.DeleteExpiredAPIKeyEventsParams{Before: before, BatchSize: int32(batchSize)})
+	deleted, deleteError := store.queries.DeleteExpiredAuditEvents(ctx, sqlcstore.DeleteExpiredAuditEventsParams{Before: before, BatchSize: int32(batchSize)})
 	if deleteError != nil {
 		return 0, fmt.Errorf("delete expired audit events: %w", deleteError)
 	}

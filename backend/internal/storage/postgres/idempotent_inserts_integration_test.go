@@ -109,20 +109,13 @@ func TestReplicasStartingTogetherProvisionTheSameScopeAndKey(t *testing.T) {
 			ProjectID: telemetry.DeterministicID(at, "startup-project", fmt.Sprint(round), t.Name()), ProjectSlug: fmt.Sprintf("startup-%d-%d", round, at.UnixNano()), ProjectName: "Startup race",
 			EnvironmentID: telemetry.DeterministicID(at, "startup-environment", fmt.Sprint(round), t.Name()), EnvironmentName: "test",
 		}
-		key := fmt.Sprintf("startup-race-%d-bootstrap-key-%020d", at.UnixNano(), round) // key_hash is unique across projects
 		t.Cleanup(func() { cleanupStartupScope(t, database, scope.ProjectID) })
 		for _, err := range runOnReplicas(replicas[:], func(_ int, replica *Database) error {
-			if err := replica.EnsureIngestionScope(context.Background(), scope); err != nil {
-				return err
-			}
-			return replica.EnsureBootstrapAPIKey(context.Background(), scope.ProjectID, key)
+			return replica.EnsureIngestionScope(context.Background(), scope)
 		}) {
 			if err != nil {
 				t.Fatalf("round %d: %v; replicas starting together must all come up", round, err)
 			}
-		}
-		if got := countRows(t, database, "SELECT count(*) FROM api_keys WHERE project_id = $1", scope.ProjectID); got != 1 {
-			t.Fatalf("round %d: %d bootstrap keys, want 1", round, got)
 		}
 	}
 }

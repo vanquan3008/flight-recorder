@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"github.com/vanquan3008/tracepilot/internal/auth"
 	"strings"
 	"sync"
 	"testing"
@@ -13,8 +14,6 @@ import (
 	notificationdomain "github.com/vanquan3008/tracepilot/internal/domain/notification"
 	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
 )
-
-const retentionBootstrapKey = "retention-bootstrap-key-000000000001"
 
 // seedIncident stores one failing span at `at` under a message no other test
 // incident shares, and returns the incident ID it opened.
@@ -45,20 +44,14 @@ func countRows(t *testing.T, database *Database, query string, args ...any) int 
 func TestIncidentRetentionKeepsActiveWorkAndLeavesNoOrphans(t *testing.T) {
 	database, scope := newFlowTestDatabase(t)
 	ctx := context.Background()
-	if err := database.EnsureBootstrapAPIKey(ctx, scope.ProjectID, retentionBootstrapKey); err != nil {
-		t.Fatal(err)
-	}
-	principal, err := database.AuthenticateAPIKey(ctx, retentionBootstrapKey)
-	if err != nil {
-		t.Fatal(err)
-	}
+	actor := testUser(t, database)
 	old := time.Now().UTC().Add(-120 * 24 * time.Hour).Truncate(time.Second)
 	incidents := map[string]string{}
 	for _, word := range []string{"alpha", "beta", "gamma"} {
 		incidents[word] = seedIncident(t, database, scope, word, old)
 	}
 	for _, word := range []string{"alpha", "gamma"} {
-		if _, err := database.UpdateIncidentStatus(ctx, scope.ProjectID, scope.EnvironmentID, incidents[word], "RESOLVED", principal.KeyID); err != nil {
+		if _, err := database.UpdateIncidentStatus(ctx, scope.ProjectID, scope.EnvironmentID, incidents[word], "RESOLVED", auth.Actor{UserID: actor.ID}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -102,17 +95,11 @@ func TestIncidentRetentionKeepsActiveWorkAndLeavesNoOrphans(t *testing.T) {
 func TestAuditAndDeliveryRetentionKeepLiveWork(t *testing.T) {
 	database, scope := newFlowTestDatabase(t)
 	ctx := context.Background()
-	if err := database.EnsureBootstrapAPIKey(ctx, scope.ProjectID, retentionBootstrapKey); err != nil {
-		t.Fatal(err)
-	}
-	principal, err := database.AuthenticateAPIKey(ctx, retentionBootstrapKey)
-	if err != nil {
-		t.Fatal(err)
-	}
+	actor := testUser(t, database)
 	day := 24 * time.Hour
 	for index, age := range []time.Duration{200 * day, 10 * day} {
-		if _, err := database.pool.Exec(ctx, `INSERT INTO api_key_events (id, project_id, api_key_id, actor_key_id, action, created_at) VALUES ($1, $2, $3, $3, 'CREATED', $4)`,
-			telemetry.DeterministicID(time.Now(), "audit", scope.ProjectID, fmt.Sprint(index)), scope.ProjectID, principal.KeyID, time.Now().UTC().Add(-age)); err != nil {
+		if _, err := database.pool.Exec(ctx, `INSERT INTO audit_events (id, project_id, actor_user_id, action, target_type, target_id, created_at) VALUES ($1, $2, $3, 'member.added', 'user', $5, $4)`,
+			telemetry.DeterministicID(time.Now(), "audit", scope.ProjectID, fmt.Sprint(index)), scope.ProjectID, actor.ID, time.Now().UTC().Add(-age), actor.ID); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -146,16 +133,10 @@ func TestAuditAndDeliveryRetentionKeepLiveWork(t *testing.T) {
 func TestConcurrentRetentionRunsDoNotConflict(t *testing.T) {
 	database, scope := newFlowTestDatabase(t)
 	ctx := context.Background()
-	if err := database.EnsureBootstrapAPIKey(ctx, scope.ProjectID, retentionBootstrapKey); err != nil {
-		t.Fatal(err)
-	}
-	principal, err := database.AuthenticateAPIKey(ctx, retentionBootstrapKey)
-	if err != nil {
-		t.Fatal(err)
-	}
+	actor := testUser(t, database)
 	for index := range 20 {
-		if _, err := database.pool.Exec(ctx, `INSERT INTO api_key_events (id, project_id, api_key_id, actor_key_id, action, created_at) VALUES ($1, $2, $3, $3, 'CREATED', $4)`,
-			telemetry.DeterministicID(time.Now(), "concurrent", scope.ProjectID, fmt.Sprint(index)), scope.ProjectID, principal.KeyID, time.Now().UTC().Add(-300*24*time.Hour)); err != nil {
+		if _, err := database.pool.Exec(ctx, `INSERT INTO audit_events (id, project_id, actor_user_id, action, target_type, target_id, created_at) VALUES ($1, $2, $3, 'member.added', 'user', $5, $4)`,
+			telemetry.DeterministicID(time.Now(), "concurrent", scope.ProjectID, fmt.Sprint(index)), scope.ProjectID, actor.ID, time.Now().UTC().Add(-300*24*time.Hour), actor.ID); err != nil {
 			t.Fatal(err)
 		}
 	}

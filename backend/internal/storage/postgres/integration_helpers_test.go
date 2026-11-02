@@ -2,12 +2,10 @@ package postgres
 
 import (
 	"context"
-	"errors"
 	"os"
 	"testing"
 	"time"
 
-	"github.com/vanquan3008/tracepilot/internal/auth"
 	"github.com/vanquan3008/tracepilot/internal/config"
 	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
 )
@@ -32,49 +30,6 @@ func openIntegrationDatabase(t *testing.T) *Database {
 		t.Fatal(openError)
 	}
 	return database
-}
-
-func TestBootstrapKeyLifecycleIntegration(t *testing.T) {
-	database := openIntegrationDatabase(t)
-	ingestion := config.IngestionConfig{
-		ProjectID:       "01900000-0000-7000-8000-000000000801",
-		ProjectSlug:     "bootstrap-lifecycle",
-		ProjectName:     "Bootstrap Lifecycle",
-		EnvironmentID:   "01900000-0000-7000-8000-000000000802",
-		EnvironmentName: "test",
-	}
-	ensureIntegrationScope(t, database, ingestion)
-	t.Cleanup(func() { cleanupIntegrationScope(t, database, ingestion.ProjectID) })
-	ctx := context.Background()
-	const firstKey = "bootstrap-lifecycle-key-0000000001"
-	const rotatedKey = "bootstrap-lifecycle-key-0000000002"
-
-	if ensureError := database.EnsureBootstrapAPIKey(ctx, ingestion.ProjectID, firstKey); ensureError != nil {
-		t.Fatal(ensureError)
-	}
-	if _, authError := database.AuthenticateAPIKey(ctx, firstKey); authError != nil {
-		t.Fatalf("fresh bootstrap key rejected: %v", authError)
-	}
-
-	if _, revokeError := database.pool.Exec(ctx, "UPDATE api_keys SET revoked_at = now() WHERE project_id = $1 AND name = 'bootstrap'", ingestion.ProjectID); revokeError != nil {
-		t.Fatal(revokeError)
-	}
-	if ensureError := database.EnsureBootstrapAPIKey(ctx, ingestion.ProjectID, firstKey); ensureError != nil {
-		t.Fatal(ensureError)
-	}
-	if _, authError := database.AuthenticateAPIKey(ctx, firstKey); !errors.Is(authError, auth.ErrUnauthorized) {
-		t.Fatalf("restart with the same key revived a revoked bootstrap key: %v", authError)
-	}
-
-	if ensureError := database.EnsureBootstrapAPIKey(ctx, ingestion.ProjectID, rotatedKey); ensureError != nil {
-		t.Fatal(ensureError)
-	}
-	if _, authError := database.AuthenticateAPIKey(ctx, rotatedKey); authError != nil {
-		t.Fatalf("rotated bootstrap key rejected: %v", authError)
-	}
-	if _, authError := database.AuthenticateAPIKey(ctx, firstKey); !errors.Is(authError, auth.ErrUnauthorized) {
-		t.Fatalf("previous bootstrap key still accepted after rotation: %v", authError)
-	}
 }
 
 func TestSameSpanInTwoEnvironmentsIntegration(t *testing.T) {
