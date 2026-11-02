@@ -4,7 +4,6 @@ import (
 	"go/parser"
 	"go/token"
 	"io/fs"
-	"os"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -73,29 +72,5 @@ func TestForbiddenImportIncludesSubpackages(t *testing.T) {
 	}
 	if forbiddenImport("github.com/vanquan3008/tracepilot/internal/storageextra", "/internal/storage") {
 		t.Fatal("guard matched a sibling package")
-	}
-}
-
-func assertContainsDirective(t *testing.T, root, directive string) {
-	t.Helper()
-	found := false
-	walkError := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkError error) error {
-		if walkError != nil || entry.IsDir() || filepath.Ext(path) != ".go" || strings.HasSuffix(path, "_test.go") {
-			return walkError
-		}
-		contents, readError := os.ReadFile(path)
-		if readError != nil {
-			return readError
-		}
-		if strings.Contains(string(contents), directive) {
-			found = true
-		}
-		return nil
-	})
-	if walkError != nil {
-		t.Fatal(walkError)
-	}
-	if !found {
-		t.Fatalf("%s does not contain %q", root, directive)
 	}
 }

@@ -26,7 +26,7 @@ var storageFeatureImports = map[string][]string{
 	"signals":     {"pgvalue", "pgbatch", "incidents", "sqlc"},
 	"analytics":   {"pgvalue", "incidents", "outbox", "sqlc"},
 	"explorer":    {"pgvalue", "sqlc"},
-	"apikeys":     {"pgvalue", "sqlc"},
+	"identity":    {"pgvalue", "sqlc"},
 	"webhooks":    {"pgvalue", "sqlc"},
 	"replays":     {"pgvalue", "sqlc"},
 	"maintenance": {"sqlc"},

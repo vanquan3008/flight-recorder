@@ -21,8 +21,11 @@ func hasSampleSecretMarker(value string) bool {
 }
 
 func validateProductionSecrets(configuration Config) error {
-	if hasSampleSecretMarker(configuration.Auth.BootstrapAPIKey) {
-		return errors.New("auth.bootstrap_api_key is a sample value from the repository; generate a random key for production")
+	if hasSampleSecretMarker(configuration.Auth.JWTSecret) {
+		return errors.New("auth.jwt_secret is a sample value from the repository; generate a random secret for production")
+	}
+	if hasSampleSecretMarker(configuration.HTTP.MetricsToken) {
+		return errors.New("http.metrics_token is a sample value from the repository; generate a random token for production")
 	}
 	if hasSampleSecretMarker(configuration.Database.URL) {
 		return errors.New("database.url contains a sample credential from the repository; use a real database password in production")
