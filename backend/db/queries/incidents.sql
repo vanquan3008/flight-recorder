@@ -68,7 +68,7 @@ ORDER BY event.occurred_at ASC, event.id ASC
 LIMIT sqlc.arg(row_limit)::integer;
 
 -- name: ListIncidentStatusChanges :many
-SELECT change.id, change.previous_status, change.status, change.actor_key_id, change.changed_at
+SELECT change.id, change.previous_status, change.status, change.actor_user_id, change.changed_at
 FROM incident_status_changes AS change
 JOIN incidents AS scoped_incident
   ON scoped_incident.project_id = change.project_id
@@ -91,10 +91,10 @@ FOR UPDATE;
 UPDATE incidents SET status = @status, updated_at = @changed_at
 WHERE project_id = @project_id AND environment_id = @environment_id AND id = @id;
 
--- actor_key_id is NULL for changes made by the system, such as a reopen.
+-- actor_user_id is NULL for changes made by the system, such as a reopen.
 -- name: InsertIncidentStatusChange :exec
-INSERT INTO incident_status_changes (id, project_id, incident_id, previous_status, status, actor_key_id, changed_at)
-VALUES (@id, @project_id, @incident_id, @previous_status, @status, sqlc.narg(actor_key_id), @changed_at);
+INSERT INTO incident_status_changes (id, project_id, incident_id, previous_status, status, actor_user_id, changed_at)
+VALUES (@id, @project_id, @incident_id, @previous_status, @status, sqlc.narg(actor_user_id), @changed_at);
 
 -- Reopens a RESOLVED incident only when the failure happened after it was
 -- resolved, so late events from before the fix never undo it. IGNORED stays

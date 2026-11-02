@@ -21,9 +21,6 @@ sql:
         emit_empty_slices: true
         emit_pointers_for_null_types: true
         rename:
-          api_key: APIKey
-          api_key_event: APIKeyEvent
-          api_key_id: APIKeyID
           duration_ns: DurationNS
           event_ids: EventIDs
           http_status: HTTPStatus

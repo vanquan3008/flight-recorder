@@ -19,6 +19,17 @@ INSERT INTO environments (id, project_id, name)
 VALUES ('01900000-0000-7000-8000-000000000002', '01900000-0000-7000-8000-000000000001', 'development')
 ON CONFLICT (project_id, id) DO NOTHING;
 
+-- Tài khoản quản trị để đăng nhập ngay: admin@tracepilot.local / admin-password-123.
+-- Là super admin và owner của project mặc định. Chỉ để thử trên máy dev: đổi mật khẩu hoặc xóa
+-- tài khoản này trước khi dùng thật. Chạy lại không đặt lại mật khẩu đã đổi.
+INSERT INTO users (id, email, display_name, password_hash, platform_admin)
+VALUES ('5eed0000-0000-4000-8000-0000000000ad', 'admin@tracepilot.local', 'Admin',
+        'pbkdf2-sha256$600000$FebVOQydajic2r6kpocCfw$6+9j0Sm9rMjtFp90oTSPgqmWRwRuYmiIF9u6bI/cCzs', true)
+ON CONFLICT (email) DO NOTHING;
+INSERT INTO project_members (project_id, user_id, role)
+SELECT '01900000-0000-7000-8000-000000000001', id, 'owner' FROM users WHERE email = 'admin@tracepilot.local'
+ON CONFLICT (project_id, user_id) DO NOTHING;
+
 -- Xóa dữ liệu mẫu của lần chạy trước (nhận biết bằng id cố định).
 DELETE FROM incidents WHERE id IN ('5eed0000-0000-4000-8000-0000000000a1', '5eed0000-0000-4000-8000-0000000000a2');
 DELETE FROM events WHERE id::text LIKE '5eed0000-0000-4000-8000-0000000001%';

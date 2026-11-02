@@ -260,7 +260,7 @@ func (q *Queries) InsertIncidentOccurrence(ctx context.Context, arg InsertIncide
 }
 
 const insertIncidentStatusChange = `-- name: InsertIncidentStatusChange :exec
-INSERT INTO incident_status_changes (id, project_id, incident_id, previous_status, status, actor_key_id, changed_at)
+INSERT INTO incident_status_changes (id, project_id, incident_id, previous_status, status, actor_user_id, changed_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
 `
 
@@ -270,11 +270,11 @@ type InsertIncidentStatusChangeParams struct {
 	IncidentID     string
 	PreviousStatus string
 	Status         string
-	ActorKeyID     *string
+	ActorUserID    *string
 	ChangedAt      time.Time
 }
 
-// actor_key_id is NULL for changes made by the system, such as a reopen.
+// actor_user_id is NULL for changes made by the system, such as a reopen.
 func (q *Queries) InsertIncidentStatusChange(ctx context.Context, arg InsertIncidentStatusChangeParams) error {
 	_, err := q.db.Exec(ctx, insertIncidentStatusChange,
 		arg.ID,
@@ -282,7 +282,7 @@ func (q *Queries) InsertIncidentStatusChange(ctx context.Context, arg InsertInci
 		arg.IncidentID,
 		arg.PreviousStatus,
 		arg.Status,
-		arg.ActorKeyID,
+		arg.ActorUserID,
 		arg.ChangedAt,
 	)
 	return err
@@ -470,7 +470,7 @@ func (q *Queries) ListIncidentOccurrences(ctx context.Context, arg ListIncidentO
 }
 
 const listIncidentStatusChanges = `-- name: ListIncidentStatusChanges :many
-SELECT change.id, change.previous_status, change.status, change.actor_key_id, change.changed_at
+SELECT change.id, change.previous_status, change.status, change.actor_user_id, change.changed_at
 FROM incident_status_changes AS change
 JOIN incidents AS scoped_incident
   ON scoped_incident.project_id = change.project_id
@@ -498,7 +498,7 @@ type ListIncidentStatusChangesRow struct {
 	ID             string
 	PreviousStatus string
 	Status         string
-	ActorKeyID     *string
+	ActorUserID    *string
 	ChangedAt      time.Time
 }
 
@@ -522,7 +522,7 @@ func (q *Queries) ListIncidentStatusChanges(ctx context.Context, arg ListInciden
 			&i.ID,
 			&i.PreviousStatus,
 			&i.Status,
-			&i.ActorKeyID,
+			&i.ActorUserID,
 			&i.ChangedAt,
 		); err != nil {
 			return nil, err

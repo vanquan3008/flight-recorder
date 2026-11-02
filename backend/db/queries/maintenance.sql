@@ -33,10 +33,10 @@ WHERE id IN (
     LIMIT @batch_size::integer
 );
 
--- name: DeleteExpiredAPIKeyEvents :execrows
-DELETE FROM api_key_events
+-- name: DeleteExpiredAuditEvents :execrows
+DELETE FROM audit_events
 WHERE id IN (
-    SELECT expired.id FROM api_key_events AS expired
+    SELECT expired.id FROM audit_events AS expired
     WHERE expired.created_at < @before::timestamptz
     ORDER BY expired.created_at
     LIMIT @batch_size::integer
