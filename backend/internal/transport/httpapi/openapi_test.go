@@ -15,7 +15,7 @@ func TestServerExposesOpenAPIContract(t *testing.T) {
 	if responseRecorder.Code != http.StatusOK {
 		t.Fatalf("status = %d", responseRecorder.Code)
 	}
-	if !strings.Contains(responseRecorder.Body.String(), `"openapi":"3.1.0"`) || !strings.Contains(responseRecorder.Body.String(), `"/api/v1/api-key-events"`) || !strings.Contains(responseRecorder.Body.String(), `"/api/v1/incidents/{incidentID}/analysis"`) {
+	if !strings.Contains(responseRecorder.Body.String(), `"openapi":"3.1.0"`) || !strings.Contains(responseRecorder.Body.String(), `"/api/v1/projects/{projectID}/ingest-tokens"`) || !strings.Contains(responseRecorder.Body.String(), `"/api/v1/incidents/{incidentID}/analysis"`) {
 		t.Fatalf("unexpected OpenAPI response: %s", responseRecorder.Body.String())
 	}
 }
@@ -39,7 +39,7 @@ func TestOpenAPIUsesHandlerSuccessStatusCodes(t *testing.T) {
 			t.Fatalf("%s %s does not advertise %s response", method, path, want)
 		}
 	}
-	assertStatus("/api/v1/api-keys/{keyID}/rotate", "post", "200")
+	assertStatus("/api/v1/auth/refresh", "post", "200")
 	assertStatus("/api/v1/webhooks/{webhookID}/rotate", "post", "200")
 	assertStatus("/api/v1/traces/{traceID}", "get", "200")
 
@@ -148,4 +148,8 @@ func countOpenAPIOperations(paths map[string]any) int {
 		}
 	}
 	return count
+}
+
+func openAPISpec() map[string]any {
+	return openAPISpecForRoutes(apiRouteDefinitions)
 }

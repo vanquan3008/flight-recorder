@@ -44,9 +44,5 @@ func newQueryIntegrationDatabase(t *testing.T) (*postgres.Database, config.Inges
 	if err := database.EnsureIngestionScope(context.Background(), ingestion); err != nil {
 		t.Fatal(err)
 	}
-	bootstrapKey := "integration-query-key-" + projectID
-	if err := database.EnsureBootstrapAPIKey(context.Background(), ingestion.ProjectID, bootstrapKey); err != nil {
-		t.Fatal(err)
-	}
-	return database, ingestion, bootstrapKey
+	return database, ingestion, newIntegrationAdmin(t, database)
 }

@@ -15,7 +15,7 @@ func (server *Server) requestPerformance(responseWriter http.ResponseWriter, req
 		return
 	}
 	filter := query.PerformanceFilter{
-		EnvironmentID: server.environmentID, Service: parsed.Service, Endpoint: strings.TrimSpace(request.URL.Query().Get("endpoint")),
+		EnvironmentID: principal.EnvironmentID, Service: parsed.Service, Endpoint: strings.TrimSpace(request.URL.Query().Get("endpoint")),
 		From: parsed.From, To: parsed.To, Limit: parsed.Limit,
 	}
 	if err := filter.Validate(); err != nil {

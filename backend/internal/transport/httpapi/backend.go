@@ -20,11 +20,10 @@ import (
 // depends only on the methods it actually calls. This makes fakes in tests
 // cheaper and keeps the dependency surface explicit.
 type Backend interface {
-	AuthBackend
 	TelemetryBackend
 	IncidentBackend
 	ReplayBackend
-	APIKeyBackend
+	IdentityBackend
 }
 
 // WebhookBackend is optional at the transport boundary so deployments can run
@@ -53,11 +52,6 @@ type PerformanceBackend interface {
 	RequestPerformance(context.Context, string, query.PerformanceFilter) (query.RequestPerformance, error)
 }
 
-// AuthBackend authenticates inbound API key tokens.
-type AuthBackend interface {
-	AuthenticateAPIKey(context.Context, string) (auth.Principal, error)
-}
-
 // TelemetryBackend covers traces, spans, logs, and service topology.
 type TelemetryBackend interface {
 	ListTraces(context.Context, string, query.TraceFilter) ([]query.TraceSummary, error)
@@ -75,7 +69,7 @@ type IncidentBackend interface {
 	ListIncidentOccurrences(context.Context, string, string, string, int, time.Time, string) ([]incident.Occurrence, error)
 	ListIncidentEvents(context.Context, string, string, string, int, time.Time, string) ([]incident.Event, error)
 	ListIncidentStatusChanges(context.Context, string, string, string, int, time.Time, string) ([]incident.StatusChange, error)
-	UpdateIncidentStatus(context.Context, string, string, string, string, string) (incident.Incident, error)
+	UpdateIncidentStatus(context.Context, string, string, string, string, auth.Actor) (incident.Incident, error)
 }
 
 // ReplayBackend stores and retrieves replay execution records.
@@ -84,13 +78,41 @@ type ReplayBackend interface {
 	GetReplayExecution(context.Context, string, string, string, string) (replaydomain.Execution, error)
 }
 
-// APIKeyBackend manages API key CRUD and audit events.
-type APIKeyBackend interface {
-	ListAPIKeys(context.Context, string, auth.APIKeyFilter) ([]auth.APIKey, error)
-	CreateAPIKey(context.Context, string, string, auth.CreateAPIKeyParams) (auth.IssuedAPIKey, error)
-	ListAPIKeyEvents(context.Context, string, auth.APIKeyEventFilter) ([]auth.APIKeyEvent, error)
-	RotateAPIKey(context.Context, string, string, string) (auth.IssuedAPIKey, error)
-	RevokeAPIKey(context.Context, string, string, string) (bool, error)
+// IdentityBackend manages accounts, refresh sessions, projects, membership and ingest tokens.
+type IdentityBackend interface {
+	CreateSession(ctx context.Context, userID, userAgent string) (string, auth.Session, error)
+	RefreshSession(context.Context, string) (string, auth.User, error)
+	RevokeSession(context.Context, string) error
+
+	HasUsers(context.Context) (bool, error)
+	RegisterUser(ctx context.Context, firstProjectID string, params auth.CreateUserParams, open bool) (auth.User, error)
+	CreateUser(context.Context, auth.CreateUserParams, auth.Actor) (auth.User, error)
+	GetUser(context.Context, string) (auth.User, error)
+	GetUserByEmail(context.Context, string) (auth.User, error)
+	GetCredentials(context.Context, string) (auth.Credentials, error)
+	GetCredentialsByID(context.Context, string) (auth.Credentials, error)
+	RecordLogin(context.Context, string) error
+	ListUsers(context.Context, auth.UserFilter) ([]auth.User, error)
+	UpdateUser(ctx context.Context, userID string, update auth.UpdateUserParams, actor auth.Actor) (auth.User, error)
+	SetPassword(ctx context.Context, userID, newPassword string, mustChange bool, keepToken string, actor auth.Actor) error
+
+	CreateProject(ctx context.Context, params auth.CreateProjectParams, creatorUserID string, ownedLimit int, actor auth.Actor) (auth.Project, auth.Environment, error)
+	GetProject(context.Context, string) (auth.Project, error)
+	RenameProject(ctx context.Context, projectID, name string, actor auth.Actor) (auth.Project, error)
+	ListMemberships(context.Context, string) ([]auth.Membership, error)
+	ListAllProjects(context.Context) ([]auth.Membership, error)
+	ListEnvironments(context.Context, string) ([]auth.Environment, error)
+	CreateEnvironment(ctx context.Context, projectID, name string, actor auth.Actor) (auth.Environment, error)
+	MemberRole(ctx context.Context, projectID, userID string) (string, error)
+	ListMembers(context.Context, string) ([]auth.Member, error)
+	AddMember(ctx context.Context, projectID, userID, role string, actor auth.Actor) error
+	ChangeMemberRole(ctx context.Context, projectID, userID, role string, actor auth.Actor, allowed func(current string) bool) error
+	RemoveMember(ctx context.Context, projectID, userID string, actor auth.Actor, allowed func(current string) bool) error
+	ListAuditEvents(context.Context, string, auth.AuditFilter) ([]auth.AuditEvent, error)
+
+	CreateIngestToken(ctx context.Context, projectID string, actor auth.Actor, params auth.CreateIngestTokenParams, sign func(tokenID string, expiresAt time.Time) (string, error)) (auth.IssuedIngestToken, error)
+	ListIngestTokens(context.Context, string, auth.IngestTokenFilter) ([]auth.IngestToken, error)
+	RevokeIngestToken(ctx context.Context, projectID, tokenID string, actor auth.Actor) error
 }
 
 // ReplayRunner executes a captured HTTP request against a live target.

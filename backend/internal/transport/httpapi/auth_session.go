@@ -1,0 +1,196 @@
+package httpapi
+
+import (
+	"errors"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/vanquan3008/tracepilot/internal/auth"
+)
+
+func (server *Server) authStatus(responseWriter http.ResponseWriter, request *http.Request, _ auth.Principal) {
+	hasUsers, checkError := server.backend.HasUsers(request.Context())
+	if server.writeIdentityError(responseWriter, "check accounts", checkError) {
+		return
+	}
+	// The first account is always allowed: it becomes the super administrator.
+	writeJSONValue(responseWriter, http.StatusOK, map[string]any{"registration_open": server.allowRegistration || !hasUsers, "first_account": !hasUsers})
+}
+
+// signInView finishes a sign-in: it opens a refresh session, sets its cookie and answers with the
+// access token and the projects the person can open.
+func (server *Server) signInView(responseWriter http.ResponseWriter, request *http.Request, user auth.User, status int) {
+	refresh, _, sessionError := server.backend.CreateSession(request.Context(), user.ID, request.UserAgent())
+	if server.writeIdentityError(responseWriter, "create session", sessionError) {
+		return
+	}
+	if recordError := server.backend.RecordLogin(request.Context(), user.ID); recordError != nil {
+		server.logger.Warn("record login", "error", recordError)
+	}
+	server.writeSession(responseWriter, request, user, refresh, status)
+}
+
+// writeSession sets the refresh cookie and answers with a fresh access token.
+func (server *Server) writeSession(responseWriter http.ResponseWriter, request *http.Request, user auth.User, refresh string, status int) {
+	memberships, listError := server.projectsFor(request, user)
+	if server.writeIdentityError(responseWriter, "list projects", listError) {
+		return
+	}
+	token, expires, tokenError := auth.IssueAccessToken(server.jwtSecret, user.ID, time.Now())
+	if tokenError != nil {
+		server.writeInternalError(responseWriter, "sign access token", tokenError)
+		return
+	}
+	server.setRefreshCookie(responseWriter, request, refresh)
+	writeJSONValue(responseWriter, status, sessionView{User: user, Memberships: memberships, AccessToken: token, ExpiresAt: &expires})
+}
+
+// authRegister creates an account the person chooses themselves and signs them in. The first account on
+// an installation becomes the super administrator; the rest are ordinary accounts, and only while
+// registration is open.
+func (server *Server) authRegister(responseWriter http.ResponseWriter, request *http.Request, _ auth.Principal) {
+	var payload struct {
+		Email       string `json:"email"`
+		DisplayName string `json:"display_name"`
+		Password    string `json:"password"`
+	}
+	if decodeError := decodeIdentityBody(request, &payload); decodeError != nil {
+		writeAPIError(responseWriter, http.StatusBadRequest, "INVALID_REQUEST", decodeError.Error())
+		return
+	}
+	// Registration is open to anyone who can reach the server, so it is throttled per address by the router.
+	user, registerError := server.backend.RegisterUser(request.Context(), server.defaultProjectID, auth.CreateUserParams{
+		Email: payload.Email, DisplayName: payload.DisplayName, Password: payload.Password,
+	}, server.allowRegistration)
+	if server.writeIdentityError(responseWriter, "register", registerError) {
+		return
+	}
+	server.signInView(responseWriter, request, user, http.StatusCreated)
+}
+
+func (server *Server) authLogin(responseWriter http.ResponseWriter, request *http.Request, _ auth.Principal) {
+	var payload struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+	if decodeError := decodeIdentityBody(request, &payload); decodeError != nil {
+		writeAPIError(responseWriter, http.StatusBadRequest, "INVALID_REQUEST", decodeError.Error())
+		return
+	}
+	email := strings.ToLower(strings.TrimSpace(payload.Email))
+	// The address becomes a rate-limit key, and no valid one is longer than this; cutting it keeps a
+	// request body from filling the limiter with large keys.
+	if len(email) > maxEmailLength {
+		email = email[:maxEmailLength]
+	}
+	// Guessing is limited per client by the router and per account here, so spreading attempts
+	// across addresses does not help.
+	if allowed, retryAfter := server.rateLimiter.allow("login:"+email, loginAttemptsPerEmail, time.Now()); !allowed {
+		responseWriter.Header().Set("Retry-After", retryAfterSeconds(retryAfter))
+		writeAPIError(responseWriter, http.StatusTooManyRequests, "RATE_LIMITED", "too many sign-in attempts; try again later")
+		return
+	}
+	credentials, lookupError := server.backend.GetCredentials(request.Context(), email)
+	hash := auth.DummyPasswordHash()
+	if lookupError == nil {
+		hash = credentials.PasswordHash
+	} else if !errors.Is(lookupError, auth.ErrUserNotFound) {
+		server.writeInternalError(responseWriter, "load credentials", lookupError)
+		return
+	}
+	// Verify even for an unknown email so the response time does not reveal which accounts exist.
+	valid := len(payload.Password) <= auth.MaxPasswordLength*4 && auth.VerifyPassword(payload.Password, hash)
+	if lookupError != nil || !valid || credentials.User.DisabledAt != nil {
+		writeAPIError(responseWriter, http.StatusUnauthorized, "INVALID_CREDENTIALS", auth.ErrInvalidCredentials.Error())
+		return
+	}
+	server.signInView(responseWriter, request, credentials.User, http.StatusOK)
+}
+
+// authRefresh trades the refresh cookie for a new one and a new access token. The console calls it when
+// its access token expires, and on page load to resume a session.
+func (server *Server) authRefresh(responseWriter http.ResponseWriter, request *http.Request, _ auth.Principal) {
+	next, user, refreshError := server.backend.RefreshSession(request.Context(), refreshToken(request))
+	if errors.Is(refreshError, auth.ErrSessionNotFound) {
+		server.clearRefreshCookie(responseWriter, request)
+		writeAPIError(responseWriter, http.StatusUnauthorized, "UNAUTHORIZED", "sign in again")
+		return
+	}
+	if server.writeIdentityError(responseWriter, "refresh session", refreshError) {
+		return
+	}
+	server.writeSession(responseWriter, request, user, next, http.StatusOK)
+}
+
+func (server *Server) authLogout(responseWriter http.ResponseWriter, request *http.Request, _ auth.Principal) {
+	if token := refreshToken(request); token != "" {
+		if revokeError := server.backend.RevokeSession(request.Context(), token); revokeError != nil {
+			server.writeInternalError(responseWriter, "revoke session", revokeError)
+			return
+		}
+	}
+	server.clearRefreshCookie(responseWriter, request)
+	responseWriter.WriteHeader(http.StatusNoContent)
+}
+
+func (server *Server) authMe(responseWriter http.ResponseWriter, request *http.Request, principal auth.Principal) {
+	user, userError := server.backend.GetUser(request.Context(), principal.UserID)
+	if server.writeIdentityError(responseWriter, "get user", userError) {
+		return
+	}
+	memberships, listError := server.projectsFor(request, user)
+	if server.writeIdentityError(responseWriter, "list projects", listError) {
+		return
+	}
+	writeJSONValue(responseWriter, http.StatusOK, sessionView{User: user, Memberships: memberships})
+}
+
+// authChangePassword replaces the password, ends every other session and the access tokens issued so
+// far, and answers with a new access token so this one stays signed in.
+func (server *Server) authChangePassword(responseWriter http.ResponseWriter, request *http.Request, principal auth.Principal) {
+	var payload struct {
+		CurrentPassword string `json:"current_password"`
+		NewPassword     string `json:"new_password"`
+	}
+	if decodeError := decodeIdentityBody(request, &payload); decodeError != nil {
+		writeAPIError(responseWriter, http.StatusBadRequest, "INVALID_REQUEST", decodeError.Error())
+		return
+	}
+	if allowed, retryAfter := server.rateLimiter.allow("password:"+principal.UserID, loginAttemptsPerEmail, time.Now()); !allowed {
+		responseWriter.Header().Set("Retry-After", retryAfterSeconds(retryAfter))
+		writeAPIError(responseWriter, http.StatusTooManyRequests, "RATE_LIMITED", "too many attempts; try again later")
+		return
+	}
+	credentials, loadError := server.backend.GetCredentialsByID(request.Context(), principal.UserID)
+	if server.writeIdentityError(responseWriter, "load credentials", loadError) {
+		return
+	}
+	if len(payload.CurrentPassword) > auth.MaxPasswordLength*4 || !auth.VerifyPassword(payload.CurrentPassword, credentials.PasswordHash) {
+		writeAPIError(responseWriter, http.StatusUnauthorized, "INVALID_CREDENTIALS", "current password is incorrect")
+		return
+	}
+	if payload.NewPassword == payload.CurrentPassword {
+		writeAPIError(responseWriter, http.StatusBadRequest, "INVALID_REQUEST", "choose a password different from the current one")
+		return
+	}
+	// The refresh cookie, when the console sends it, keeps this browser's session alive.
+	keep := refreshToken(request)
+	if setError := server.backend.SetPassword(request.Context(), principal.UserID, payload.NewPassword, false, keep, principal.Actor()); server.writeIdentityError(responseWriter, "set password", setError) {
+		return
+	}
+	user, userError := server.backend.GetUser(request.Context(), principal.UserID)
+	if server.writeIdentityError(responseWriter, "get user", userError) {
+		return
+	}
+	memberships, listError := server.projectsFor(request, user)
+	if server.writeIdentityError(responseWriter, "list projects", listError) {
+		return
+	}
+	token, expires, tokenError := auth.IssueAccessToken(server.jwtSecret, user.ID, time.Now())
+	if tokenError != nil {
+		server.writeInternalError(responseWriter, "sign access token", tokenError)
+		return
+	}
+	writeJSONValue(responseWriter, http.StatusOK, sessionView{User: user, Memberships: memberships, AccessToken: token, ExpiresAt: &expires})
+}

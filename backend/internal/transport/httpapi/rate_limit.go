@@ -80,16 +80,20 @@ func (server *Server) withRateLimit(nextHandler http.Handler) http.Handler {
 		key := class + ":" + server.clientAddress(request)
 		allowed, retryAfter := server.rateLimiter.allow(key, limit, time.Now())
 		if !allowed {
-			seconds := int(math.Ceil(retryAfter.Seconds()))
-			if seconds < 1 {
-				seconds = 1
-			}
-			responseWriter.Header().Set("Retry-After", strconv.Itoa(seconds))
+			responseWriter.Header().Set("Retry-After", retryAfterSeconds(retryAfter))
 			writeAPIError(responseWriter, http.StatusTooManyRequests, "RATE_LIMITED", "request rate limit exceeded")
 			return
 		}
 		nextHandler.ServeHTTP(responseWriter, request)
 	})
+}
+
+func retryAfterSeconds(wait time.Duration) string {
+	seconds := int(math.Ceil(wait.Seconds()))
+	if seconds < 1 {
+		seconds = 1
+	}
+	return strconv.Itoa(seconds)
 }
 
 func (server *Server) rateLimitFor(request *http.Request) (int, string) {
@@ -99,7 +103,7 @@ func (server *Server) rateLimitFor(request *http.Request) (int, string) {
 	if strings.HasSuffix(request.URL.Path, "/replays") {
 		return server.rateLimitReplayRequests, "replay"
 	}
-	if strings.HasPrefix(request.URL.Path, "/api/v1/api-keys") || strings.HasPrefix(request.URL.Path, "/api/v1/api-key-events") {
+	if strings.HasPrefix(request.URL.Path, "/api/v1/auth/") || strings.HasSuffix(request.URL.Path, "/ingest-tokens") {
 		return server.rateLimitAuthRequests, "auth"
 	}
 	return server.rateLimitRequests, "query"

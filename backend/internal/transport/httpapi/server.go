@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"crypto/subtle"
 	"crypto/tls"
 	"errors"
 	"log/slog"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	incidentapp "github.com/vanquan3008/tracepilot/internal/application/incident"
+	"github.com/vanquan3008/tracepilot/internal/auth"
 	"github.com/vanquan3008/tracepilot/internal/config"
 	"github.com/vanquan3008/tracepilot/internal/observability/metrics"
 )
@@ -24,6 +26,12 @@ type Server struct {
 	readinessCheck          func(context.Context) error
 	readinessTimeout        time.Duration
 	environmentID           string
+	defaultProjectID        string
+	jwtSecret               []byte
+	metricsToken            string
+	allowRegistration       bool
+	production              bool
+	environments            *environmentCache
 	maxBodyBytes            int64
 	ready                   atomic.Bool
 	shutdownTimeout         time.Duration
@@ -54,6 +62,12 @@ func New(configuration config.Config, logger *slog.Logger, readinessCheck func(c
 		readinessCheck:          readinessCheck,
 		readinessTimeout:        configuration.Database.ReadinessTimeout,
 		environmentID:           configuration.Ingestion.EnvironmentID,
+		defaultProjectID:        configuration.Ingestion.ProjectID,
+		jwtSecret:               []byte(configuration.Auth.JWTSecret),
+		metricsToken:            configuration.HTTP.MetricsToken,
+		allowRegistration:       configuration.Auth.AllowRegistration,
+		production:              configuration.Production,
+		environments:            newEnvironmentCache(),
 		maxBodyBytes:            configuration.HTTP.ManagementMaxBodyBytes,
 		shutdownTimeout:         configuration.ShutdownTimeout,
 		backend:                 backend,
@@ -169,7 +183,13 @@ func (server *Server) metricsEndpoint(responseWriter http.ResponseWriter, reques
 		writeAPIError(responseWriter, http.StatusServiceUnavailable, "UNAVAILABLE", "metrics authentication is unavailable")
 		return
 	}
-	if _, ok := server.authenticateScope(responseWriter, request, "read"); !ok {
+	// A scraper cannot sign in and renew a 15 minute token, so it presents the configured scrape token.
+	// Anyone else needs to be a signed-in super administrator.
+	if scrape := bearerToken(request); server.metricsToken != "" && subtle.ConstantTimeCompare([]byte(scrape), []byte(server.metricsToken)) == 1 {
+		server.metricsHandler.ServeHTTP(responseWriter, request)
+		return
+	}
+	if _, ok := server.authenticateScope(responseWriter, request, auth.ScopePlatform); !ok {
 		return
 	}
 	server.metricsHandler.ServeHTTP(responseWriter, request)

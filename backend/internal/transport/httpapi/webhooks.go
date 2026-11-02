@@ -71,7 +71,7 @@ func (server *Server) createWebhook(responseWriter http.ResponseWriter, request 
 		writeAPIError(responseWriter, http.StatusBadRequest, "INVALID_REQUEST", decodeError.Error())
 		return
 	}
-	issued, createError := backend.CreateWebhook(request.Context(), principal.ProjectID, principal.KeyID, notificationdomain.CreateWebhookParams{
+	issued, createError := backend.CreateWebhook(request.Context(), principal.ProjectID, principal.UserID, notificationdomain.CreateWebhookParams{
 		Name: strings.TrimSpace(payload.Name), URL: strings.TrimSpace(payload.URL), Secret: payload.Secret, Events: payload.Events,
 	})
 	if server.writeWebhookError(responseWriter, "create webhook", createError) {

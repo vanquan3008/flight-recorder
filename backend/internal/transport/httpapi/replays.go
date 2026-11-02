@@ -35,8 +35,8 @@ func (server *Server) replayIncident(responseWriter http.ResponseWriter, request
 		return
 	}
 	outcome, runError := server.replay.Run(request.Context(), replay.Command{
-		ProjectID: principal.ProjectID, EnvironmentID: server.environmentID, IncidentID: incidentID,
-		ActorKeyID: principal.KeyID, RequestID: request.Header.Get(requestIDHeader), Request: captured,
+		ProjectID: principal.ProjectID, EnvironmentID: principal.EnvironmentID, IncidentID: incidentID,
+		Actor: principal.Actor(), RequestID: request.Header.Get(requestIDHeader), Request: captured,
 	})
 	if errors.Is(runError, replay.ErrIncidentNotFound) {
 		writeNotFound(responseWriter, "incident")

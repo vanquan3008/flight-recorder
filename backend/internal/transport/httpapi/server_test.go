@@ -222,6 +222,7 @@ func TestMetricMethodBoundsCardinality(t *testing.T) {
 func newTestServer(readinessCheck func(context.Context) error) *Server {
 	configuration := config.Config{
 		HTTP:            config.HTTPConfig{ManagementMaxBodyBytes: 1024},
+		Auth:            config.AuthConfig{JWTSecret: testJWTSecret, AllowRegistration: true},
 		Database:        config.DatabaseConfig{ReadinessTimeout: time.Second},
 		ShutdownTimeout: time.Second,
 	}
