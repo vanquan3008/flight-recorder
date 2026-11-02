@@ -1,9 +1,9 @@
-import type { TopologyEdge, TopologyNode } from "./types";
+import type { TopologyEdge, TopologyNode } from "../types";
 
-export const nodeWidth = 176;
-export const nodeHeight = 48;
-const columnGap = 84;
-const rowGap = 26;
+export const nodeWidth = 192;
+export const nodeHeight = 68;
+export const columnGap = 124;
+const rowGap = 30;
 const margin = 24;
 const bandGap = 56;
 
@@ -74,7 +74,7 @@ export function layoutTopology(nodes: TopologyNode[], edges: TopologyEdge[]): To
     placed.push({ ...node, layer: index, isolated: false, x: margin + index * (nodeWidth + columnGap), y: margin + offset + position * (nodeHeight + rowGap) });
   }));
 
-  const isolated = nodes.filter((node) => !connected.has(node.id) ).sort(byName);
+  const isolated = nodes.filter((node) => !connected.has(node.id)).sort(byName);
   const graphWidth = Math.max(columns.length * (nodeWidth + columnGap) - columnGap, 0) + margin * 2;
   const perRow = Math.max(1, Math.floor(Math.max(graphWidth, nodeWidth + margin * 2) / (nodeWidth + columnGap / 2)));
   const bandTop = margin + graphHeight + (graphHeight && isolated.length ? bandGap : 0);
@@ -101,6 +101,41 @@ export function edgePath(from: PlacedNode, to: PlacedNode): string {
   // Same-column or backwards call: leave from the right and re-enter from the left over the top.
   const lift = Math.min(from.y, to.y) - 18;
   return `M${x1},${y1} C${x1 + 60},${lift} ${x2 - 60},${lift} ${x2},${y2}`;
+}
+
+/**
+ * Where to put a label on the curve drawn by edgePath: the point above the middle of the gap after
+ * the caller. For neighbouring columns that is the middle of the curve; for a call that skips
+ * columns it keeps the label out of the nodes in between.
+ */
+export function edgeLabelPoint(from: PlacedNode, to: PlacedNode): { x: number; y: number } {
+  const x1 = from.x + nodeWidth;
+  const y1 = from.y + nodeHeight / 2;
+  const x2 = to.x;
+  const y2 = to.y + nodeHeight / 2;
+  let c1 = { x: x1 + 60, y: Math.min(from.y, to.y) - 18 };
+  let c2 = { x: x2 - 60, y: c1.y };
+  if (to.layer > from.layer) {
+    const bend = Math.max((x2 - x1) / 2, 24);
+    c1 = { x: x1 + bend, y: y1 };
+    c2 = { x: x2 - bend, y: y2 };
+  }
+  const at = (t: number) => {
+    const u = 1 - t;
+    return {
+      x: u * u * u * x1 + 3 * u * u * t * c1.x + 3 * u * t * t * c2.x + t * t * t * x2,
+      y: u * u * u * y1 + 3 * u * u * t * c1.y + 3 * u * t * t * c2.y + t * t * t * y2,
+    };
+  };
+  const wanted = x1 + columnGap / 2;
+  let best = at(0.5);
+  let distance = Infinity;
+  for (let step = 0; step <= 50; step++) {
+    const point = at(step / 50);
+    const gap = Math.abs(point.x - wanted);
+    if (gap < distance) { distance = gap; best = point; }
+  }
+  return best;
 }
 
 export function truncate(value: string, limit = 22): string {

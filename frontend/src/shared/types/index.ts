@@ -1,4 +1,8 @@
+// ── Pagination ─────────────────────────────────────────────────────────────────
+
 export interface Page<T> { data: T[]; next_cursor?: string }
+
+// ── Performance ────────────────────────────────────────────────────────────────
 
 export type PerformanceStats = {
   requests: number;
@@ -23,6 +27,8 @@ export type RequestPerformance = {
   services: PerformanceGroup[];
   endpoints: PerformanceGroup[];
 };
+
+// ── Traces ─────────────────────────────────────────────────────────────────────
 
 export type TraceSummary = {
   trace_id: string;
@@ -52,6 +58,8 @@ export type Span = {
 /** One page of a trace; next_cursor is present while more spans follow. */
 export type TraceDetail = { trace_id: string; spans: Span[]; next_cursor?: string };
 
+// ── Logs ───────────────────────────────────────────────────────────────────────
+
 export type LogRecord = {
   event_id: string;
   occurred_at: string;
@@ -62,6 +70,8 @@ export type LogRecord = {
   service_name: string;
   resource_attributes: unknown;
 };
+
+// ── Incidents ──────────────────────────────────────────────────────────────────
 
 export type Incident = {
   id: string;
@@ -93,9 +103,46 @@ export type StatusChange = {
   id: string;
   previous_status: string;
   status: string;
-  actor_key_id?: string;
+  actor_user_id?: string;
   changed_at: string;
 };
+
+export type IncidentEvidence = {
+  series_id?: string;
+  id: string;
+  signal_type: string;
+  entity_type: string;
+  entity_id: string;
+  metric_name: string;
+  direction: string;
+  observed_value: number;
+  baseline_value: number;
+  change_ratio: number;
+  trace_ids: string[];
+  summary: string;
+};
+
+export type IncidentAnalysis = {
+  incident_id: string;
+  conclusion: string;
+  hypotheses: {
+    rank: number;
+    entity_id: string;
+    statement: string;
+    confidence: number;
+    evidence_ids: string[];
+  }[];
+  evidence: IncidentEvidence[];
+  causal_graph: {
+    source_entity_id: string;
+    target_entity_id: string;
+    relationship: string;
+    confidence: number;
+    evidence_ids: string[];
+  }[];
+};
+
+// ── Topology ───────────────────────────────────────────────────────────────────
 
 export type TopologyNode = { id: string; type: string; name: string };
 export type TopologyEdge = {
@@ -109,25 +156,15 @@ export type TopologyEdge = {
   trace_ids: string[];
 };
 export type Topology = { from: string; to: string; nodes: TopologyNode[]; edges: TopologyEdge[] };
-export type TelemetryQuality = { from: string; to: string; spans: number; orphan_spans: number; logs: number; uncorrelated_logs: number; metric_points: number };
-export type IncidentEvidence = {
-	series_id?: string;
-  id: string;
-  signal_type: string;
-  entity_type: string;
-  entity_id: string;
-  metric_name: string;
-  direction: string;
-  observed_value: number;
-  baseline_value: number;
-  change_ratio: number;
-  trace_ids: string[];
-  summary: string;
-};
-export type IncidentAnalysis = {
-  incident_id: string;
-  conclusion: string;
-  hypotheses: { rank: number; entity_id: string; statement: string; confidence: number; evidence_ids: string[] }[];
-  evidence: IncidentEvidence[];
-  causal_graph: { source_entity_id: string; target_entity_id: string; relationship: string; confidence: number; evidence_ids: string[] }[];
+
+// ── Telemetry quality ──────────────────────────────────────────────────────────
+
+export type TelemetryQuality = {
+  from: string;
+  to: string;
+  spans: number;
+  orphan_spans: number;
+  logs: number;
+  uncorrelated_logs: number;
+  metric_points: number;
 };

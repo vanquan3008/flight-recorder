@@ -1,0 +1,23 @@
+.flow-diagram { display: block; width: 100%; max-width: 880px; height: auto; margin: 0 auto; overflow: visible; }
+.fd-column { fill: var(--faint); font-size: 10px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+.fd-empty { fill: var(--faint); font-size: 12px; }
+
+.fd-node rect { fill: var(--glass-field); stroke: var(--glass-field-edge); stroke-width: 1; transition: fill .16s ease, stroke .16s ease; }
+.fd-node.link { cursor: pointer; outline: none; }
+.fd-node.link:hover rect, .fd-node.link:focus-visible rect { fill: var(--glass-field-focus); stroke: var(--accent); }
+.fd-node.self rect { fill: color-mix(in srgb, var(--accent) 18%, transparent); stroke: var(--accent); stroke-width: 1.5; filter: drop-shadow(0 6px 18px var(--accent-glow)); }
+.fd-name { fill: var(--text); font-size: 13px; font-weight: 650; }
+.fd-name.big { font-size: 15px; }
+.fd-type { fill: var(--muted); font-size: 9.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
+.fd-dot { fill: var(--faint); }
+.fd-dot.service { fill: var(--accent); }
+.fd-dot.external { fill: var(--violet); }
+.fd-dot.database { fill: var(--cyan); }
+
+.fd-edge { fill: none; stroke: color-mix(in srgb, var(--accent) 55%, var(--faint)); stroke-linecap: round; opacity: .9; }
+.fd-edge.failing { stroke: var(--danger); stroke-dasharray: 6 4; }
+.fd-head.ok { fill: color-mix(in srgb, var(--accent) 55%, var(--faint)); }
+.fd-head.bad { fill: var(--danger); }
+.fd-label rect { fill: var(--surface-solid); stroke: var(--glass-field-edge); }
+.fd-label text { fill: var(--muted); font-size: 11px; font-weight: 600; }
+.fd-label .err { fill: var(--danger-fg); }

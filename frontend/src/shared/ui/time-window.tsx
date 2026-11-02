@@ -1,3 +1,4 @@
+import { RefreshCw } from "lucide-react";
 import { useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
 
@@ -23,13 +24,24 @@ export function useTimeWindow() {
   return { ...window, range, select };
 }
 
+const choices = [["15m", "15m", "Last 15 minutes"], ["1h", "1h", "Last hour"], ["24h", "24h", "Last 24 hours"], ["7d", "7d", "Last 7 days"]] as const;
+
 export function TimeWindowFilter({ range, select, allowAny = false }: { range: string; select: (value: string) => void; allowAny?: boolean }) {
-  return <div className="toolbar">
-    <label>Time range <select aria-label="Time range" value={range} onChange={(event) => select(event.target.value)}>
-      <option value="15m">Last 15 minutes</option><option value="1h">Last hour</option>
-      <option value="24h">Last 24 hours</option><option value="7d">Last 7 days</option>
-      {allowAny && <option value="any">Any time</option>}
-    </select></label>
-    <button type="button" onClick={() => select(range)}>Refresh window</button>
-  </div>;
+  const shown = allowAny ? [...choices, ["any", "Any", "Any time"] as const] : choices;
+  return (
+    <div className="toolbar time-filter">
+      <span className="time-filter-label" aria-hidden="true">Time range</span>
+      <fieldset className="segmented" aria-label="Time range">
+        {shown.map(([value, text, name]) => (
+          <label className="segment" key={value}>
+            <input type="radio" name="time-range" value={value} checked={range === value} aria-label={name} onChange={() => select(value)} />
+            <span>{text}</span>
+          </label>
+        ))}
+      </fieldset>
+      <button type="button" className="refresh" aria-label="Refresh window" onClick={() => select(range)}>
+        <RefreshCw size={13} aria-hidden="true" /> Refresh
+      </button>
+    </div>
+  );
 }
