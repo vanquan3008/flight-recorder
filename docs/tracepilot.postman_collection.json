@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "TracePilot API",
-    "description": "Smoke and hardening tests for TracePilot.\n\n1. Start TracePilot (`go -C backend run ./cmd/tracepilot serve`) and set the variables below if your ports or bootstrap key differ.\n2. Run folders 1-5 in order with the Collection Runner (or send requests one by one).\n3. `adminKey` is the bootstrap key from .env (TRACEPILOT_AUTH_BOOTSTRAP_API_KEY). `ingestKey` and `readKey` are created by folder 2.\n\nProduction endpoints use HTTPS: change baseUrl and otlpUrl and use a key with only the scope you need.",
+    "description": "Smoke and hardening tests for TracePilot.\n\n1. Start TracePilot (`go -C backend run ./cmd/tracepilot serve`) and set the variables below if your ports differ.\n2. Run folders 1-6 in order with the Collection Runner (or send requests one by one).\n3. Folder 2 registers `accountEmail` (or signs in), makes a project for the run and an ingest token for it. Telemetry is sent with that ingest token; everything is read back as the account that owns the project.\n\nThere are no API keys: people sign in with a JWT access token, applications send telemetry with an ingest token. Production endpoints use HTTPS: change baseUrl and otlpUrl.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "event": [
@@ -33,24 +33,43 @@
       "value": "http://localhost:4318"
     },
     {
-      "key": "adminKey",
-      "value": "tracepilot-development-bootstrap-key-000000",
-      "description": "Bootstrap key from .env. Replace it for any shared environment."
-    },
-    {
-      "key": "ingestKey",
-      "value": ""
-    },
-    {
-      "key": "ingestKeyId",
-      "value": ""
-    },
-    {
-      "key": "readKey",
-      "value": ""
-    },
-    {
       "key": "runId",
+      "value": ""
+    },
+    {
+      "key": "accountEmail",
+      "value": "postman-owner@example.test"
+    },
+    {
+      "key": "accountPassword",
+      "value": "postman-owner-passphrase"
+    },
+    {
+      "key": "accessToken",
+      "value": ""
+    },
+    {
+      "key": "projectId",
+      "value": ""
+    },
+    {
+      "key": "ingestToken",
+      "value": ""
+    },
+    {
+      "key": "ingestTokenId",
+      "value": ""
+    },
+    {
+      "key": "memberToken",
+      "value": ""
+    },
+    {
+      "key": "memberUserId",
+      "value": ""
+    },
+    {
+      "key": "ownerUserId",
       "value": ""
     }
   ],
@@ -147,8 +166,12 @@
             "method": "GET",
             "header": [
               {
-                "key": "X-API-Key",
-                "value": "{{adminKey}}"
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "X-Project-ID",
+                "value": "{{projectId}}"
               }
             ],
             "url": {
@@ -160,7 +183,7 @@
                 "metrics"
               ]
             },
-            "description": "In production this needs a key with the read scope; in development it is open."
+            "description": "In production this needs a signed-in person with a role in the project; in development it is open."
           },
           "event": [
             {
@@ -178,43 +201,26 @@
       ]
     },
     {
-      "name": "2. API keys (admin)",
+      "name": "2. Account, project and ingest token",
+      "description": "Registers (or signs in) and makes a project for this run. Everything after this folder works in that project, so a run never touches other people's data.\n\nThe first account on an empty installation becomes the super administrator. On an installation that has accounts, set accountEmail/accountPassword to yours, or leave them: a new account is registered when registration is open.",
       "item": [
         {
-          "name": "Create ingest key",
+          "name": "Auth status",
           "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "X-API-Key",
-                "value": "{{adminKey}}"
-              },
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
+            "method": "GET",
+            "header": [],
             "url": {
-              "raw": "{{baseUrl}}/api/v1/api-keys",
+              "raw": "{{baseUrl}}/api/v1/auth/status",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "api",
                 "v1",
-                "api-keys"
+                "auth",
+                "status"
               ]
-            },
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"name\": \"postman-ingest-{{runId}}\",\n  \"scopes\": [\n    \"ingest\"\n  ]\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            },
-            "description": "Saves ingestKey for the OTLP requests. The secret is shown only once by the API."
+            }
           },
           "event": [
             {
@@ -222,83 +228,134 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('status is 201', function () { pm.response.to.have.status(201); });",
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('says whether registration is open', function () { pm.expect(pm.response.json().registration_open).to.be.a('boolean'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Register (or already registered)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-TracePilot-Refresh",
+                "value": "1"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/register",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "register"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{accountEmail}}\",\n  \"display_name\": \"Postman Owner\",\n  \"password\": \"{{accountPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('created, already registered, or registration closed', function () { pm.expect(pm.response.code).to.be.oneOf([201, 409, 403]); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Sign in",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-TracePilot-Refresh",
+                "value": "1"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "login"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{accountEmail}}\",\n  \"password\": \"{{accountPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Saves accessToken (15 minutes). The refresh token is an HttpOnly cookie that only the /api/v1/auth routes receive."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
                   "const b = pm.response.json();",
-                  "pm.collectionVariables.set('ingestKey', b.key);",
-                  "pm.collectionVariables.set('ingestKeyId', b.api_key.id);",
-                  "pm.test('secret returned once', function () { pm.expect(b.key).to.be.a('string').and.not.empty; });"
+                  "pm.collectionVariables.set('accessToken', b.access_token);",
+                  "pm.test('access token is a JWT and the password hash is never returned', function () { pm.expect(b.access_token.split('.')).to.have.length(3); pm.expect(pm.response.text()).to.not.include('pbkdf2'); });",
+                  "pm.test('the refresh token is not in the body', function () { pm.expect(pm.response.text()).to.not.include('refresh'); });"
                 ]
               }
             }
           ]
         },
         {
-          "name": "Create read key",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "X-API-Key",
-                "value": "{{adminKey}}"
-              },
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/api/v1/api-keys",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "v1",
-                "api-keys"
-              ]
-            },
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"name\": \"postman-read-{{runId}}\",\n  \"scopes\": [\n    \"read\"\n  ]\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('status is 201', function () { pm.response.to.have.status(201); });",
-                  "pm.collectionVariables.set('readKey', pm.response.json().key);"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "List API keys",
+          "name": "Current user",
           "request": {
             "method": "GET",
             "header": [
               {
-                "key": "X-API-Key",
-                "value": "{{adminKey}}"
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/api/v1/api-keys",
+              "raw": "{{baseUrl}}/api/v1/auth/me",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "api",
                 "v1",
-                "api-keys"
+                "auth",
+                "me"
               ]
             }
           },
@@ -313,9 +370,157 @@
               }
             }
           ]
+        },
+        {
+          "name": "Create the project for this run",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/projects",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "projects"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"slug\": \"postman-{{runId}}\",\n  \"name\": \"Postman {{runId}}\",\n  \"environment\": \"staging\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Any registered account may create a project; a regular account may own up to ten."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 201', function () { pm.response.to.have.status(201); });",
+                  "pm.collectionVariables.set('projectId', pm.response.json().project.id);",
+                  "pm.test('creator is the owner', function () { pm.expect(pm.response.json().environment.name).to.eql('staging'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create an ingest token",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "X-Project-ID",
+                "value": "{{projectId}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/projects/{{projectId}}/ingest-tokens",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "projects",
+                "{{projectId}}",
+                "ingest-tokens"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"postman-ingest-{{runId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Saves ingestToken for the OTLP requests. The secret is shown only once."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 201', function () { pm.response.to.have.status(201); });",
+                  "const b = pm.response.json();",
+                  "pm.collectionVariables.set('ingestToken', b.jwt);",
+                  "pm.collectionVariables.set('ingestTokenId', b.token.id);",
+                  "pm.test('secret returned once, as a JWT', function () { pm.expect(b.jwt.split('.')).to.have.length(3); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List ingest tokens (no secrets)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "X-Project-ID",
+                "value": "{{projectId}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/projects/{{projectId}}/ingest-tokens",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "projects",
+                "{{projectId}}",
+                "ingest-tokens"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('the list never contains the secret', function () { pm.expect(pm.response.text()).to.not.include(pm.collectionVariables.get('ingestToken')); });"
+                ]
+              }
+            }
+          ]
         }
-      ],
-      "description": "Run these first. They create the keys the other folders use."
+      ]
     },
     {
       "name": "3. OTLP ingest (HTTP/JSON, port 4318)",
@@ -326,8 +531,8 @@
             "method": "POST",
             "header": [
               {
-                "key": "X-API-Key",
-                "value": "{{ingestKey}}"
+                "key": "Authorization",
+                "value": "Bearer {{ingestToken}}"
               },
               {
                 "key": "Content-Type",
@@ -386,8 +591,8 @@
             "method": "POST",
             "header": [
               {
-                "key": "X-API-Key",
-                "value": "{{ingestKey}}"
+                "key": "Authorization",
+                "value": "Bearer {{ingestToken}}"
               },
               {
                 "key": "Content-Type",
@@ -446,8 +651,8 @@
             "method": "POST",
             "header": [
               {
-                "key": "X-API-Key",
-                "value": "{{ingestKey}}"
+                "key": "Authorization",
+                "value": "Bearer {{ingestToken}}"
               },
               {
                 "key": "Content-Type",
@@ -493,8 +698,8 @@
             "method": "POST",
             "header": [
               {
-                "key": "X-API-Key",
-                "value": "{{ingestKey}}"
+                "key": "Authorization",
+                "value": "Bearer {{ingestToken}}"
               },
               {
                 "key": "Content-Type",
@@ -541,8 +746,8 @@
             "method": "POST",
             "header": [
               {
-                "key": "X-API-Key",
-                "value": "{{ingestKey}}"
+                "key": "Authorization",
+                "value": "Bearer {{ingestToken}}"
               },
               {
                 "key": "Content-Type",
@@ -583,10 +788,10 @@
           ]
         }
       ],
-      "description": "Each request is acknowledged after the data is committed to PostgreSQL, so folder 4 can read it right away."
+      "description": "Sends telemetry with the ingest token. It lands in this run's project, in its first environment (add `X-Environment: <name>` to choose another)."
     },
     {
-      "name": "4. Verify what was stored (read key)",
+      "name": "4. Verify what was stored (signed in as the owner)",
       "item": [
         {
           "name": "Traces: list",
@@ -594,8 +799,12 @@
             "method": "GET",
             "header": [
               {
-                "key": "X-API-Key",
-                "value": "{{readKey}}"
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "X-Project-ID",
+                "value": "{{projectId}}"
               }
             ],
             "url": {
@@ -639,8 +848,12 @@
             "method": "GET",
             "header": [
               {
-                "key": "X-API-Key",
-                "value": "{{readKey}}"
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "X-Project-ID",
+                "value": "{{projectId}}"
               }
             ],
             "url": {
@@ -674,8 +887,12 @@
             "method": "GET",
             "header": [
               {
-                "key": "X-API-Key",
-                "value": "{{readKey}}"
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "X-Project-ID",
+                "value": "{{projectId}}"
               }
             ],
             "url": {
@@ -710,8 +927,12 @@
             "method": "GET",
             "header": [
               {
-                "key": "X-API-Key",
-                "value": "{{readKey}}"
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "X-Project-ID",
+                "value": "{{projectId}}"
               }
             ],
             "url": {
@@ -759,8 +980,12 @@
             "method": "GET",
             "header": [
               {
-                "key": "X-API-Key",
-                "value": "{{readKey}}"
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "X-Project-ID",
+                "value": "{{projectId}}"
               }
             ],
             "url": {
@@ -815,8 +1040,12 @@
             "method": "GET",
             "header": [
               {
-                "key": "X-API-Key",
-                "value": "{{readKey}}"
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "X-Project-ID",
+                "value": "{{projectId}}"
               }
             ],
             "url": {
@@ -849,8 +1078,12 @@
             "method": "GET",
             "header": [
               {
-                "key": "X-API-Key",
-                "value": "{{readKey}}"
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "X-Project-ID",
+                "value": "{{projectId}}"
               }
             ],
             "url": {
@@ -883,8 +1116,12 @@
             "method": "GET",
             "header": [
               {
-                "key": "X-API-Key",
-                "value": "{{readKey}}"
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "X-Project-ID",
+                "value": "{{projectId}}"
               }
             ],
             "url": {
@@ -917,8 +1154,12 @@
             "method": "GET",
             "header": [
               {
-                "key": "X-API-Key",
-                "value": "{{readKey}}"
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "X-Project-ID",
+                "value": "{{projectId}}"
               }
             ],
             "url": {
@@ -958,8 +1199,12 @@
             "method": "GET",
             "header": [
               {
-                "key": "X-API-Key",
-                "value": "{{readKey}}"
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "X-Project-ID",
+                "value": "{{projectId}}"
               }
             ],
             "url": {
@@ -993,7 +1238,7 @@
       "name": "5. Hardening checks",
       "item": [
         {
-          "name": "OTLP without a key -> 401",
+          "name": "OTLP without a token -> 401",
           "request": {
             "method": "POST",
             "header": [
@@ -1035,13 +1280,13 @@
           ]
         },
         {
-          "name": "OTLP with a read-only key -> 401",
+          "name": "OTLP with a console access token -> 401",
           "request": {
             "method": "POST",
             "header": [
               {
-                "key": "X-API-Key",
-                "value": "{{readKey}}"
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
               },
               {
                 "key": "Content-Type",
@@ -1066,7 +1311,8 @@
                   "language": "json"
                 }
               }
-            }
+            },
+            "description": "A token for the console is not accepted as a telemetry credential."
           },
           "event": [
             {
@@ -1081,13 +1327,17 @@
           ]
         },
         {
-          "name": "Management API with an ingest key -> 403",
+          "name": "Management API with an ingest token -> 401",
           "request": {
             "method": "GET",
             "header": [
               {
-                "key": "X-API-Key",
-                "value": "{{ingestKey}}"
+                "key": "Authorization",
+                "value": "Bearer {{ingestToken}}"
+              },
+              {
+                "key": "X-Project-ID",
+                "value": "{{projectId}}"
               }
             ],
             "url": {
@@ -1100,7 +1350,8 @@
                 "v1",
                 "traces"
               ]
-            }
+            },
+            "description": "An ingest token cannot read anything."
           },
           "event": [
             {
@@ -1108,14 +1359,14 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('status is 403', function () { pm.response.to.have.status(403); });"
+                  "pm.test('status is 401', function () { pm.response.to.have.status(401); });"
                 ]
               }
             }
           ]
         },
         {
-          "name": "Management API without a key -> 401",
+          "name": "Management API without a token -> 401",
           "request": {
             "method": "GET",
             "header": [],
@@ -1144,13 +1395,52 @@
           ]
         },
         {
+          "name": "A project you do not belong to -> 403",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "X-Project-ID",
+                "value": "00000000-0000-7000-8000-00000000dead"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/traces",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "traces"
+              ]
+            },
+            "description": "An unknown project answers exactly like one you cannot open."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 403', function () { pm.response.to.have.status(403); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "OTLP body over the size limit -> 413",
           "request": {
             "method": "POST",
             "header": [
               {
-                "key": "X-API-Key",
-                "value": "{{ingestKey}}"
+                "key": "Authorization",
+                "value": "Bearer {{ingestToken}}"
               },
               {
                 "key": "Content-Type",
@@ -1200,13 +1490,13 @@
           ]
         },
         {
-          "name": "Bad key, repeat 65x (Collection Runner) -> 401 then 429",
+          "name": "Bad token, repeat 65x (Collection Runner) -> 401 then 429",
           "request": {
             "method": "POST",
             "header": [
               {
-                "key": "X-API-Key",
-                "value": "junk-{{$randomUUID}}"
+                "key": "Authorization",
+                "value": "Bearer junk-{{$randomUUID}}"
               },
               {
                 "key": "Content-Type",
@@ -1248,25 +1538,31 @@
           ]
         },
         {
-          "name": "Revoke the ingest key -> 204",
+          "name": "Revoke the ingest token -> 204",
           "request": {
             "method": "DELETE",
             "header": [
               {
-                "key": "X-API-Key",
-                "value": "{{adminKey}}"
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "X-Project-ID",
+                "value": "{{projectId}}"
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/api/v1/api-keys/{{ingestKeyId}}",
+              "raw": "{{baseUrl}}/api/v1/projects/{{projectId}}/ingest-tokens/{{ingestTokenId}}",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "api",
                 "v1",
-                "api-keys",
-                "{{ingestKeyId}}"
+                "projects",
+                "{{projectId}}",
+                "ingest-tokens",
+                "{{ingestTokenId}}"
               ]
             }
           },
@@ -1283,13 +1579,13 @@
           ]
         },
         {
-          "name": "Revoked ingest key stops working at once -> 401",
+          "name": "Revoked ingest token stops working at once -> 401",
           "request": {
             "method": "POST",
             "header": [
               {
-                "key": "X-API-Key",
-                "value": "{{ingestKey}}"
+                "key": "Authorization",
+                "value": "Bearer {{ingestToken}}"
               },
               {
                 "key": "Content-Type",
@@ -1314,8 +1610,7 @@
                   "language": "json"
                 }
               }
-            },
-            "description": "Accepted keys are never cached, so revocation applies to the next request."
+            }
           },
           "event": [
             {
@@ -1329,8 +1624,652 @@
             }
           ]
         }
-      ],
-      "description": "Negative cases. Keep the last two requests in this order: they revoke the key created in folder 2."
+      ]
+    },
+    {
+      "name": "6. Roles, members and sessions",
+      "description": "Two people in one project: the owner made it, the user was let in. Then the refresh token rotation and sign-out.\n\nSend the refresh requests with the cookie jar enabled (Postman app; newman keeps it for a run). The cookie belongs to the account that signed in or registered last.",
+      "item": [
+        {
+          "name": "A wrong password is refused",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-TracePilot-Refresh",
+                "value": "1"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "login"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{accountEmail}}\",\n  \"password\": \"definitely-not-the-password\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 401', function () { pm.response.to.have.status(401); });",
+                  "pm.test('same answer as an unknown account', function () { pm.expect(pm.response.json().error.code).to.eql('INVALID_CREDENTIALS'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Add an environment",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "X-Project-ID",
+                "value": "{{projectId}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/projects/{{projectId}}/environments",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "projects",
+                "{{projectId}}",
+                "environments"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"canary\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 201', function () { pm.response.to.have.status(201); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Refresh needs the console header -> 401",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/refresh",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "refresh"
+              ]
+            },
+            "description": "Without X-TracePilot-Refresh a cross-site form could have sent the cookie, so it is refused."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 401', function () { pm.response.to.have.status(401); });",
+                  "pm.test('a cookie alone is not enough', function () { pm.expect(pm.response.json().error.code).to.eql('UNAUTHORIZED'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Refresh the access token",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-TracePilot-Refresh",
+                "value": "1"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/refresh",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "refresh"
+              ]
+            },
+            "description": "Each refresh also replaces the refresh cookie; the old one stops working."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.collectionVariables.set('accessToken', pm.response.json().access_token);",
+                  "pm.test('a new access token', function () { pm.expect(pm.response.json().access_token).to.be.a('string').and.not.empty; });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Register a second person",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-TracePilot-Refresh",
+                "value": "1"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/register",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "register"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"postman-user-{{runId}}@example.test\",\n  \"display_name\": \"Postman User\",\n  \"password\": \"postman-user-passphrase\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Needs registration to be open."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('created', function () { pm.expect(pm.response.code).to.be.oneOf([201, 403]); });",
+                  "if (pm.response.code === 201) { const b = pm.response.json(); pm.collectionVariables.set('memberToken', b.access_token); pm.collectionVariables.set('memberUserId', b.user.id); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Not added yet -> 403",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{memberToken}}"
+              },
+              {
+                "key": "X-Project-ID",
+                "value": "{{projectId}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/traces",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "traces"
+              ]
+            },
+            "description": "Registering does not give access to anyone's project."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 403', function () { pm.response.to.have.status(403); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Add them as a user",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "X-Project-ID",
+                "value": "{{projectId}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/projects/{{projectId}}/members",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "projects",
+                "{{projectId}}",
+                "members"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"postman-user-{{runId}}@example.test\",\n  \"role\": \"user\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 201', function () { pm.response.to.have.status(201); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A user reads the project",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{memberToken}}"
+              },
+              {
+                "key": "X-Project-ID",
+                "value": "{{projectId}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/traces",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "traces"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A user cannot create ingest tokens -> 403",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{memberToken}}"
+              },
+              {
+                "key": "X-Project-ID",
+                "value": "{{projectId}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/projects/{{projectId}}/ingest-tokens",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "projects",
+                "{{projectId}}",
+                "ingest-tokens"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"not-allowed\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 403', function () { pm.response.to.have.status(403); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A user cannot list members -> 403",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{memberToken}}"
+              },
+              {
+                "key": "X-Project-ID",
+                "value": "{{projectId}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/projects/{{projectId}}/members",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "projects",
+                "{{projectId}}",
+                "members"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 403', function () { pm.response.to.have.status(403); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List members (owner)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "X-Project-ID",
+                "value": "{{projectId}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/projects/{{projectId}}/members",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "projects",
+                "{{projectId}}",
+                "members"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('one owner and one user', function () { const roles = pm.response.json().data.map(function (m) { return m.role; }).sort(); pm.expect(roles).to.eql(['owner', 'user']); });",
+                  "pm.collectionVariables.set('ownerUserId', pm.response.json().data.filter(function (m) { return m.role === 'owner'; })[0].user.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "The last owner cannot leave -> 409",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "X-Project-ID",
+                "value": "{{projectId}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/projects/{{projectId}}/members/{{ownerUserId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "projects",
+                "{{projectId}}",
+                "members",
+                "{{ownerUserId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 409', function () { pm.response.to.have.status(409); });",
+                  "pm.test('named in the error', function () { pm.expect(pm.response.json().error.code).to.eql('LAST_OWNER'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Audit log of the project",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "X-Project-ID",
+                "value": "{{projectId}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/audit-events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "audit-events"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('records who changed access', function () { const actions = pm.response.json().data.map(function (e) { return e.action; }); pm.expect(actions).to.include.members(['member.added', 'project.created', 'ingest_token.created']); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Sign out",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-TracePilot-Refresh",
+                "value": "1"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/logout",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "logout"
+              ]
+            },
+            "description": "Ends the refresh session on the server and clears the cookie."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 204', function () { pm.response.to.have.status(204); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Refresh after sign-out -> 401",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-TracePilot-Refresh",
+                "value": "1"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/refresh",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "refresh"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 401', function () { pm.response.to.have.status(401); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
     }
   ]
 }
