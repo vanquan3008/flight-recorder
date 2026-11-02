@@ -11,8 +11,8 @@ import (
 	"github.com/vanquan3008/tracepilot/internal/observability/metrics"
 	"github.com/vanquan3008/tracepilot/internal/storage/migrations"
 	"github.com/vanquan3008/tracepilot/internal/storage/postgres/analytics"
-	"github.com/vanquan3008/tracepilot/internal/storage/postgres/apikeys"
 	"github.com/vanquan3008/tracepilot/internal/storage/postgres/explorer"
+	"github.com/vanquan3008/tracepilot/internal/storage/postgres/identity"
 	"github.com/vanquan3008/tracepilot/internal/storage/postgres/incidents"
 	"github.com/vanquan3008/tracepilot/internal/storage/postgres/maintenance"
 	"github.com/vanquan3008/tracepilot/internal/storage/postgres/outbox"
@@ -34,7 +34,7 @@ type Database struct {
 	*incidents.IncidentStore
 	*outbox.OutboxStore
 	*webhooks.WebhookStore
-	*apikeys.KeyStore
+	*identity.IdentityStore
 	*replays.ReplayStore
 	*explorer.QueryStore
 	*analytics.AnalyticsStore
@@ -86,7 +86,7 @@ func open(applicationContext context.Context, configuration config.DatabaseConfi
 		IncidentStore:  incidents.New(databasePool),
 		OutboxStore:    outbox.New(databasePool, webhookKey),
 		WebhookStore:   webhooks.New(databasePool, webhookKey),
-		KeyStore:       apikeys.New(databasePool),
+		IdentityStore:  identity.New(databasePool),
 		ReplayStore:    replays.New(databasePool),
 		QueryStore:     explorer.New(databasePool),
 		AnalyticsStore: analytics.New(databasePool),

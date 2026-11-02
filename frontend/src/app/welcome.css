@@ -1,35 +1,58 @@
+/* Sign-in: one small card. Everything arrives in a short stagger, and the form changes shape in place. */
 .welcome { position: relative; display: flex; height: 100%; width: 100%; align-items: center; justify-content: center; padding: 16px; overflow-y: auto; }
-.welcome-hero { width: 100%; max-width: 640px; margin: auto; padding: 36px 32px 28px; text-align: center; }
-.welcome-badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; border: 1px solid var(--info-border); border-radius: 999px; background: var(--info-bg); box-shadow: inset 0 1px 0 var(--glass-hi-soft); color: var(--accent); font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
-.welcome-icon-wrap { display: flex; width: 52px; height: 52px; align-items: center; justify-content: center; margin: 18px auto 14px; border-radius: 15px; background: linear-gradient(135deg, #3d86f0, #2859b8); color: #fff; box-shadow: 0 6px 18px var(--accent-glow); }
-.welcome-hero h1 { margin: 0 0 8px; font-size: 24px; font-weight: 650; letter-spacing: -.02em; line-height: 1.25; color: var(--text); }
-.welcome-subtitle { max-width: 440px; margin: 0 auto 24px; color: var(--muted); font-size: 14px; line-height: 1.6; }
+.welcome-hero { position: relative; width: 100%; max-width: 400px; margin: auto; padding: 32px 32px 30px; text-align: center; animation: welcome-card .5s cubic-bezier(.2, .8, .2, 1) both; }
 
-.welcome-key-card { max-width: 520px; margin: 0 auto 28px; }
-.welcome-input-row { display: flex; align-items: center; gap: 8px; padding: 5px 5px 5px 14px; border: 1px solid var(--glass-field-edge); border-radius: 16px; background: var(--glass-field); box-shadow: inset 0 1px 1px var(--glass-hi-soft); transition: border-color .16s ease, box-shadow .16s ease; }
-.welcome-input-row:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); }
-.welcome-key-icon { flex: none; color: var(--accent); }
-.welcome-input-row input { min-width: 0; flex: 1; padding: 8px 4px; border: 0; border-radius: 0; background: transparent; box-shadow: none; color: var(--text); font-size: 14px; }
-.welcome-input-row input:focus { border: 0; box-shadow: none; outline: none; }
-.welcome-input-row input::placeholder { color: var(--faint); }
-.welcome-submit { display: inline-flex; flex: none; align-items: center; gap: 6px; padding: 9px 16px; border-radius: 12px; color: var(--btn-text); font-size: 13px; font-weight: 600; white-space: nowrap; }
-.welcome-submit:hover:not(:disabled) { background: var(--btn-bg-hover); }
-.welcome-dev-hint { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; margin-top: 10px; padding: 0 4px; color: var(--faint); font-size: 12px; }
-.welcome-quick-fill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px; border-radius: 6px; color: var(--accent); font-size: 12px; font-weight: 600; }
-.welcome-quick-fill:hover { background: var(--hover); }
+/* Children rise in one after another; --i is their place in the order. */
+.welcome-icon-wrap, .welcome-hero h1, .welcome-subtitle, .welcome-modes, .welcome-form { animation: welcome-rise .5s cubic-bezier(.2, .8, .2, 1) both; animation-delay: calc(var(--i, 0) * 55ms + 30ms); }
 
-.welcome-features { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 0 0 22px; padding: 0; list-style: none; text-align: left; }
-.welcome-feat-card { display: flex; flex-direction: column; gap: 3px; padding: 14px; border-radius: 18px; }
-.welcome-feat-icon { display: inline-flex; width: 30px; height: 30px; align-items: center; justify-content: center; margin-bottom: 8px; border-radius: 9px; background: var(--info-bg); color: var(--accent); }
-.welcome-feat-card strong { color: var(--text); font-size: 13px; font-weight: 600; }
-.welcome-feat-card small { color: var(--muted); font-size: 12px; line-height: 1.5; }
-.welcome-learn-more { display: inline-flex; align-items: center; gap: 5px; color: var(--accent); font-size: 13px; font-weight: 600; text-decoration: none; }
-.welcome-learn-more:hover { text-decoration: underline; text-underline-offset: 3px; }
+.welcome-icon-wrap { position: relative; display: flex; width: 52px; height: 52px; align-items: center; justify-content: center; margin: 0 auto 14px; border-radius: 15px; background: linear-gradient(135deg, #3d86f0, #2859b8); color: #fff; box-shadow: 0 6px 18px var(--accent-glow); }
+/* A soft halo that breathes behind the mark. */
+.welcome-icon-wrap::after { content: ""; position: absolute; inset: -10px; z-index: -1; border-radius: 22px; background: var(--accent-glow); filter: blur(14px); opacity: .55; animation: welcome-halo 4.5s ease-in-out infinite; }
+.welcome-hero h1 { margin: 0 0 6px; font-size: 22px; font-weight: 650; letter-spacing: -.02em; line-height: 1.25; color: var(--text); }
+.welcome-subtitle { min-height: 1.6em; margin: 0 auto 20px; color: var(--muted); font-size: 13.5px; line-height: 1.6; }
+
+/* The switch: a thumb slides under the active label. */
+.welcome-modes { position: relative; display: inline-grid; grid-template-columns: 1fr 1fr; margin: 0 auto 18px; padding: 3px; border: 1px solid var(--glass-field-edge); border-radius: 11px; background: var(--glass-field); }
+.welcome-modes::before { content: ""; position: absolute; inset: 3px; width: calc(50% - 3px); border-radius: 8px; background: var(--btn-bg); box-shadow: 0 2px 8px var(--accent-glow); transition: transform .32s cubic-bezier(.3, .9, .3, 1); }
+.welcome-modes[data-mode="register"]::before { transform: translateX(100%); }
+.welcome-modes button { position: relative; z-index: 1; min-width: 92px; padding: 5px 16px; border: 0; background: transparent; box-shadow: none; color: var(--muted); font-size: 12px; font-weight: 600; transition: color .25s ease; }
+.welcome-modes button:hover { color: var(--text); }
+.welcome-modes button[aria-pressed="true"] { color: var(--btn-text); }
+
+.welcome-form { display: grid; max-width: 340px; margin: 0 auto; text-align: left; }
+.welcome-form label { display: grid; gap: 6px; margin-bottom: 12px; color: var(--muted); font-size: 11px; font-weight: 650; letter-spacing: .04em; }
+.welcome-fold label { margin-bottom: 12px; }
+.welcome-form label input { width: 100%; padding: 10px 14px; border: 1px solid var(--glass-field-edge); border-radius: 12px; background: var(--glass-field); font-size: 14px; font-weight: 500; letter-spacing: 0; transition: border-color .2s ease, box-shadow .2s ease, background-color .2s ease; }
+.welcome-form label input:hover { border-color: color-mix(in srgb, var(--accent) 40%, var(--glass-field-edge)); }
+.welcome-form label input:focus { border-color: var(--accent); background: var(--glass-field-focus); box-shadow: 0 0 0 3px var(--accent-glow); outline: none; }
+/* The browser paints autofilled fields its own colour; keep them in the card's. */
+.welcome-form label input:-webkit-autofill { -webkit-text-fill-color: var(--text); box-shadow: 0 0 0 40px var(--glass-field) inset; caret-color: var(--text); transition: background-color 9999s ease; }
+.welcome-form label input:-webkit-autofill:focus { box-shadow: 0 0 0 40px var(--glass-field) inset, 0 0 0 3px var(--accent-glow); }
+.welcome-form small { display: block; margin: 0 0 12px; color: var(--faint); font-size: 11.5px; font-weight: 500; }
+
+/* A fold takes no room until it opens, then unfolds with its content fading in. */
+.welcome-fold { display: grid; grid-template-rows: 0fr; opacity: 0; transition: grid-template-rows .35s cubic-bezier(.3, .9, .3, 1), opacity .25s ease; }
+.welcome-fold > * { min-height: 0; overflow: clip; overflow-clip-margin: 6px; }
+.welcome-fold[data-open="true"] { grid-template-rows: 1fr; opacity: 1; }
+.welcome-form .form-error { margin: 0 0 12px; padding: 8px 12px; border: 1px solid var(--glass-divider); border-radius: 10px; }
+
+.welcome-submit { display: inline-flex; align-items: center; justify-content: center; gap: 7px; width: 100%; padding: 11px 16px; border-radius: 12px; color: var(--btn-text); font-size: 13.5px; font-weight: 600; white-space: nowrap; transition: transform .18s ease, background-color .2s ease, box-shadow .2s ease, opacity .2s ease; }
+.welcome-submit svg { transition: transform .2s ease; }
+.welcome-submit:hover:not(:disabled) { background: var(--btn-bg-hover); transform: translateY(-1px); }
+.welcome-submit:hover:not(:disabled) svg { transform: translateX(3px); }
+.welcome-submit:active:not(:disabled) { transform: translateY(0) scale(.985); }
+.welcome-submit:disabled { cursor: progress; opacity: .8; }
+
+@keyframes welcome-card { from { opacity: 0; transform: translateY(18px) scale(.985); } to { opacity: 1; transform: none; } }
+@keyframes welcome-rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+@keyframes welcome-halo { 0%, 100% { opacity: .35; transform: scale(.94); } 50% { opacity: .7; transform: scale(1.08); } }
 
 @media (max-width: 640px) {
-  .welcome-hero { padding: 28px 18px 22px; }
-  .welcome-input-row { flex-wrap: wrap; padding: 8px; }
-  .welcome-input-row input { flex-basis: calc(100% - 40px); }
-  .welcome-submit { width: 100%; justify-content: center; padding: 10px 16px; }
-  .welcome-features { grid-template-columns: 1fr; }
+  .welcome-hero { padding: 26px 18px 24px; }
+}
+
+/* Motion is decoration: with reduced motion everything is simply there. */
+@media (prefers-reduced-motion: reduce) {
+  .welcome-hero, .welcome-icon-wrap, .welcome-hero h1, .welcome-subtitle, .welcome-modes, .welcome-form, .welcome-icon-wrap::after { animation: none; }
+  .welcome-modes::before, .welcome-fold, .welcome-submit, .welcome-submit svg, .welcome-form label input { transition: none; }
 }

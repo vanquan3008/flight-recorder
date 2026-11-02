@@ -39,10 +39,12 @@ func newHTTPServer(configuration config.Config, server *Server) *http.Server {
 func (server *Server) traces(responseWriter http.ResponseWriter, request *http.Request) {
 	startedAt, outcome := time.Now(), "ok"
 	defer func() { server.observeHTTPRequest("traces", outcome, time.Since(startedAt)) }()
-	if authOutcome := server.authorizeHTTP(responseWriter, request); authOutcome != "" {
+	authorized, authOutcome := server.authorizeHTTP(responseWriter, request)
+	if authOutcome != "" {
 		outcome = authOutcome
 		return
 	}
+	request = authorized
 	release, admitOutcome := server.admitHTTP(responseWriter, request)
 	if admitOutcome != "" {
 		outcome = admitOutcome
@@ -67,10 +69,12 @@ func (server *Server) traces(responseWriter http.ResponseWriter, request *http.R
 func (server *Server) logs(responseWriter http.ResponseWriter, request *http.Request) {
 	startedAt, outcome := time.Now(), "ok"
 	defer func() { server.observeHTTPRequest("logs", outcome, time.Since(startedAt)) }()
-	if authOutcome := server.authorizeHTTP(responseWriter, request); authOutcome != "" {
+	authorized, authOutcome := server.authorizeHTTP(responseWriter, request)
+	if authOutcome != "" {
 		outcome = authOutcome
 		return
 	}
+	request = authorized
 	release, admitOutcome := server.admitHTTP(responseWriter, request)
 	if admitOutcome != "" {
 		outcome = admitOutcome
@@ -95,10 +99,12 @@ func (server *Server) logs(responseWriter http.ResponseWriter, request *http.Req
 func (server *Server) httpMetrics(responseWriter http.ResponseWriter, request *http.Request) {
 	startedAt, outcome := time.Now(), "ok"
 	defer func() { server.observeHTTPRequest("metrics", outcome, time.Since(startedAt)) }()
-	if authOutcome := server.authorizeHTTP(responseWriter, request); authOutcome != "" {
+	authorized, authOutcome := server.authorizeHTTP(responseWriter, request)
+	if authOutcome != "" {
 		outcome = authOutcome
 		return
 	}
+	request = authorized
 	release, admitOutcome := server.admitHTTP(responseWriter, request)
 	if admitOutcome != "" {
 		outcome = admitOutcome
@@ -126,23 +132,30 @@ func (server *Server) observeHTTPRequest(signal, outcome string, duration time.D
 	}
 }
 
-func (server *Server) authorizeHTTP(responseWriter http.ResponseWriter, request *http.Request) string {
-	err := server.receiver.authorize(request.Context(), httpAPIKey(request), server.receiver.clientAddress(request.RemoteAddr, request.Header.Values("X-Forwarded-For")))
+// authorizeHTTP authenticates the request. On success it returns the request carrying the scope its
+// telemetry belongs to; otherwise it has answered and returns the outcome to record. The
+// environment comes from the X-Environment header.
+func (server *Server) authorizeHTTP(responseWriter http.ResponseWriter, request *http.Request) (*http.Request, string) {
+	scoped, err := server.receiver.authorizeScope(request.Context(), httpToken(request), strings.TrimSpace(request.Header.Get("X-Environment")), server.receiver.clientAddress(request.RemoteAddr, request.Header.Values("X-Forwarded-For")))
 	if err == nil {
-		return ""
+		return request.WithContext(scoped), ""
 	}
 	var throttled *throttledError
 	if errors.As(err, &throttled) {
 		responseWriter.Header().Set("Retry-After", strconv.Itoa(retryAfterSeconds(throttled.retryAfter)))
 		server.writeHTTPError(responseWriter, responseEncoding(request), http.StatusTooManyRequests, "too many failed authentication attempts")
-		return "throttled"
+		return request, "throttled"
 	}
 	if errors.Is(err, auth.ErrUnauthorized) {
 		server.writeHTTPError(responseWriter, responseEncoding(request), http.StatusUnauthorized, "OTLP authentication failed")
-		return "unauthenticated"
+		return request, "unauthenticated"
+	}
+	if errors.Is(err, ErrUnknownEnvironment) {
+		server.writeHTTPError(responseWriter, responseEncoding(request), http.StatusBadRequest, "unknown environment for this project")
+		return request, "rejected"
 	}
 	server.writeHTTPError(responseWriter, responseEncoding(request), http.StatusServiceUnavailable, "OTLP authentication temporarily unavailable")
-	return "unavailable"
+	return request, "unavailable"
 }
 
 // retryAfterSeconds rounds up so a client never retries before the window ends.
@@ -251,10 +264,8 @@ func responseEncoding(request *http.Request) string {
 	return "application/x-protobuf"
 }
 
-func httpAPIKey(request *http.Request) string {
-	if rawKey := strings.TrimSpace(request.Header.Get("X-API-Key")); rawKey != "" {
-		return rawKey
-	}
+// httpToken returns the ingest token a sender presents as a bearer credential.
+func httpToken(request *http.Request) string {
 	if authorization := request.Header.Get("Authorization"); strings.HasPrefix(authorization, "Bearer ") {
 		return strings.TrimSpace(strings.TrimPrefix(authorization, "Bearer "))
 	}

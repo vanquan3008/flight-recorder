@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"os"
-	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -41,17 +40,6 @@ func TestStoreEventsIdempotentIntegration(t *testing.T) {
 		EnvironmentName: "test",
 	}
 	ensureIntegrationScope(t, database, ingestion)
-	bootstrapKey := "integration-bootstrap-key-00000001"
-	if bootstrapError := database.EnsureBootstrapAPIKey(context.Background(), ingestion.ProjectID, bootstrapKey); bootstrapError != nil {
-		t.Fatalf("bootstrap API key on fresh scope: %v", bootstrapError)
-	}
-	principal, authError := database.AuthenticateAPIKey(context.Background(), bootstrapKey)
-	if authError != nil || principal.ProjectID != ingestion.ProjectID {
-		t.Fatalf("authenticate bootstrap API key: principal=%#v error=%v", principal, authError)
-	}
-	if slices.Contains(principal.Scopes, "alert") {
-		t.Fatal("bootstrap key contains removed alert scope")
-	}
 	t.Cleanup(func() { cleanupIntegrationScope(t, database, ingestion.ProjectID) })
 	timestamp := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
 	event := telemetry.Event{

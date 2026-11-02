@@ -24,7 +24,7 @@ var (
 	jsonWebToken  = regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}`)
 	urlUserinfo   = regexp.MustCompile(`([A-Za-z][A-Za-z0-9+.-]*://)[^\s/@:]+:[^\s/@]+@`)
 	// Provider tokens with a fixed prefix: AWS access key IDs, GitHub, Slack,
-	// OpenAI-style keys and TracePilot's own API keys.
+	// OpenAI-style keys and the static API keys older TracePilot versions issued.
 	knownToken = regexp.MustCompile(`\b(?:AKIA|ASIA)[0-9A-Z]{16}\b|\bgh[pousr]_[A-Za-z0-9]{36,}|\bxox[abprs]-[A-Za-z0-9-]{10,}|\bsk-[A-Za-z0-9_-]{20,}|\btracepilot_[A-Za-z0-9_-]{20,}`)
 )
 

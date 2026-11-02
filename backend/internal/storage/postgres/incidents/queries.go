@@ -97,7 +97,7 @@ func (store *IncidentStore) ListIncidentStatusChanges(ctx context.Context, proje
 	for _, row := range rows {
 		changes = append(changes, incident.StatusChange{
 			ID: row.ID, PreviousStatus: row.PreviousStatus, Status: row.Status,
-			ActorKeyID: actorName(row.ActorKeyID), ChangedAt: row.ChangedAt,
+			ActorUserID: derefString(row.ActorUserID), ChangedAt: row.ChangedAt,
 		})
 	}
 	return changes, nil
@@ -112,12 +112,9 @@ func incidentRecord(row sqlcstore.GetIncidentRow) incident.Incident {
 	}
 }
 
-// systemActor names changes made by TracePilot itself, which have no API key.
-const systemActor = "system"
-
-func actorName(actorKeyID *string) string {
-	if actorKeyID == nil {
-		return systemActor
+func derefString(value *string) string {
+	if value == nil {
+		return ""
 	}
-	return *actorKeyID
+	return *value
 }

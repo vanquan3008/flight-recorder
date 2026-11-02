@@ -15,7 +15,7 @@ func (server *Server) listTraces(responseWriter http.ResponseWriter, request *ht
 		writeInvalidQuery(responseWriter, parseError)
 		return
 	}
-	filter.EnvironmentID = server.environmentID
+	filter.EnvironmentID = principal.EnvironmentID
 	filter.Before, filter.CursorID = cursor.At, cursor.ID
 	traces, queryError := server.backend.ListTraces(request.Context(), principal.ProjectID, filter)
 	if queryError != nil {
@@ -48,7 +48,7 @@ func (server *Server) getTrace(responseWriter http.ResponseWriter, request *http
 		writeInvalidQuery(responseWriter, parseError)
 		return
 	}
-	spans, hasMore, queryError := server.backend.GetTrace(request.Context(), principal.ProjectID, server.environmentID, traceID, query.SpanPage{
+	spans, hasMore, queryError := server.backend.GetTrace(request.Context(), principal.ProjectID, principal.EnvironmentID, traceID, query.SpanPage{
 		Limit: limit, MaxBytes: maxTracePageBytes, AfterStartedAt: cursor.At, AfterEventID: cursor.ID,
 	})
 	if queryError != nil {

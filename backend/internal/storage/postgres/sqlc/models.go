@@ -8,24 +8,15 @@ import (
 	"time"
 )
 
-type APIKey struct {
-	ID        string
-	ProjectID string
-	Name      string
-	KeyHash   []byte
-	Scopes    []string
-	ExpiresAt *time.Time
-	CreatedAt time.Time
-	RevokedAt *time.Time
-}
-
-type APIKeyEvent struct {
-	ID         string
-	ProjectID  string
-	APIKeyID   string
-	ActorKeyID string
-	Action     string
-	CreatedAt  time.Time
+type AuditEvent struct {
+	ID          string
+	ProjectID   *string
+	ActorUserID *string
+	Action      string
+	TargetType  string
+	TargetID    string
+	Detail      []byte
+	CreatedAt   time.Time
 }
 
 type Environment struct {
@@ -145,8 +136,18 @@ type IncidentStatusChange struct {
 	IncidentID     string
 	PreviousStatus string
 	Status         string
-	ActorKeyID     *string
 	ChangedAt      time.Time
+	ActorUserID    *string
+}
+
+type IngestToken struct {
+	ID        string
+	ProjectID string
+	Name      string
+	CreatedBy *string
+	CreatedAt time.Time
+	ExpiresAt time.Time
+	RevokedAt *time.Time
 }
 
 type Log struct {
@@ -265,6 +266,14 @@ type Project struct {
 	UpdatedAt time.Time
 }
 
+type ProjectMember struct {
+	ProjectID string
+	UserID    string
+	Role      string
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
 type ReplayExecution struct {
 	ID          string
 	ProjectID   string
@@ -292,6 +301,16 @@ type Service struct {
 	Name          string
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
+}
+
+type Session struct {
+	TokenHash    []byte
+	UserID       string
+	CreatedAt    time.Time
+	LastSeenAt   time.Time
+	ExpiresAt    time.Time
+	MaxExpiresAt time.Time
+	UserAgent    string
 }
 
 type Span struct {
@@ -354,6 +373,20 @@ type SpansDefault struct {
 	DroppedAttributesCount int32
 	DroppedEventsCount     int32
 	DroppedLinksCount      int32
+}
+
+type User struct {
+	ID                 string
+	Email              string
+	DisplayName        string
+	PasswordHash       string
+	PlatformAdmin      bool
+	MustChangePassword bool
+	DisabledAt         *time.Time
+	TokensValidAfter   time.Time
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+	LastLoginAt        *time.Time
 }
 
 type Webhook struct {

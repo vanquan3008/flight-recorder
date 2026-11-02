@@ -10,7 +10,7 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 function renderDashboard() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  render(<QueryClientProvider client={client}><AuthContext.Provider value={{ apiKey: "read-key", isAuthenticated: true, connect: () => {}, disconnect: () => {} }}>
+  render(<QueryClientProvider client={client}><AuthContext.Provider value={{ credential: "session", isAuthenticated: true }}>
     <MemoryRouter><PerformanceDashboard from={emptyPerformance.from} to={emptyPerformance.to} /></MemoryRouter>
   </AuthContext.Provider></QueryClientProvider>);
 }
@@ -69,4 +69,21 @@ it("shows query failures without reporting zero traffic and supports retry", asy
   fireEvent.click(screen.getByRole("button", { name: "Retry" }));
   expect(await screen.findByText("Observed requests")).toBeTruthy();
   expect(screen.queryByRole("alert")).toBeNull();
+});
+
+it("shows a layout skeleton first, then keeps the previous figures dimmed while a new filter loads", async () => {
+  let release: (response: Response) => void = () => {};
+  const fetch = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify(emptyPerformance), { status: 200 }))
+    .mockReturnValueOnce(new Promise<Response>((resolve) => { release = resolve; }));
+  vi.stubGlobal("fetch", fetch);
+  renderDashboard();
+  expect(screen.getByRole("status").textContent).toContain("Loading performance data");
+  await screen.findByText("Observed requests");
+  expect(screen.queryByRole("status")).toBeNull();
+  fireEvent.change(screen.getByLabelText("Performance service"), { target: { value: "checkout" } });
+  fireEvent.click(screen.getByRole("button", { name: "Apply performance filters" }));
+  await waitFor(() => expect(document.querySelector(".performance-content.is-stale")).not.toBeNull());
+  expect(screen.getByText("Observed requests")).toBeTruthy();
+  release(new Response(JSON.stringify(emptyPerformance), { status: 200 }));
+  await waitFor(() => expect(document.querySelector(".performance-content.is-stale")).toBeNull());
 });

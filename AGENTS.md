@@ -17,8 +17,10 @@
 - `backend/internal/transport/httpapi`: REST, auth boundary và response contract.
 - `backend/internal/storage`: SQL, transaction, migration và partition.
 - `frontend/src/features`: giao diện theo chức năng; phần dùng chung ở `shared`.
-- Cấu hình duy nhất: `.env` ở root, mẫu `.env.example`. PostgreSQL là dịch vụ ngoài,
-  repo không có Compose; chạy bằng `go run` hoặc image build từ `backend/Dockerfile`.
+- Cấu hình backend duy nhất: `backend/.env`, mẫu `backend/.env.example`. Console có file riêng
+  `frontend/.env.example` (biến build `VITE_*` và địa chỉ backend của nginx). PostgreSQL
+  là dịch vụ ngoài, repo không có Compose; chạy backend bằng `go run` hoặc image build
+  từ `backend/Dockerfile`, console bằng `npm run dev` hoặc image từ `frontend/Dockerfile`.
   Không thêm env riêng cho dev/prod.
 
 # Kiểm tra
@@ -28,6 +30,6 @@
 - SQL/migration: chạy integration trên PostgreSQL test có thể bỏ đi.
 - Không gọi kết quả unit test là chứng nhận production. Ghi rõ kiểm tra bỏ qua.
 - Bộ docs hiện hành: `README.md` (chạy, phát triển, đóng góp, bảo mật),
-  `docs/ARCHITECTURE.md` và `docs/OPERATIONS.md` (kèm việc còn lại trước production).
-  Cập nhật đúng nơi, tránh thêm báo cáo chồng chéo. `docs/tracepilot.postman_collection.json`
+  `docs/FLOW.md` (mô tả luồng) và `docs/diagrams.html` (sơ đồ hoạt động, Mermaid).
+  Đổi luồng thì cập nhật cả hai file này; tránh thêm báo cáo chồng chéo. `docs/tracepilot.postman_collection.json`
   là bộ kiểm tra API; cập nhật cùng khi đổi route hoặc hành vi ingest.

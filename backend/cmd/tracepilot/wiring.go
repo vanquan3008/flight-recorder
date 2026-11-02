@@ -9,14 +9,13 @@ import (
 	"github.com/vanquan3008/tracepilot/internal/application/replay"
 	"github.com/vanquan3008/tracepilot/internal/auth"
 	"github.com/vanquan3008/tracepilot/internal/config"
-	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
 	ingestotlp "github.com/vanquan3008/tracepilot/internal/ingest/otlp"
 	"github.com/vanquan3008/tracepilot/internal/ingest/pipeline"
 	"github.com/vanquan3008/tracepilot/internal/observability/metrics"
 	"github.com/vanquan3008/tracepilot/internal/storage/postgres"
 )
 
-func buildMetricsPipeline(cfg config.Config, database *postgres.Database, selfMetrics *metrics.Registry) *pipeline.MetricsPipeline {
+func buildMetricsPipeline(cfg config.Config, database *postgres.Database, catalog *scopeCatalog, selfMetrics *metrics.Registry) *pipeline.MetricsPipeline {
 	return pipeline.NewMetricsPipeline(
 		pipeline.MetricsPipelineConfig{
 			QueueSize:     cfg.Ingestion.QueueSize,
@@ -25,13 +24,11 @@ func buildMetricsPipeline(cfg config.Config, database *postgres.Database, selfMe
 			Workers:       cfg.Ingestion.Workers,
 			Metrics:       selfMetrics,
 		},
-		func(ctx context.Context, points []telemetry.MetricDataPoint) error {
-			return database.StoreMetrics(ctx, cfg.Ingestion, points)
-		},
+		storeMetricsByScope(catalog, database.StoreMetrics),
 	)
 }
 
-func buildIngestionPipeline(cfg config.Config, database *postgres.Database, selfMetrics *metrics.Registry) *pipeline.Pipeline {
+func buildIngestionPipeline(cfg config.Config, database *postgres.Database, catalog *scopeCatalog, selfMetrics *metrics.Registry) *pipeline.Pipeline {
 	return pipeline.New(
 		pipeline.Config{
 			QueueSize:      cfg.Ingestion.QueueSize,
@@ -42,9 +39,7 @@ func buildIngestionPipeline(cfg config.Config, database *postgres.Database, self
 			BatchTimeout:   cfg.Ingestion.BatchTimeout,
 			FlushInterval:  cfg.Ingestion.FlushInterval,
 		},
-		func(storeCtx context.Context, events []telemetry.Event) error {
-			return database.StoreEvents(storeCtx, cfg.Ingestion, events)
-		},
+		storeEventsByScope(catalog, database.StoreEvents),
 		selfMetrics,
 	)
 }
@@ -71,12 +66,15 @@ func buildReplaySubsystem(ctx context.Context, cfg config.Config, database *post
 	return replay.NewService(database, executor), nil
 }
 
-func buildOTLPReceiver(cfg config.Config, pipe *pipeline.Pipeline, metricsPipe *pipeline.MetricsPipeline, selfMetrics *metrics.Registry, database *postgres.Database) *ingestotlp.Receiver {
-	var authenticateOTLP func(context.Context, string) (auth.Principal, error)
-	if cfg.Auth.BootstrapAPIKey != "" {
-		authenticateOTLP = database.AuthenticateAPIKey
+func buildOTLPReceiver(cfg config.Config, pipe *pipeline.Pipeline, metricsPipe *pipeline.MetricsPipeline, selfMetrics *metrics.Registry, database *postgres.Database, catalog *scopeCatalog) *ingestotlp.Receiver {
+	// Telemetry senders present an ingest token: a JWT for one project that its owner can revoke.
+	secret := []byte(cfg.Auth.JWTSecret)
+	authenticateOTLP := func(ctx context.Context, raw string) (auth.Principal, error) {
+		return auth.AuthenticateIngestToken(ctx, secret, database, raw, time.Now())
 	}
-	return ingestotlp.NewReceiver(cfg.Ingestion, pipe, metricsPipe, selfMetrics, authenticateOTLP).WithTrustedProxies(cfg.HTTP.TrustedProxyPrefixes())
+	return ingestotlp.NewReceiver(cfg.Ingestion, pipe, metricsPipe, selfMetrics, authenticateOTLP).
+		WithScopes(catalog.Resolve).
+		WithTrustedProxies(cfg.HTTP.TrustedProxyPrefixes())
 }
 
 // readyReporter is anything that can say whether it accepts work.
@@ -109,7 +107,7 @@ func logStartup(logger *slog.Logger, cfg config.Config) {
 	if cfg.TLS.CertificateFile == "" {
 		logger.Warn("OTLP listeners are plaintext; use TLS or terminate TLS before TracePilot")
 	}
-	if cfg.Auth.BootstrapAPIKey == "" {
-		logger.Warn("OTLP ingest authentication is disabled")
+	if !cfg.Auth.AllowRegistration {
+		logger.Info("registration is closed; only the first account and accounts made by a super administrator exist")
 	}
 }

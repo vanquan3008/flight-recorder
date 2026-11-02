@@ -21,7 +21,7 @@ func (server *Server) getLog(responseWriter http.ResponseWriter, request *http.R
 	if !requireUUID(responseWriter, eventID) {
 		return
 	}
-	record, queryError := server.backend.GetLog(request.Context(), principal.ProjectID, server.environmentID, eventID)
+	record, queryError := server.backend.GetLog(request.Context(), principal.ProjectID, principal.EnvironmentID, eventID)
 	if queryError != nil {
 		server.writeInternalError(responseWriter, "get log", queryError)
 		return
@@ -36,7 +36,7 @@ func (server *Server) getLog(responseWriter http.ResponseWriter, request *http.R
 // writeLogPage scopes a parsed log filter to this server's environment and
 // writes one page of matching logs.
 func (server *Server) writeLogPage(responseWriter http.ResponseWriter, request *http.Request, principal auth.Principal, operation string, filter query.LogFilter, cursor pageCursor) {
-	filter.EnvironmentID = server.environmentID
+	filter.EnvironmentID = principal.EnvironmentID
 	filter.Before, filter.CursorID = cursor.At, cursor.ID
 	logs, queryError := server.backend.ListLogs(request.Context(), principal.ProjectID, filter)
 	if queryError != nil {

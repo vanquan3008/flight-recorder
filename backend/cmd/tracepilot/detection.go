@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/vanquan3008/tracepilot/internal/application/detection"
@@ -22,19 +23,34 @@ func (store incidentStore) PersistObservabilityIncident(ctx context.Context, ser
 	return store.database.PersistObservabilityIncident(ctx, store.ingestion, service, end, evidence)
 }
 
-func buildObservabilityDetectionFunc(cfg config.Config, database *postgres.Database, selfMetrics *metrics.Registry) func(context.Context) (int, error) {
-	scope := cfg.Ingestion
+// detectionServiceFor wires the detectors and the incident store to one project environment.
+func detectionServiceFor(database *postgres.Database, scope config.IngestionConfig) *detection.Service {
 	bind := func(detect func(context.Context, config.IngestionConfig, time.Time) ([]analysis.DetectedEvidence, error)) detection.Detector {
 		return detection.DetectorFunc(func(ctx context.Context, end time.Time) ([]analysis.DetectedEvidence, error) {
 			return detect(ctx, scope, end)
 		})
 	}
-	service := detection.NewService(incidentStore{database: database, ingestion: scope},
+	return detection.NewService(incidentStore{database: database, ingestion: scope},
 		bind(database.DetectServiceEvidence), bind(database.DetectDependencyEvidence), bind(database.DetectMetricEvidence))
+}
+
+// buildObservabilityDetectionFunc runs detection in every project environment. One that fails does
+// not stop the rest: its error is reported after the others have been evaluated.
+func buildObservabilityDetectionFunc(scopes *scopeCatalog, database *postgres.Database, selfMetrics *metrics.Registry) func(context.Context) (int, error) {
 	return func(ctx context.Context) (int, error) {
 		startedAt := time.Now()
-		count, evaluateError := service.Run(ctx, time.Now())
-		selfMetrics.ObserveIncidentDetection(time.Since(startedAt), count, evaluateError != nil)
-		return count, evaluateError
+		all, listError := scopes.All(ctx)
+		if listError != nil {
+			selfMetrics.ObserveIncidentDetection(time.Since(startedAt), 0, true)
+			return 0, listError
+		}
+		total, runError := 0, error(nil)
+		for _, scope := range all {
+			count, evaluateError := detectionServiceFor(database, scope).Run(ctx, time.Now())
+			total += count
+			runError = errors.Join(runError, evaluateError)
+		}
+		selfMetrics.ObserveIncidentDetection(time.Since(startedAt), total, runError != nil)
+		return total, runError
 	}
 }

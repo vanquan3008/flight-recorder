@@ -41,7 +41,8 @@ func newGuardFixture(limit int) *guardFixture {
 }
 
 func (fixture *guardFixture) authorize(key, client string) error {
-	return fixture.receiver.authorize(context.Background(), key, client)
+	_, authorizeError := fixture.receiver.authorizeScope(context.Background(), key, "", client)
+	return authorizeError
 }
 
 func TestAuthGuardRemembersRejectedKeysBriefly(t *testing.T) {
@@ -168,7 +169,7 @@ func TestOTLPHTTPReturns429WhenClientKeepsFailingAuthentication(t *testing.T) {
 	send := func(key string) *httptest.ResponseRecorder {
 		request := httptest.NewRequest(http.MethodPost, "/v1/logs", strings.NewReader("{}"))
 		request.Header.Set("Content-Type", "application/json")
-		request.Header.Set("X-API-Key", key)
+		request.Header.Set("Authorization", "Bearer "+key)
 		request.RemoteAddr = "203.0.113.9:40000"
 		response := httptest.NewRecorder()
 		server.httpServer.Handler.ServeHTTP(response, request)
@@ -190,10 +191,10 @@ func TestOTLPHTTPReturns429WhenClientKeepsFailingAuthentication(t *testing.T) {
 
 func TestOTLPGRPCReportsResourceExhaustedWhenThrottled(t *testing.T) {
 	fixture := newGuardFixture(1)
-	if code := status.Code(fixture.receiver.authorizeGRPC(context.Background())); code != codes.Unauthenticated {
+	if code := status.Code(grpcAuthError(fixture.receiver)); code != codes.Unauthenticated {
 		t.Fatalf("first failure = %v", code)
 	}
-	if code := status.Code(fixture.receiver.authorizeGRPC(context.Background())); code != codes.ResourceExhausted {
+	if code := status.Code(grpcAuthError(fixture.receiver)); code != codes.ResourceExhausted {
 		t.Fatalf("throttled call = %v", code)
 	}
 }
@@ -220,4 +221,10 @@ func TestAuthGuardCountsFailuresPerClientBehindATrustedProxy(t *testing.T) {
 	if got := plain.receiver.clientAddress("10.0.0.5:4000", []string{"203.0.113.9"}); got != "10.0.0.5" {
 		t.Fatalf("an untrusted peer chose its own identity: %q", got)
 	}
+}
+
+// grpcAuthError is the error authorizeGRPC reports; the scoped context it also returns is not under test here.
+func grpcAuthError(receiver *Receiver) error {
+	_, authError := receiver.authorizeGRPC(context.Background())
+	return authError
 }

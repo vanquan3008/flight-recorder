@@ -21,7 +21,7 @@ func (server *Server) listServices(responseWriter http.ResponseWriter, request *
 		writeInvalidQuery(responseWriter, rangeError)
 		return
 	}
-	services, queryError := server.backend.ListServices(request.Context(), principal.ProjectID, server.environmentID, from, to)
+	services, queryError := server.backend.ListServices(request.Context(), principal.ProjectID, principal.EnvironmentID, from, to)
 	if queryError != nil {
 		server.writeInternalError(responseWriter, "list services", queryError)
 		return
@@ -31,7 +31,7 @@ func (server *Server) listServices(responseWriter http.ResponseWriter, request *
 
 func (server *Server) listServiceDependencies(responseWriter http.ResponseWriter, request *http.Request, principal auth.Principal) {
 	service := request.PathValue("service")
-	dependencies, queryError := server.backend.ListServiceDependencies(request.Context(), principal.ProjectID, server.environmentID, service)
+	dependencies, queryError := server.backend.ListServiceDependencies(request.Context(), principal.ProjectID, principal.EnvironmentID, service)
 	if queryError != nil {
 		server.writeInternalError(responseWriter, "list service dependencies", queryError)
 		return

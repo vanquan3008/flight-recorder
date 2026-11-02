@@ -1,12 +1,13 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, BellRing, ClipboardList, Gauge, GitBranch, KeyRound, Menu, Network, PanelLeftClose, PanelLeftOpen, RefreshCw, ScrollText, Settings, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Activity, BellRing, ClipboardList, Gauge, GitBranch, LogOut, Menu, Network, PanelLeftClose, PanelLeftOpen, ScrollText, Settings, TrendingUp, X } from "lucide-react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
-import { api, APIError } from "../shared/api";
+import { api, APIError, onSessionRefreshed, refreshAccess, sessionCredential, setAccessToken, setProjectContext } from "../shared/api";
 import type { Page, TraceSummary } from "../shared/types";
-import { errorGuidance, Notice } from "../shared/ui";
-import { AuthContext, apiKeyStorageKey } from "./auth";
+import { AuthContext } from "./auth";
+import { ChangePasswordGate, NoProject } from "./access-gates";
 import { AppRoutes } from "./routes";
+import { projectStorageKey, type SessionView, signedInHint } from "../shared/session";
 import { ThemeToggle } from "./theme";
 
 function BrandIcon() {
@@ -18,55 +19,138 @@ function BrandIcon() {
   </div>;
 }
 
+// What the console keeps of a session: the access token is held by `shared/api` in memory and is never in React state.
+const withoutToken = (view: SessionView): SessionView => ({ ...view, access_token: undefined });
+
 export function AppShell() {
   const queryClient = useQueryClient();
-  const [apiKey, setAPIKey] = useState(() => sessionStorage.getItem(apiKeyStorageKey) || "");
-  const [draftKey, setDraftKey] = useState(apiKey);
   const [menuOpen, setMenuOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem("tracepilot-sidebar-collapsed") === "true");
   const location = useLocation();
   const navigate = useNavigate();
+  // The access token lives in memory, so a reload starts signed out. A hint left at sign-in says a refresh
+  // cookie may exist, so the console asks for a new token before deciding what to show.
+  const [session, setSession] = useState<SessionView | null>(null);
+  const [expiresAt, setExpiresAt] = useState<number>(0);
+  const [booting, setBooting] = useState(() => localStorage.getItem(signedInHint) === "1");
+  const [projectID, setProjectID] = useState(() => localStorage.getItem(projectStorageKey) || "");
+  // Set once the person signed out: a refresh that was already in flight must not sign them back in.
+  const ended = useRef(false);
+
+  const clearSession = useCallback(() => {
+    ended.current = true;
+    setAccessToken("");
+    queryClient.clear();
+    localStorage.removeItem(signedInHint);
+    setSession(null);
+  }, [queryClient]);
+
+  const adopt = useCallback((view: SessionView) => {
+    if (ended.current) return;
+    if (view.access_token) setAccessToken(view.access_token);
+    if (view.expires_at) setExpiresAt(Date.parse(view.expires_at));
+    localStorage.setItem(signedInHint, "1");
+    setSession(withoutToken(view));
+  }, []);
+
+  // Register the refresh listener once; adopt and clearSession are stable callbacks.
+  useEffect(() => {
+    onSessionRefreshed(adopt);
+    return () => onSessionRefreshed(undefined);
+  }, [adopt]);
+
+  useEffect(() => {
+    if (!booting) return;
+    let cancelled = false;
+    void refreshAccess().then((view) => {
+      if (cancelled) return;
+      if (!view) localStorage.removeItem(signedInHint);
+      setBooting(false);
+    });
+    return () => { cancelled = true; };
+  }, [booting]);
+
+  // Renew the access token a minute before it runs out, so a person at the keyboard never sees it expire.
+  useEffect(() => {
+    if (!session || !expiresAt) return;
+    // Never longer than the access token's own life: a timer cannot hold more than ~24 days anyway.
+    const wait = Math.min(Math.max(5_000, expiresAt - Date.now() - 60_000), 20 * 60_000);
+    const timer = window.setTimeout(() => void refreshAccess().then((view) => { if (!view) clearSession(); }), wait);
+    return () => window.clearTimeout(timer);
+  }, [session, expiresAt, clearSession]);
+
+  const current = session ? session.memberships.find((membership) => membership.project.id === projectID) ?? session.memberships[0] : undefined;
+
+  // Keep module-level request context in sync with the active project. A layout effect, not a passive one:
+  // pages below start their queries in passive effects, which run before this component's own, so they
+  // would send their first requests without the project.
+  useLayoutEffect(() => {
+    setProjectContext({ project: current?.project.id ?? "" });
+  }, [current?.project.id]);
+
+  const credential = session ? sessionCredential : "";
+  const mustChangePassword = Boolean(session?.user.must_change_password);
+  const needsProject = Boolean(session) && !current;
   const connection = useQuery({
-    queryKey: ["connection", apiKey],
-    enabled: Boolean(apiKey),
+    queryKey: ["connection", credential, current?.project.id],
+    enabled: Boolean(credential) && !mustChangePassword && !needsProject,
     retry: false,
-    queryFn: ({ signal }) => api<Page<TraceSummary>>("/api/v1/traces?limit=1", apiKey, { signal }),
+    queryFn: ({ signal }) => api<Page<TraceSummary>>("/api/v1/traces?limit=1", credential, { signal }),
   });
+
   useEffect(() => setMenuOpen(false), [location.pathname]);
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => event.key === "Escape" && setMenuOpen(false);
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
-  const connect = (value: string) => {
-    const key = value.trim();
-    if (!key) return;
+
+  const signIn = useCallback((view: SessionView) => {
     queryClient.clear();
-    sessionStorage.setItem(apiKeyStorageKey, key);
-    setAPIKey(key);
-    setDraftKey(key);
+    ended.current = false;
+    adopt(view);
     navigate("/overview");
-  };
-  const disconnect = () => {
+  }, [queryClient, adopt, navigate]);
+
+  const signOut = useCallback(() => {
+    // The server ends the refresh session and clears its cookie; a failed request still ends this browser's view of it.
+    void api<void>("/api/v1/auth/logout", "", { method: "POST" }).catch(() => undefined).finally(clearSession);
+  }, [clearSession]);
+
+  const reloadSession = useCallback(async () => {
+    const view = await api<SessionView>("/api/v1/auth/me", credential);
+    setSession(withoutToken(view));
+  }, [credential]);
+
+  const switchProject = useCallback((id: string) => {
     queryClient.clear();
-    sessionStorage.removeItem(apiKeyStorageKey);
-    setAPIKey("");
-    setDraftKey("");
-  };
-  const toggleCollapsed = () => {
+    localStorage.setItem(projectStorageKey, id);
+    setProjectID(id);
+  }, [queryClient]);
+
+  const toggleCollapsed = useCallback(() => {
     setCollapsed((c) => {
       const next = !c;
       localStorage.setItem("tracepilot-sidebar-collapsed", String(next));
       return next;
     });
-  };
-  const isAuthenticated = Boolean(apiKey);
+  }, []);
+
+  const isAuthenticated = Boolean(session);
   const showSidebar = isAuthenticated || location.pathname === "/flow";
-  const rejected = connection.error instanceof APIError && (connection.error.status === 401 || connection.error.status === 403);
-  const status = !isAuthenticated ? "API key required" : connection.isPending ? "Checking API" : connection.isSuccess ? "Connected" : rejected ? "Key not accepted" : "Connection failed";
+
+  // A session the server no longer accepts (refresh failed, signed out elsewhere, account disabled) ends here.
+  useEffect(() => {
+    if (session && connection.error instanceof APIError && connection.error.status === 401) clearSession();
+  }, [session, connection.error, clearSession]);
+
+  const status = !isAuthenticated ? "Signed out" : (mustChangePassword || needsProject) ? "Signed in" : connection.isPending ? "Checking API" : connection.isSuccess ? "Connected" : "Connection failed";
   const statusDotBg = !isAuthenticated ? "bg-slate-400" : connection.isSuccess ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.7)]" : connection.isError ? "bg-rose-500" : "bg-amber-500 animate-pulse";
 
-  return <AuthContext.Provider value={{ apiKey, isAuthenticated, connect, disconnect }}>
+  const sessionState = session ? { user: session.user, memberships: session.memberships, project: current, role: session.user.platform_admin ? "owner" as const : current?.role, switchProject, refresh: reloadSession, adopt, signOut } : undefined;
+  if (booting) return <div className="app-shell relative flex h-screen items-center justify-center" role="status"><span className="loading-label">Restoring your session…</span></div>;
+
+  return <AuthContext.Provider value={{ credential, isAuthenticated, signIn, session: sessionState }}>
     <div className="app-shell relative flex flex-col h-screen max-h-screen overflow-hidden">
 
       {/* Floating Dynamic Island Topbar */}
@@ -81,26 +165,15 @@ export function AppShell() {
         </div>
         <div className="topbar-actions flex min-w-0 items-center gap-3">
           <ThemeToggle />
-          {(isAuthenticated || location.pathname === "/flow") ? <form className="key-form flex items-center gap-2.5" onSubmit={(event) => { event.preventDefault(); connect(draftKey); }}>
-            <div className="connection-pill hidden sm:inline-flex items-center gap-2 px-3 py-1.5 rounded-full backdrop-blur-2xl bg-white/70 dark:bg-white/5 border border-white/80 dark:border-white/10 shadow-xs">
-              <span className={`w-2 h-2 rounded-full ${statusDotBg}`} aria-hidden="true" />
-              <span className="connection-label text-slate-900 dark:text-sky-300 text-xs font-bold whitespace-nowrap" role="status">{status}</span>
-            </div>
-            <div className="key-input-box relative inline-flex items-center">
-              <KeyRound size={13} className="absolute left-3 text-sky-600 dark:text-sky-400 pointer-events-none" aria-hidden="true" />
-              <label className="sr-only" htmlFor="api-key">API key</label>
-              <input id="api-key" type="password" autoComplete="off" placeholder="Paste API key..." value={draftKey} onChange={(event) => setDraftKey(event.target.value)} className="w-[170px] sm:w-[210px] rounded-full pl-8 pr-3 py-1.5 text-xs backdrop-blur-2xl bg-white/80 dark:bg-slate-900/60 border border-slate-200/90 dark:border-white/12 text-slate-950 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-500 transition-all font-medium" />
-            </div>
-            {isAuthenticated ? <button type="button" className="disconnect-btn inline-flex items-center px-3.5 py-1.5 rounded-full text-xs font-bold text-rose-700 dark:text-rose-400 backdrop-blur-2xl bg-rose-50/80 dark:bg-rose-500/10 border border-rose-300/80 dark:border-rose-500/20 hover:bg-rose-100 dark:hover:bg-rose-500/20 active:scale-95 transition-all cursor-pointer shadow-none" onClick={disconnect}>Disconnect</button> : <button type="submit" className="connect-btn inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full bg-gradient-to-r from-sky-500 via-sky-600 to-blue-600 hover:from-sky-400 hover:to-blue-500 text-white font-bold text-xs shadow-md shadow-sky-500/35 hover:shadow-lg hover:shadow-sky-500/50 active:scale-95 transition-all border-0 cursor-pointer"><KeyRound size={13} /> Connect</button>}
-          </form> : <NavLink to="/flow" className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-700 dark:text-sky-300 hover:text-slate-950 dark:hover:text-white px-3.5 py-1.5 rounded-full backdrop-blur-2xl bg-white/70 dark:bg-white/5 border border-white/80 dark:border-white/10 shadow-xs active:scale-95 transition-all no-underline"><GitBranch size={13} /> Architecture</NavLink>}
+          {session ? <SessionControls name={session.user.display_name} memberships={session.memberships} current={current?.project.id} onSwitch={switchProject} onSignOut={signOut} status={status} dot={statusDotBg} />
+            : <NavLink to="/flow" className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-700 dark:text-sky-300 hover:text-slate-950 dark:hover:text-white px-3.5 py-1.5 rounded-full backdrop-blur-2xl bg-white/70 dark:bg-white/5 border border-white/80 dark:border-white/10 shadow-xs active:scale-95 transition-all no-underline"><GitBranch size={13} /> Architecture</NavLink>}
         </div>
       </header>
       <main className={`flex-1 min-h-0 overflow-hidden w-full relative z-10 ${showSidebar ? `grid gap-3.5 p-3 md:p-4 transition-[grid-template-columns] duration-200 ease-in-out ${collapsed ? "grid-cols-[56px_minmax(0,1fr)] sidebar-collapsed" : "grid-cols-[208px_minmax(0,1fr)]"}` : "flex flex-col"}`}>
         {showSidebar && <Navigation open={menuOpen} collapsed={collapsed} onToggle={toggleCollapsed} />}
         <section id="content" className={`w-full h-full min-w-0 flex flex-col ${showSidebar ? "overflow-y-auto overflow-x-hidden" : "overflow-hidden items-center justify-center"}`}>
-          {isAuthenticated && connection.isError && rejected && <ConnectionBanner error={connection.error} onRetry={() => void connection.refetch()} onDisconnect={disconnect} />}
-          <div className="flex-1 flex flex-col min-h-0 w-full">
-            <AppRoutes isAuthenticated={isAuthenticated} />
+          <div className="page-flow flex-1 flex flex-col min-h-0 w-full">
+            {mustChangePassword ? <ChangePasswordGate onChanged={adopt} /> : needsProject ? <NoProject /> : <AppRoutes isAuthenticated={isAuthenticated} />}
           </div>
         </section>
       </main>
@@ -108,9 +181,26 @@ export function AppShell() {
   </AuthContext.Provider>;
 }
 
+function SessionControls({ name, memberships, current, onSwitch, onSignOut, status, dot }: { name: string; memberships: SessionView["memberships"]; current?: string; onSwitch: (id: string) => void; onSignOut: () => void; status: string; dot: string }) {
+  return <div className="session-controls flex items-center gap-2.5">
+    <div className="connection-pill hidden sm:inline-flex items-center gap-2 px-3 py-1.5 rounded-full backdrop-blur-2xl bg-white/70 dark:bg-white/5 border border-white/80 dark:border-white/10 shadow-xs">
+      <span className={`w-2 h-2 rounded-full ${dot}`} aria-hidden="true" />
+      <span className="connection-label text-slate-900 dark:text-sky-300 text-xs font-bold whitespace-nowrap" role="status">{status}</span>
+    </div>
+    {memberships.length > 0 && <>
+      <label className="sr-only" htmlFor="project-switcher">Project</label>
+      <select id="project-switcher" className="project-switcher" value={current ?? ""} onChange={(event) => onSwitch(event.target.value)}>
+        {memberships.map(({ project }) => <option key={project.id} value={project.id}>{project.name}</option>)}
+      </select>
+    </>}
+    <span className="session-user" title="Signed in">{name}</span>
+    <button type="button" className="disconnect-btn inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-bold text-rose-700 dark:text-rose-400 backdrop-blur-2xl bg-rose-50/80 dark:bg-rose-500/10 border border-rose-300/80 dark:border-rose-500/20 hover:bg-rose-100 dark:hover:bg-rose-500/20 active:scale-95 transition-all cursor-pointer shadow-none" onClick={onSignOut}><LogOut size={13} aria-hidden="true" /> Sign out</button>
+  </div>;
+}
+
 function Navigation({ open, collapsed, onToggle }: { open: boolean; collapsed: boolean; onToggle: () => void }) {
   const groups = [
-    ["Observe", [["/overview", "Overview", Gauge], ["/traces", "Trace explorer", Activity], ["/logs", "Log explorer", ScrollText], ["/topology", "Service topology", Network]]],
+    ["Observe", [["/overview", "Overview", Gauge], ["/performance", "Performance", TrendingUp], ["/traces", "Trace explorer", Activity], ["/logs", "Log explorer", ScrollText], ["/topology", "Service topology", Network]]],
     ["Respond", [["/incidents", "Incidents", BellRing]]],
     ["Manage", [["/settings", "Settings", Settings], ["/flow", "How it works", GitBranch]]],
   ] as const;
@@ -153,11 +243,4 @@ function Navigation({ open, collapsed, onToggle }: { open: boolean; collapsed: b
       {!collapsed && <span>Operator console</span>}
     </div>
   </nav>;
-}
-
-function ConnectionBanner({ error, onRetry, onDisconnect }: { error: unknown; onRetry: () => void; onDisconnect: () => void }) {
-  const rejected = error instanceof APIError && (error.status === 401 || error.status === 403);
-  return <Notice guidance={errorGuidance(error)} variant="banner" actions={rejected
-    ? <button type="button" className="notice-btn" onClick={onDisconnect}>Disconnect</button>
-    : <button type="button" className="notice-btn" onClick={onRetry}><RefreshCw size={13} aria-hidden="true" /> Retry</button>} />;
 }

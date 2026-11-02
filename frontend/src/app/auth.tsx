@@ -1,12 +1,23 @@
 import { createContext, useContext } from "react";
-
-export const apiKeyStorageKey = "tracepilot-api-key";
+import type { Account, Membership, Role, SessionView } from "../shared/session";
 
 export type AuthState = {
-  apiKey: string;
+  /** Non-empty while someone is signed in; pass it to `api`, which attaches the access token. */
+  credential: string;
   isAuthenticated: boolean;
-  connect: (key: string) => void;
-  disconnect: () => void;
+  /** Called by the sign-in and registration forms once the server accepted them. */
+  signIn?: (view: SessionView) => void;
+  session?: {
+    user: Account;
+    memberships: Membership[];
+    project?: Membership;
+    /** The role in the current project; a super administrator is an owner everywhere. */
+    role?: Role;
+    switchProject: (projectID: string) => void;
+    refresh: () => Promise<void>;
+    adopt: (view: SessionView) => void;
+    signOut: () => void;
+  };
 };
 
 export const AuthContext = createContext<AuthState | null>(null);

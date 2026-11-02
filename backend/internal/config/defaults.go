@@ -22,6 +22,7 @@ func defaultConfig() Config {
 			RateLimitAuthRequests:   20,
 			RateLimitReplayRequests: 10,
 		},
+		Auth: AuthConfig{AllowRegistration: true},
 		Ingestion: IngestionConfig{
 			GRPCAddress:            ":4317",
 			HTTPAddress:            ":4318",
@@ -48,15 +49,13 @@ func defaultConfig() Config {
 			ScrubFreeText:          true,
 		},
 		Database: DatabaseConfig{
-			MaxConnections:        20,
-			MinConnections:        2,
-			MaxConnectionLifetime: time.Hour,
-			MaxConnectionIdleTime: 30 * time.Minute,
-			HealthCheckPeriod:     time.Minute,
-			ReadinessTimeout:      2 * time.Second,
-			MigrationsPath:        "./db/migrations",
-			// Above http.request_timeout (20s) so the API answers 504 first and the
-			// database timeout only catches work nobody is waiting for.
+			MaxConnections:           200,
+			MinConnections:           2,
+			MaxConnectionLifetime:    time.Hour,
+			MaxConnectionIdleTime:    30 * time.Minute,
+			HealthCheckPeriod:        time.Minute,
+			ReadinessTimeout:         2 * time.Second,
+			MigrationsPath:           "./db/migrations",
 			StatementTimeout:         30 * time.Second,
 			LockTimeout:              10 * time.Second,
 			IdleInTransactionTimeout: 30 * time.Second,

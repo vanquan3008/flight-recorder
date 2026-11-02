@@ -4,6 +4,7 @@ import { FlowPage } from "../features/flow/page";
 import { IncidentPage, OperationsPage } from "../features/operations/page";
 import { LogsPage } from "../features/logs/page";
 import { OverviewPage } from "../features/overview/page";
+import { PerformancePage } from "../features/performance/page";
 import { SettingsPage } from "../features/settings/page";
 import { TopologyPage } from "../features/topology/page";
 import { TraceDetailPage, TracesPage } from "../features/traces/page";
@@ -13,6 +14,7 @@ export function AppRoutes({ isAuthenticated }: { isAuthenticated: boolean }) {
   return <Routes>
     <Route path="/overview" element={<OverviewPage />} />
     <Route path="/flow" element={<FlowPage />} />
+    <Route path="/performance" element={<PerformancePage />} />
     <Route path="/traces" element={<TracesPage />} />
     <Route path="/traces/:traceID" element={<TraceDetailPage />} />
     <Route path="/logs" element={<LogsPage />} />

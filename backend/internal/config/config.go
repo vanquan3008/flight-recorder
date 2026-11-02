@@ -13,10 +13,10 @@ import (
 const (
 	maxIngestionRecords            = 100_000
 	maxIngestionAttributes         = 1_024
-	maxIngestionAttributeBytes     = 1 << 20
+	maxIngestionAttributeBytes     = 1 << 20 // 1 MiB
 	maxIngestionQueueSize          = 100_000
-	maxIngestionConcurrentRequests = 1024
-	maxIngestionQueueBytes         = 4 << 30
+	maxIngestionConcurrentRequests = 1_024
+	maxIngestionQueueBytes         = 4 << 30 // 4 GiB
 	maxIngestionBatchSize          = 10_000
 	maxIngestionWorkers            = 64
 	maxDatabaseConnections         = 1_000
@@ -34,6 +34,30 @@ type Config struct {
 	Notifications   NotificationsConfig `config:"notifications"`
 	ShutdownTimeout time.Duration       `config:"shutdown_timeout"`
 	LogLevel        slog.Level          `config:"log_level"`
+}
+
+type HTTPConfig struct {
+	// MetricsToken lets a metrics scraper read /metrics in production without a person's sign-in.
+	MetricsToken   string   `config:"metrics_token"`
+	Address        string   `config:"address"`
+	AllowedOrigins []string `config:"allowed_origins"`
+	TrustedProxies []string `config:"trusted_proxies"`
+
+	// Limits concurrent management requests to protect the shared DB pool.
+	MaxConcurrentQueries int `config:"max_concurrent_queries"`
+
+	// RequestTimeout should be shorter than WriteTimeout.
+	RequestTimeout          time.Duration `config:"request_timeout"`
+	ReadHeaderTimeout       time.Duration `config:"read_header_timeout"`
+	ReadTimeout             time.Duration `config:"read_timeout"`
+	WriteTimeout            time.Duration `config:"write_timeout"`
+	IdleTimeout             time.Duration `config:"idle_timeout"`
+	MaxHeaderBytes          int           `config:"max_header_bytes"`
+	ManagementMaxBodyBytes  int64         `config:"management_max_body_bytes"`
+	RateLimitRequests       int           `config:"rate_limit_requests"`
+	RateLimitWindow         time.Duration `config:"rate_limit_window"`
+	RateLimitAuthRequests   int           `config:"rate_limit_auth_requests"`
+	RateLimitReplayRequests int           `config:"rate_limit_replay_requests"`
 }
 
 type IngestionConfig struct {
@@ -58,38 +82,14 @@ type IngestionConfig struct {
 	FlushInterval          time.Duration `config:"flush_interval"`
 	Workers                int           `config:"workers"`
 	RedactedKeys           []string      `config:"redacted_keys"`
-	// AuthFailureLimit is how many failed authentications one client address may
-	// make per AuthFailureWindow before OTLP answers without a database lookup.
-	// 0 turns the limit off.
+
+	// Limits failed authentication attempts per client address.
+	// Zero disables this protection.
 	AuthFailureLimit  int           `config:"auth_failure_limit"`
 	AuthFailureWindow time.Duration `config:"auth_failure_window"`
-	// ScrubFreeText masks credentials inside free text (log bodies, exception
-	// messages, URLs) as well as under sensitive attribute names.
-	ScrubFreeText bool `config:"scrub_free_text"`
-}
 
-type HTTPConfig struct {
-	Address        string   `config:"address"`
-	AllowedOrigins []string `config:"allowed_origins"`
-	TrustedProxies []string `config:"trusted_proxies"`
-	// MaxConcurrentQueries bounds the management API requests running at once.
-	// They share the database pool with ingestion and the background workers, so
-	// the cap keeps a burst of heavy reads from taking every connection.
-	MaxConcurrentQueries int `config:"max_concurrent_queries"`
-	// RequestTimeout cancels a management API request, and the database work
-	// behind it, after this long. Keep it below WriteTimeout so the client gets
-	// an answer instead of a closed connection.
-	RequestTimeout          time.Duration `config:"request_timeout"`
-	ReadHeaderTimeout       time.Duration `config:"read_header_timeout"`
-	ReadTimeout             time.Duration `config:"read_timeout"`
-	WriteTimeout            time.Duration `config:"write_timeout"`
-	IdleTimeout             time.Duration `config:"idle_timeout"`
-	MaxHeaderBytes          int           `config:"max_header_bytes"`
-	ManagementMaxBodyBytes  int64         `config:"management_max_body_bytes"`
-	RateLimitRequests       int           `config:"rate_limit_requests"`
-	RateLimitWindow         time.Duration `config:"rate_limit_window"`
-	RateLimitAuthRequests   int           `config:"rate_limit_auth_requests"`
-	RateLimitReplayRequests int           `config:"rate_limit_replay_requests"`
+	// Scrubs credentials from free text, URLs and sensitive attributes.
+	ScrubFreeText bool `config:"scrub_free_text"`
 }
 
 type DatabaseConfig struct {
@@ -101,17 +101,21 @@ type DatabaseConfig struct {
 	HealthCheckPeriod     time.Duration `config:"health_check_period"`
 	ReadinessTimeout      time.Duration `config:"readiness_timeout"`
 	MigrationsPath        string        `config:"migrations_path" env:"TRACEPILOT_MIGRATIONS_PATH"`
-	// Session limits applied to every pooled connection. They keep one runaway
-	// query, a lock queue or an abandoned transaction from holding a connection
-	// the rest of the service needs. 0 leaves the server default. A URL parameter
-	// of the same name wins. Migrations use their own connection and are not capped.
+
+	// PostgreSQL session limits for pooled connections.
+	// Zero leaves the PostgreSQL server default.
 	StatementTimeout         time.Duration `config:"statement_timeout"`
 	LockTimeout              time.Duration `config:"lock_timeout"`
 	IdleInTransactionTimeout time.Duration `config:"idle_in_transaction_timeout"`
 }
 
 type AuthConfig struct {
-	BootstrapAPIKey string `config:"bootstrap_api_key"`
+	// JWTSecret signs console access tokens and ingest tokens. Without one, a random secret is made at
+	// startup, so tokens stop working on restart and replicas do not accept each other's.
+	JWTSecret string `config:"jwt_secret"`
+	// AllowRegistration lets anyone create an account. The first account is always allowed and becomes
+	// the super administrator.
+	AllowRegistration bool `config:"allow_registration"`
 }
 
 type TLSConfig struct {
@@ -119,10 +123,8 @@ type TLSConfig struct {
 	PrivateKeyFile  string `config:"private_key_file"`
 }
 
-// RetentionConfig sets how long each group of data is kept; zero keeps the
-// group forever. MaxAge covers raw telemetry (events, spans, logs, metric
-// points). Incidents expire with their evidence, occurrences, status history
-// and replay results, and only once resolved or ignored.
+// RetentionConfig controls data expiration.
+// A zero MaxAge keeps the corresponding data indefinitely.
 type RetentionConfig struct {
 	MaxAge         time.Duration `config:"max_age"`
 	IncidentMaxAge time.Duration `config:"incident_max_age"`
@@ -150,37 +152,63 @@ type NotificationsConfig struct {
 	RequestTimeout time.Duration `config:"request_timeout" env:"TRACEPILOT_WEBHOOK_REQUEST_TIMEOUT"`
 }
 
-// Load builds the configuration from one flow: built-in defaults, then the
-// first .env file found (see readEnvironmentFile), then the process
-// environment, which wins. Every field maps to TRACEPILOT_<SECTION>_<FIELD>.
+// Load initializes configuration using the following precedence:
+//
+// 1. Built-in defaults.
+// 2. Environment file.
+// 3. Process environment variables.
+//
+// Configuration is validated before being returned.
 func Load() (Config, error) {
-	fileValues, fileError := readEnvironmentFile()
-	if fileError != nil {
-		return Config{}, fileError
+	fileValues, err := readEnvironmentFile()
+	if err != nil {
+		return Config{}, err
 	}
-	configuration := defaultConfig()
-	if environmentError := applyEnvironment(&configuration, fileValues); environmentError != nil {
-		return Config{}, environmentError
+
+	cfg := defaultConfig()
+
+	if err := applyEnvironment(&cfg, fileValues); err != nil {
+		return Config{}, fmt.Errorf("apply configuration: %w", err)
 	}
-	if validationError := configuration.Validate(); validationError != nil {
-		return Config{}, validationError
+
+	if err := cfg.Validate(); err != nil {
+		return Config{}, fmt.Errorf("validate configuration: %w", err)
 	}
-	return configuration, nil
+
+	return cfg, nil
 }
 
-// Native commands also run from backend/ via go -C; only a missing local file
-// permits falling back to the repository-root .env.
+// readEnvironmentFile reads the first available environment file.
+//
+// The lookup order supports both:
+//
+//   - Running from the repository root.
+//   - Running commands from backend/.
+//
+// A parent directory is checked only when the local file does not exist.
+// Invalid or unreadable files are returned as errors.
 func readEnvironmentFile() (map[string]string, error) {
-	for _, path := range []string{".env", "../.env"} {
+	paths := [...]string{
+		".env",
+		"../.env",
+	}
+
+	for _, path := range paths {
 		values, err := godotenv.Read(path)
+		if err == nil {
+			return values, nil
+		}
+
 		if errors.Is(err, os.ErrNotExist) {
 			continue
 		}
-		if err != nil {
-			// Parser errors can contain secret values from the input line.
-			return nil, fmt.Errorf("read %s: invalid or unreadable environment file", path)
-		}
-		return values, nil
+
+		// Do not expose potentially sensitive values from parser errors.
+		return nil, fmt.Errorf(
+			"read environment file %q: invalid or unreadable file",
+			path,
+		)
 	}
+
 	return nil, nil
 }

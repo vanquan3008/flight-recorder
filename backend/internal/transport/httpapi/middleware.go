@@ -120,7 +120,9 @@ func (server *Server) withCORS(nextHandler http.Handler) http.Handler {
 		}
 
 		responseWriter.Header().Set("Access-Control-Allow-Origin", origin)
-		responseWriter.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-API-Key, X-Request-ID")
+		responseWriter.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Request-ID, X-TracePilot-Refresh, X-Project-ID, X-Environment")
+		// The console signs in with a cookie, which a cross-origin page only sends when allowed.
+		responseWriter.Header().Set("Access-Control-Allow-Credentials", "true")
 		responseWriter.Header().Set("Access-Control-Allow-Methods", server.corsAllowedMethods)
 		responseWriter.Header().Set("Access-Control-Max-Age", corsMaxAgeSeconds)
 		responseWriter.Header().Add("Vary", "Origin")

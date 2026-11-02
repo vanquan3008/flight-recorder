@@ -1,0 +1,72 @@
+package main
+
+import (
+	"context"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/http"
+
+	"golang.org/x/sync/errgroup"
+
+	"github.com/vanquan3008/tracepilot/internal/auth"
+	"github.com/vanquan3008/tracepilot/internal/config"
+	"github.com/vanquan3008/tracepilot/internal/ingest/pipeline"
+)
+
+// component is one long-running part of the process, such as a server or a background worker.
+type component struct {
+	name string
+	run  func(context.Context) error
+}
+
+// superviseComponents runs every component until the context ends or one of them stops. The first
+// failure cancels the rest, and the error it returns is the first one.
+func superviseComponents(ctx context.Context, components []component) error {
+	group, groupContext := errgroup.WithContext(ctx)
+	for _, part := range components {
+		group.Go(func() error { return runComponent(groupContext, part.name, part.run) })
+	}
+	return group.Wait()
+}
+
+// runComponent adapts a component's result for supervision:
+//   - it returns nil when the parent context is cancelled;
+//   - it returns an error when the component fails;
+//   - it returns an error when the component exits unexpectedly;
+//   - it treats HTTP server closure during shutdown as normal.
+func runComponent(ctx context.Context, name string, run func(context.Context) error) error {
+	err := run(ctx)
+	if err != nil {
+		if ctx.Err() != nil && (errors.Is(err, context.Canceled) || errors.Is(err, http.ErrServerClosed)) {
+			return nil
+		}
+		return fmt.Errorf("%s: %w", name, err)
+	}
+	if ctx.Err() != nil {
+		return nil
+	}
+	return fmt.Errorf("%s stopped unexpectedly", name)
+}
+
+// ensureJWTSecret makes sure there is a signing secret. Tokens are signed with one secret shared by
+// the API and the OTLP receiver; a random one is fine for a single local process, but configure one
+// so tokens survive restarts and replicas agree.
+func ensureJWTSecret(cfg *config.Config, logger *slog.Logger) error {
+	if cfg.Auth.JWTSecret != "" {
+		return nil
+	}
+	generated, secretError := auth.NewJWTSecret()
+	if secretError != nil {
+		return secretError
+	}
+	cfg.Auth.JWTSecret = hex.EncodeToString(generated)
+	logger.Warn("TRACEPILOT_AUTH_JWT_SECRET is not set; using a random secret, so sign-ins and ingest tokens stop working when this process restarts")
+	return nil
+}
+
+// drainPipelines stops ingestion first, then metrics, under one shared deadline.
+func drainPipelines(ctx context.Context, events *pipeline.Pipeline, points *pipeline.MetricsPipeline) error {
+	return errors.Join(events.Shutdown(ctx), points.Shutdown(ctx))
+}

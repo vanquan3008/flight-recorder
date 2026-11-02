@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/vanquan3008/tracepilot/internal/application/replay/capture"
+	"github.com/vanquan3008/tracepilot/internal/auth"
 	replaydomain "github.com/vanquan3008/tracepilot/internal/domain/replay"
 	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
 )
@@ -25,7 +26,7 @@ type Command struct {
 	ProjectID     string
 	EnvironmentID string
 	IncidentID    string
-	ActorKeyID    string
+	Actor         auth.Actor
 	RequestID     string
 	Request       capture.Request
 }
@@ -45,8 +46,8 @@ func NewService(store ExecutionStore, executor RequestExecutor) *Service {
 }
 
 func (service *Service) Run(ctx context.Context, command Command) (Outcome, error) {
-	executionID := telemetry.DeterministicID(time.Now(), command.ActorKeyID, command.IncidentID, command.RequestID)
-	started, startError := service.store.StartReplayExecution(ctx, executionID, command.ProjectID, command.EnvironmentID, command.IncidentID, AuditTarget(command.Request.Target), command.ActorKeyID)
+	executionID := telemetry.DeterministicID(time.Now(), command.Actor.Label(), command.IncidentID, command.RequestID)
+	started, startError := service.store.StartReplayExecution(ctx, executionID, command.ProjectID, command.EnvironmentID, command.IncidentID, AuditTarget(command.Request.Target), command.Actor.Label())
 	if startError != nil {
 		return Outcome{}, startError
 	}
@@ -54,7 +55,9 @@ func (service *Service) Run(ctx context.Context, command Command) (Outcome, erro
 		return Outcome{}, ErrIncidentNotFound
 	}
 	result := service.executor.Execute(ctx, command.Request)
-	completionContext, cancelCompletion := context.WithTimeout(context.Background(), 5*time.Second)
+	// Use WithoutCancel so the result is persisted even if the request context
+	// has already been cancelled (e.g. the caller disconnected mid-replay).
+	completionContext, cancelCompletion := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancelCompletion()
 	if completeError := service.store.CompleteReplayExecution(completionContext, executionID, command.ProjectID, result); completeError != nil {
 		return Outcome{}, completeError

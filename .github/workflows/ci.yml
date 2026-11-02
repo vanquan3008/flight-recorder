@@ -100,8 +100,7 @@ jobs:
         run: go -C backend build ./...
       - name: Browser smoke test
         env:
-          TRACEPILOT_AUTH_BOOTSTRAP_API_KEY: tracepilot-development-bootstrap-key-000000
-          TRACEPILOT_E2E_API_KEY: tracepilot-development-bootstrap-key-000000
+          TRACEPILOT_AUTH_JWT_SECRET: ci-only-jwt-secret-0123456789abcdef0123456789
         run: |
           npm --prefix frontend ci
           npm --prefix frontend exec playwright -- install --with-deps chromium
@@ -147,6 +146,12 @@ jobs:
         run: docker inspect tracepilot:ci --format '{{.Config.User}}' | grep -E '^nonroot(:nonroot)?$'
       - name: Smoke test image entrypoint
         run: docker run --rm tracepilot:ci version
+      - name: Build console image
+        run: docker build --target console -t tracepilot-console:ci frontend
+      - name: Verify console image
+        run: |
+          docker inspect tracepilot-console:ci --format '{{.Config.User}}' | grep -E '^nginx(:nginx)?$'
+          docker run --rm -e TRACEPILOT_API_UPSTREAM=http://127.0.0.1:8080 tracepilot-console:ci nginx -t
 
   ci-success:
     needs: [lint, test, frontend, docker]

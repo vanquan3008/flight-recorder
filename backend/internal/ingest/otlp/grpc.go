@@ -30,18 +30,31 @@ func newGRPCServer(receiver *Receiver, maxRecvMsgSize int, tlsConfig *tls.Config
 	return grpcServer
 }
 
-func (receiver *Receiver) authorizeGRPC(ctx context.Context) error {
-	err := receiver.authorize(ctx, grpcAPIKey(ctx), receiver.grpcClient(ctx))
+// authorizeGRPC authenticates the caller and returns a context carrying the scope its telemetry
+// belongs to. The environment comes from the x-environment metadata entry.
+func (receiver *Receiver) authorizeGRPC(ctx context.Context) (context.Context, error) {
+	scoped, err := receiver.authorizeScope(ctx, grpcToken(ctx), grpcEnvironment(ctx), receiver.grpcClient(ctx))
 	switch {
 	case err == nil:
-		return nil
+		return scoped, nil
 	case errors.Is(err, ErrThrottled):
-		return status.Error(codes.ResourceExhausted, "too many failed authentication attempts")
+		return ctx, status.Error(codes.ResourceExhausted, "too many failed authentication attempts")
 	case errors.Is(err, auth.ErrUnauthorized):
-		return status.Error(codes.Unauthenticated, "OTLP authentication failed")
+		return ctx, status.Error(codes.Unauthenticated, "OTLP authentication failed")
+	case errors.Is(err, ErrUnknownEnvironment):
+		return ctx, status.Error(codes.InvalidArgument, "unknown environment for this project")
 	default:
-		return status.Error(codes.Unavailable, "OTLP authentication temporarily unavailable")
+		return ctx, status.Error(codes.Unavailable, "OTLP authentication temporarily unavailable")
 	}
+}
+
+func grpcEnvironment(ctx context.Context) string {
+	if incoming, found := metadata.FromIncomingContext(ctx); found {
+		if values := incoming.Get("x-environment"); len(values) > 0 {
+			return strings.TrimSpace(values[0])
+		}
+	}
+	return ""
 }
 
 func (receiver *Receiver) grpcClient(ctx context.Context) string {
@@ -67,13 +80,10 @@ func (receiver *Receiver) admitGRPC() (func(), error) {
 	return release, nil
 }
 
-func grpcAPIKey(ctx context.Context) string {
+func grpcToken(ctx context.Context) string {
 	metadataValues, exists := metadata.FromIncomingContext(ctx)
 	if !exists {
 		return ""
-	}
-	if values := metadataValues.Get("x-api-key"); len(values) > 0 {
-		return values[0]
 	}
 	if values := metadataValues.Get("authorization"); len(values) > 0 && strings.HasPrefix(values[0], "Bearer ") {
 		return strings.TrimSpace(strings.TrimPrefix(values[0], "Bearer "))

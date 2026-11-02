@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -23,6 +24,8 @@ type apiRouteDefinition struct {
 	requestBody    bool
 	handler        func(*Server) apiHandler
 	requiresReplay bool
+	// public routes need no credentials; they authenticate the request themselves.
+	public bool
 }
 
 // Keep the management router and OpenAPI contract sourced from one manifest.
@@ -50,11 +53,30 @@ var apiRouteDefinitions = []apiRouteDefinition{
 	{path: "/api/v1/incidents/{incidentID}/executions/{executionID}", method: http.MethodGet, scope: "read", tags: []string{"replay"}, operationID: "getReplayExecution", handler: func(s *Server) apiHandler { return s.getAllowedRequestExecution }},
 	{path: "/api/v1/incidents/{incidentID}", method: http.MethodPatch, scope: "write", tags: []string{"incidents"}, operationID: "updateIncident", requestBody: true, handler: func(s *Server) apiHandler { return s.updateIncident }},
 	{path: "/api/v1/incidents/{incidentID}/replays", method: http.MethodPost, scope: "replay", tags: []string{"replay"}, operationID: "replayIncident", requestBody: true, requiresReplay: true, handler: func(s *Server) apiHandler { return s.replayIncident }},
-	{path: "/api/v1/api-keys", method: http.MethodGet, scope: "admin", tags: []string{"api-keys"}, operationID: "listAPIKeys", handler: func(s *Server) apiHandler { return s.listAPIKeys }},
-	{path: "/api/v1/api-key-events", method: http.MethodGet, scope: "admin", tags: []string{"api-keys"}, operationID: "listAPIKeyEvents", handler: func(s *Server) apiHandler { return s.listAPIKeyEvents }},
-	{path: "/api/v1/api-keys", method: http.MethodPost, scope: "admin", tags: []string{"api-keys"}, operationID: "createAPIKey", requestBody: true, handler: func(s *Server) apiHandler { return s.createAPIKey }},
-	{path: "/api/v1/api-keys/{keyID}/rotate", method: http.MethodPost, scope: "admin", tags: []string{"api-keys"}, operationID: "rotateAPIKey", successStatus: http.StatusOK, handler: func(s *Server) apiHandler { return s.rotateAPIKey }},
-	{path: "/api/v1/api-keys/{keyID}", method: http.MethodDelete, scope: "admin", tags: []string{"api-keys"}, operationID: "revokeAPIKey", handler: func(s *Server) apiHandler { return s.revokeAPIKey }},
+	{path: "/api/v1/auth/status", method: http.MethodGet, scope: "public", public: true, tags: []string{"auth"}, operationID: "getAuthStatus", handler: func(s *Server) apiHandler { return s.authStatus }},
+	{path: "/api/v1/auth/register", method: http.MethodPost, scope: "public", public: true, tags: []string{"auth"}, operationID: "register", successStatus: http.StatusCreated, requestBody: true, handler: func(s *Server) apiHandler { return s.authRegister }},
+	{path: "/api/v1/auth/refresh", method: http.MethodPost, scope: "public", public: true, tags: []string{"auth"}, operationID: "refreshSession", successStatus: http.StatusOK, handler: func(s *Server) apiHandler { return s.authRefresh }},
+	{path: "/api/v1/auth/login", method: http.MethodPost, scope: "public", public: true, tags: []string{"auth"}, operationID: "login", successStatus: http.StatusOK, requestBody: true, handler: func(s *Server) apiHandler { return s.authLogin }},
+	{path: "/api/v1/auth/logout", method: http.MethodPost, scope: "public", public: true, tags: []string{"auth"}, operationID: "logout", successStatus: http.StatusNoContent, handler: func(s *Server) apiHandler { return s.authLogout }},
+	{path: "/api/v1/auth/me", method: http.MethodGet, scope: auth.ScopeSession, tags: []string{"auth"}, operationID: "getCurrentUser", handler: func(s *Server) apiHandler { return s.authMe }},
+	{path: "/api/v1/auth/password", method: http.MethodPost, scope: auth.ScopeSession, tags: []string{"auth"}, operationID: "changePassword", successStatus: http.StatusOK, requestBody: true, handler: func(s *Server) apiHandler { return s.authChangePassword }},
+	{path: "/api/v1/projects", method: http.MethodGet, scope: auth.ScopeSession, tags: []string{"projects"}, operationID: "listProjects", handler: func(s *Server) apiHandler { return s.listProjects }},
+	{path: "/api/v1/projects", method: http.MethodPost, scope: auth.ScopeSession, tags: []string{"projects"}, operationID: "createProject", requestBody: true, handler: func(s *Server) apiHandler { return s.createProject }},
+	{path: "/api/v1/projects/{projectID}", method: http.MethodGet, scope: "read", tags: []string{"projects"}, operationID: "getProject", handler: func(s *Server) apiHandler { return s.getProject }},
+	{path: "/api/v1/projects/{projectID}", method: http.MethodPatch, scope: "admin", tags: []string{"projects"}, operationID: "updateProject", requestBody: true, successStatus: http.StatusOK, handler: func(s *Server) apiHandler { return s.renameProject }},
+	{path: "/api/v1/projects/{projectID}/environments", method: http.MethodPost, scope: "admin", tags: []string{"projects"}, operationID: "createEnvironment", requestBody: true, handler: func(s *Server) apiHandler { return s.createEnvironment }},
+	{path: "/api/v1/projects/{projectID}/members", method: http.MethodGet, scope: "admin", tags: []string{"projects", "members"}, operationID: "listProjectMembers", handler: func(s *Server) apiHandler { return s.listMembers }},
+	{path: "/api/v1/projects/{projectID}/members", method: http.MethodPost, scope: "admin", tags: []string{"projects", "members"}, operationID: "addProjectMember", requestBody: true, handler: func(s *Server) apiHandler { return s.addMember }},
+	{path: "/api/v1/projects/{projectID}/members/{userID}", method: http.MethodPatch, scope: "admin", tags: []string{"projects", "members"}, operationID: "changeProjectMemberRole", requestBody: true, successStatus: http.StatusOK, handler: func(s *Server) apiHandler { return s.changeMemberRole }},
+	{path: "/api/v1/projects/{projectID}/members/{userID}", method: http.MethodDelete, scope: "write", tags: []string{"projects", "members"}, operationID: "removeProjectMember", handler: func(s *Server) apiHandler { return s.removeMember }},
+	{path: "/api/v1/projects/{projectID}/ingest-tokens", method: http.MethodGet, scope: "admin", tags: []string{"projects", "ingest-tokens"}, operationID: "listIngestTokens", handler: func(s *Server) apiHandler { return s.listIngestTokens }},
+	{path: "/api/v1/projects/{projectID}/ingest-tokens", method: http.MethodPost, scope: "admin", tags: []string{"projects", "ingest-tokens"}, operationID: "createIngestToken", requestBody: true, handler: func(s *Server) apiHandler { return s.createIngestToken }},
+	{path: "/api/v1/projects/{projectID}/ingest-tokens/{tokenID}", method: http.MethodDelete, scope: "admin", tags: []string{"projects", "ingest-tokens"}, operationID: "revokeIngestToken", handler: func(s *Server) apiHandler { return s.revokeIngestToken }},
+	{path: "/api/v1/audit-events", method: http.MethodGet, scope: "admin", tags: []string{"audit"}, operationID: "listAuditEvents", handler: func(s *Server) apiHandler { return s.listAuditEvents }},
+	{path: "/api/v1/users", method: http.MethodGet, scope: auth.ScopePlatform, tags: []string{"users"}, operationID: "listUsers", handler: func(s *Server) apiHandler { return s.listUsers }},
+	{path: "/api/v1/users", method: http.MethodPost, scope: auth.ScopePlatform, tags: []string{"users"}, operationID: "createUser", requestBody: true, handler: func(s *Server) apiHandler { return s.createUser }},
+	{path: "/api/v1/users/{userID}", method: http.MethodPatch, scope: auth.ScopePlatform, tags: []string{"users"}, operationID: "updateUser", requestBody: true, successStatus: http.StatusOK, handler: func(s *Server) apiHandler { return s.updateUser }},
+	{path: "/api/v1/users/{userID}/password-reset", method: http.MethodPost, scope: auth.ScopePlatform, tags: []string{"users"}, operationID: "resetUserPassword", successStatus: http.StatusOK, handler: func(s *Server) apiHandler { return s.resetUserPassword }},
 	{path: "/api/v1/webhooks", method: http.MethodGet, scope: "admin", tags: []string{"webhooks"}, operationID: "listWebhooks", handler: func(s *Server) apiHandler { return s.listWebhooks }},
 	{path: "/api/v1/webhooks", method: http.MethodPost, scope: "admin", tags: []string{"webhooks"}, operationID: "createWebhook", requestBody: true, handler: func(s *Server) apiHandler { return s.createWebhook }},
 	{path: "/api/v1/webhooks/{webhookID}", method: http.MethodGet, scope: "admin", tags: []string{"webhooks"}, operationID: "getWebhook", handler: func(s *Server) apiHandler { return s.getWebhook }},
@@ -66,6 +88,10 @@ var apiRouteDefinitions = []apiRouteDefinition{
 
 func (server *Server) registerAPIRoutes(router *http.ServeMux) {
 	for _, route := range server.availableAPIRoutes() {
+		if route.public {
+			router.HandleFunc(route.method+" "+route.path, server.publicRoute(route.handler(server)))
+			continue
+		}
 		router.HandleFunc(route.method+" "+route.path, server.requireScope(route.scope, route.handler(server)))
 	}
 }
@@ -81,6 +107,18 @@ func (server *Server) requireScope(scope string, handle apiHandler) http.Handler
 		if !ok {
 			return
 		}
+		if principal.ProjectID != "" {
+			environmentID, environmentError := server.resolveEnvironment(request.Context(), principal.ProjectID, strings.TrimSpace(request.Header.Get(environmentHeader)))
+			if errors.Is(environmentError, errEnvironmentNotFound) {
+				writeAPIError(responseWriter, http.StatusBadRequest, "INVALID_ENVIRONMENT", "unknown environment for this project")
+				return
+			}
+			if environmentError != nil {
+				server.writeInternalError(responseWriter, "resolve environment", environmentError)
+				return
+			}
+			principal.EnvironmentID = environmentID
+		}
 		release, admitted := server.admitQuery(request.Context())
 		if !admitted {
 			responseWriter.Header().Set("Retry-After", "1")
@@ -91,6 +129,23 @@ func (server *Server) requireScope(scope string, handle apiHandler) http.Handler
 		queryContext, cancel := context.WithTimeout(request.Context(), server.requestTimeout)
 		defer cancel()
 		handle(responseWriter, request.WithContext(queryContext), principal)
+	}
+}
+
+// publicRoute serves a route that needs no credentials under the same slot and deadline
+// limits as authenticated ones, so sign-in cannot be used to exhaust the pool.
+func (server *Server) publicRoute(handle apiHandler) http.HandlerFunc {
+	return func(responseWriter http.ResponseWriter, request *http.Request) {
+		release, admitted := server.admitQuery(request.Context())
+		if !admitted {
+			responseWriter.Header().Set("Retry-After", "1")
+			writeAPIError(responseWriter, http.StatusServiceUnavailable, "OVERLOADED", "too many requests are running; retry shortly")
+			return
+		}
+		defer release()
+		queryContext, cancel := context.WithTimeout(request.Context(), server.requestTimeout)
+		defer cancel()
+		handle(responseWriter, request.WithContext(queryContext), auth.Principal{})
 	}
 }
 

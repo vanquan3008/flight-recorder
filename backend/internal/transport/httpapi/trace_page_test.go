@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vanquan3008/tracepilot/internal/auth"
 	"github.com/vanquan3008/tracepilot/internal/query"
 )
 
@@ -25,10 +24,6 @@ type tracePageBackend struct {
 	project string
 }
 
-func (backend *tracePageBackend) AuthenticateAPIKey(ctx context.Context, key string) (auth.Principal, error) {
-	return authOnlyBackend{}.AuthenticateAPIKey(ctx, key)
-}
-
 func (backend *tracePageBackend) GetTrace(_ context.Context, project, _, _ string, page query.SpanPage) ([]query.SpanRecord, bool, error) {
 	backend.project, backend.page = project, page
 	return backend.spans, backend.hasMore, backend.err
@@ -41,7 +36,7 @@ func getTracePage(t *testing.T, backend *tracePageBackend, queryString string) (
 	router := http.NewServeMux()
 	server.registerAPIRoutes(router)
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/traces/"+pagedTraceID+queryString, nil)
-	request.Header.Set(apiKeyHeader, "read")
+	signIn(request, "user")
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, request)
 	var body map[string]any
@@ -56,7 +51,7 @@ func spanAt(second int, id string) query.SpanRecord {
 func TestTraceResponseSaysWhenMoreSpansFollow(t *testing.T) {
 	backend := &tracePageBackend{spans: []query.SpanRecord{spanAt(1, "01900000-0000-7000-8000-000000000001"), spanAt(2, "01900000-0000-7000-8000-000000000002")}, hasMore: true}
 	recorder, body := getTracePage(t, backend, "")
-	if recorder.Code != http.StatusOK || backend.page.Limit != maxTraceSpansPerPage || backend.page.MaxBytes != maxTracePageBytes || backend.project != "project" {
+	if recorder.Code != http.StatusOK || backend.page.Limit != maxTraceSpansPerPage || backend.page.MaxBytes != maxTracePageBytes || backend.project != testProjectIDForRoutes {
 		t.Fatalf("status=%d page=%+v project=%q", recorder.Code, backend.page, backend.project)
 	}
 	cursor, ok := body["next_cursor"].(string)

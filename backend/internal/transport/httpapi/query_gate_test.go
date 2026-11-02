@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vanquan3008/tracepilot/internal/auth"
 	"github.com/vanquan3008/tracepilot/internal/config"
 	"github.com/vanquan3008/tracepilot/internal/observability/metrics"
 	"github.com/vanquan3008/tracepilot/internal/query"
@@ -24,10 +23,6 @@ type slowServicesBackend struct {
 	release   chan struct{}
 	started   chan struct{}
 	cancelled chan struct{}
-}
-
-func (backend *slowServicesBackend) AuthenticateAPIKey(ctx context.Context, key string) (auth.Principal, error) {
-	return authOnlyBackend{}.AuthenticateAPIKey(ctx, key)
 }
 
 func (backend *slowServicesBackend) ListServices(ctx context.Context, _, _ string, _, _ time.Time) ([]query.ServiceSummary, error) {
@@ -44,6 +39,7 @@ func (backend *slowServicesBackend) ListServices(ctx context.Context, _, _ strin
 func gatedServer(backend *slowServicesBackend, concurrent int, timeout time.Duration) http.Handler {
 	configuration := config.Config{
 		HTTP:            config.HTTPConfig{ManagementMaxBodyBytes: 1024, MaxConcurrentQueries: concurrent, RequestTimeout: timeout},
+		Auth:            config.AuthConfig{JWTSecret: testJWTSecret},
 		Database:        config.DatabaseConfig{ReadinessTimeout: time.Second},
 		ShutdownTimeout: time.Second,
 	}
@@ -53,7 +49,7 @@ func gatedServer(backend *slowServicesBackend, concurrent int, timeout time.Dura
 
 func getServices(handler http.Handler) *httptest.ResponseRecorder {
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/services", nil)
-	request.Header.Set(apiKeyHeader, "read")
+	signIn(request, "user")
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, request)
 	return recorder

@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"github.com/vanquan3008/tracepilot/internal/auth"
 	"testing"
 	"time"
 
@@ -15,24 +16,17 @@ import (
 func resolvedIncident(t *testing.T, database *Database, scope config.IngestionConfig, failedAt time.Time) (incidentID, actor string) {
 	t.Helper()
 	ctx := context.Background()
-	key := "reopen-bootstrap-key-0000000000000001"
-	if err := database.EnsureBootstrapAPIKey(ctx, scope.ProjectID, key); err != nil {
-		t.Fatal(err)
-	}
-	principal, authError := database.AuthenticateAPIKey(ctx, key)
-	if authError != nil {
-		t.Fatal(authError)
-	}
+	principal := testUser(t, database)
 	if err := database.StoreEvents(ctx, scope, []telemetry.Event{failingSpan(scope, failedAt, "1111111111111111", "payment declined")}); err != nil {
 		t.Fatal(err)
 	}
 	if err := database.pool.QueryRow(ctx, "SELECT id FROM incidents WHERE project_id = $1", scope.ProjectID).Scan(&incidentID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.UpdateIncidentStatus(ctx, scope.ProjectID, scope.EnvironmentID, incidentID, "RESOLVED", principal.KeyID); err != nil {
+	if _, err := database.UpdateIncidentStatus(ctx, scope.ProjectID, scope.EnvironmentID, incidentID, "RESOLVED", auth.Actor{UserID: principal.ID}); err != nil {
 		t.Fatal(err)
 	}
-	return incidentID, principal.KeyID
+	return incidentID, principal.ID
 }
 
 func incidentStatus(t *testing.T, database *Database, incidentID string) string {
@@ -72,7 +66,7 @@ func TestResolvedIncidentReopensWhenTheFailureReturns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(changes) != 2 || changes[0].Status != "OPEN" || changes[0].PreviousStatus != "RESOLVED" || changes[0].ActorKeyID != "system" {
+	if len(changes) != 2 || changes[0].Status != "OPEN" || changes[0].PreviousStatus != "RESOLVED" || changes[0].ActorUserID != "" {
 		t.Fatalf("history = %+v, want the operator's resolve followed by one system reopen", changes)
 	}
 	var deliveriesAfter int
@@ -103,10 +97,10 @@ func TestIgnoredIncidentStaysIgnored(t *testing.T) {
 	ctx := context.Background()
 	failedAt := time.Now().UTC().Truncate(time.Second).Add(-10 * time.Minute)
 	incidentID, actor := resolvedIncident(t, database, scope, failedAt)
-	if _, err := database.UpdateIncidentStatus(ctx, scope.ProjectID, scope.EnvironmentID, incidentID, "OPEN", actor); err != nil {
+	if _, err := database.UpdateIncidentStatus(ctx, scope.ProjectID, scope.EnvironmentID, incidentID, "OPEN", auth.Actor{UserID: actor}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.UpdateIncidentStatus(ctx, scope.ProjectID, scope.EnvironmentID, incidentID, "IGNORED", actor); err != nil {
+	if _, err := database.UpdateIncidentStatus(ctx, scope.ProjectID, scope.EnvironmentID, incidentID, "IGNORED", auth.Actor{UserID: actor}); err != nil {
 		t.Fatal(err)
 	}
 	again := failingSpan(scope, time.Now().UTC().Add(time.Minute), "4444444444444444", "payment declined")

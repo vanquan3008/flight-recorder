@@ -32,23 +32,23 @@ func (q *Queries) CountEventsBefore(ctx context.Context, before time.Time) (int6
 	return count, err
 }
 
-const deleteExpiredAPIKeyEvents = `-- name: DeleteExpiredAPIKeyEvents :execrows
-DELETE FROM api_key_events
+const deleteExpiredAuditEvents = `-- name: DeleteExpiredAuditEvents :execrows
+DELETE FROM audit_events
 WHERE id IN (
-    SELECT expired.id FROM api_key_events AS expired
+    SELECT expired.id FROM audit_events AS expired
     WHERE expired.created_at < $1::timestamptz
     ORDER BY expired.created_at
     LIMIT $2::integer
 )
 `
 
-type DeleteExpiredAPIKeyEventsParams struct {
+type DeleteExpiredAuditEventsParams struct {
 	Before    time.Time
 	BatchSize int32
 }
 
-func (q *Queries) DeleteExpiredAPIKeyEvents(ctx context.Context, arg DeleteExpiredAPIKeyEventsParams) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteExpiredAPIKeyEvents, arg.Before, arg.BatchSize)
+func (q *Queries) DeleteExpiredAuditEvents(ctx context.Context, arg DeleteExpiredAuditEventsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteExpiredAuditEvents, arg.Before, arg.BatchSize)
 	if err != nil {
 		return 0, err
 	}

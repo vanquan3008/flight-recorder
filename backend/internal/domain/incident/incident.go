@@ -71,7 +71,7 @@ type StatusChange struct {
 	ID             string    `json:"id"`
 	PreviousStatus string    `json:"previous_status"`
 	Status         string    `json:"status"`
-	ActorKeyID     string    `json:"actor_key_id"`
+	ActorUserID    string    `json:"actor_user_id,omitempty"`
 	ChangedAt      time.Time `json:"changed_at"`
 }
 

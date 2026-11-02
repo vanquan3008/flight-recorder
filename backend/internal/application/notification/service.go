@@ -95,12 +95,17 @@ func (service *Service) processDue(ctx context.Context) {
 		service.request.Add(1)
 		go func(attempt notificationdomain.DeliveryAttempt) {
 			defer service.request.Done()
-			semaphore <- struct{}{}
+			// Respect context cancellation so shutdown is not blocked by a
+			// goroutine waiting indefinitely for a free worker slot.
+			select {
+			case semaphore <- struct{}{}:
+			case <-ctx.Done():
+				return
+			}
 			service.dispatchAttempt(ctx, attempt)
 			<-semaphore
 		}(attempt)
 	}
-	service.request.Wait()
 }
 
 func (service *Service) dispatchAttempt(ctx context.Context, attempt notificationdomain.DeliveryAttempt) {

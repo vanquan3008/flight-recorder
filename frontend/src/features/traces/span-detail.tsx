@@ -1,6 +1,5 @@
-import { DetailLink } from "../../shared/navigation";
 import type { Span } from "../../shared/types";
-import { CopyButton, json } from "../../shared/ui";
+import { CopyButton, DetailLink, json } from "../../shared/ui";
 import { formatMs } from "./trace-model";
 
 type Props = { span: Span; traceID: string; startMs: number; durationMs: number };

@@ -31,6 +31,7 @@ type MetricsSubmitter interface {
 
 type Receiver struct {
 	normalizer      *normalizer
+	scopes          ScopeResolver
 	pipeline        Submitter
 	metricsPipeline MetricsSubmitter
 	metrics         *metrics.Registry
@@ -93,37 +94,8 @@ func (receiver *Receiver) admit() (release func(), admitted bool) {
 	}
 }
 
-// authorize checks the key for the ingest scope. client identifies the caller
-// for failure accounting. It returns auth.ErrUnauthorized for a bad key, a
-// throttled error while the client is over its failure budget, and any other
-// error for an authentication outage, which callers must treat as retryable.
-func (receiver *Receiver) authorize(ctx context.Context, rawKey, client string) error {
-	if receiver.authenticate == nil {
-		return nil
-	}
-	if retryAfter, blocked := receiver.guard.throttled(client); blocked {
-		return &throttledError{retryAfter: retryAfter}
-	}
-	if receiver.guard.knownBad(rawKey) {
-		receiver.guard.failed(client, rawKey, false)
-		return auth.ErrUnauthorized
-	}
-	principal, authError := receiver.authenticate(ctx, rawKey)
-	if authError != nil {
-		if errors.Is(authError, auth.ErrUnauthorized) {
-			receiver.guard.failed(client, rawKey, true)
-		}
-		return authError
-	}
-	if principal.ProjectID != receiver.normalizer.configuration.ProjectID || !principal.HasScope("ingest") {
-		receiver.guard.failed(client, rawKey, false)
-		return auth.ErrUnauthorized
-	}
-	return nil
-}
-
 func (receiver *Receiver) exportTraces(ctx context.Context, request *collectortracepb.ExportTraceServiceRequest) (*collectortracepb.ExportTraceServiceResponse, error) {
-	events, rejected := receiver.normalizer.traces(request.GetResourceSpans())
+	events, rejected := receiver.normalizerFor(ctx).traces(request.GetResourceSpans())
 	persisted, invalid, submitError := receiver.pipeline.Submit(ctx, events)
 	receiver.observeOutcome("traces", persisted, rejected, invalid)
 	if submitError != nil {
@@ -142,7 +114,7 @@ func (receiver *Receiver) exportTraces(ctx context.Context, request *collectortr
 }
 
 func (receiver *Receiver) exportLogs(ctx context.Context, request *collectorlogspb.ExportLogsServiceRequest) (*collectorlogspb.ExportLogsServiceResponse, error) {
-	events, rejected := receiver.normalizer.logs(request.GetResourceLogs())
+	events, rejected := receiver.normalizerFor(ctx).logs(request.GetResourceLogs())
 	persisted, invalid, submitError := receiver.pipeline.Submit(ctx, events)
 	receiver.observeOutcome("logs", persisted, rejected, invalid)
 	if submitError != nil {
@@ -194,7 +166,8 @@ func (service *traceService) Export(ctx context.Context, request *collectortrace
 		}
 		service.receiver.metrics.ObserveOTLPRequest("grpc", "traces", outcome, time.Since(startedAt))
 	}()
-	if authError := service.receiver.authorizeGRPC(ctx); authError != nil {
+	ctx, authError := service.receiver.authorizeGRPC(ctx)
+	if authError != nil {
 		return nil, authError
 	}
 	release, admitError := service.receiver.admitGRPC()
@@ -225,7 +198,8 @@ func (service *logsService) Export(ctx context.Context, request *collectorlogspb
 		}
 		service.receiver.metrics.ObserveOTLPRequest("grpc", "logs", outcome, time.Since(startedAt))
 	}()
-	if authError := service.receiver.authorizeGRPC(ctx); authError != nil {
+	ctx, authError := service.receiver.authorizeGRPC(ctx)
+	if authError != nil {
 		return nil, authError
 	}
 	release, admitError := service.receiver.admitGRPC()
@@ -246,7 +220,7 @@ func (receiver *Receiver) exportMetrics(ctx context.Context, request *collectorm
 		// senders that include metrics alongside traces/logs.
 		return &collectormetricspb.ExportMetricsServiceResponse{}, nil
 	}
-	points, rejected := receiver.normalizer.metrics(request.GetResourceMetrics())
+	points, rejected := receiver.normalizerFor(ctx).metrics(request.GetResourceMetrics())
 	persisted, invalid, submitError := receiver.metricsPipeline.SubmitMetrics(ctx, points)
 	receiver.observeOutcome("metrics", persisted, rejected, invalid)
 	if submitError != nil {
@@ -278,7 +252,8 @@ func (service *metricsService) Export(ctx context.Context, request *collectormet
 		}
 		service.receiver.metrics.ObserveOTLPRequest("grpc", "metrics", outcome, time.Since(startedAt))
 	}()
-	if authError := service.receiver.authorizeGRPC(ctx); authError != nil {
+	ctx, authError := service.receiver.authorizeGRPC(ctx)
+	if authError != nil {
 		return nil, authError
 	}
 	release, admitError := service.receiver.admitGRPC()

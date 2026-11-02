@@ -1,3 +1,38 @@
-.log-filters input { min-width: 140px; }
 .log-note { margin: -4px 0 16px; font-size: 12px; }
 .panel td .inline-json { max-height: 220px; padding: 6px 10px; border-radius: 8px; background: var(--surface-sunken); border: 1px solid var(--line-soft); }
+
+/* Quick severity filter. */
+.severity-chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 14px; }
+.severity-chip { padding: 5px 14px; border-radius: 999px; border: 1px solid var(--glass-field-edge); background: var(--glass-field); color: var(--muted); font-size: 11.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+.severity-chip:hover { background: var(--glass-hover); color: var(--text); }
+.severity-chip[aria-pressed="true"] { background: var(--btn-bg); color: var(--btn-text); border-color: var(--btn-border); box-shadow: 0 4px 14px var(--accent-glow); }
+.severity-chip.ERROR[aria-pressed="false"], .severity-chip.FATAL[aria-pressed="false"] { color: var(--danger-fg); }
+.severity-chip.WARN[aria-pressed="false"] { color: var(--warn-fg); }
+
+/* Filters: one row, search takes the spare width. Severity is set from the chips above. */
+.toolbar.log-filters { display: grid; grid-template-columns: minmax(110px, 1fr) minmax(160px, 2fr) minmax(150px, 1.4fr) minmax(130px, 1fr) auto auto; gap: 8px; }
+.toolbar.log-filters input { min-width: 0; }
+.toolbar.log-filters input[name="traceId"], .toolbar.log-filters input[name="spanId"] { font-family: var(--font-mono); font-size: 12px; }
+
+/* Many rows: the list scrolls inside the panel so the header stays visible and the filters stay in reach. */
+.log-panel .table-wrap { max-height: calc(100vh - 380px); }
+.log-panel table { table-layout: fixed; min-width: 860px; }
+.log-panel th:nth-child(1) { width: 168px; }
+.log-panel th:nth-child(2) { width: 140px; }
+.log-panel th:nth-child(3) { width: 112px; }
+.log-panel th:nth-child(5) { width: 128px; }
+.log-panel td { max-width: none; padding-block: 9px; vertical-align: top; }
+.log-panel td:nth-child(1) { font-family: var(--font-mono); font-size: 12px; color: var(--muted); white-space: nowrap; }
+.log-panel td:nth-child(2) { font-weight: 650; overflow-wrap: anywhere; }
+.log-panel td:nth-child(4) .inline-json { font-size: 12px; line-height: 1.5; max-height: 160px; }
+.log-panel td:nth-child(5) { white-space: nowrap; }
+/* Severity rail on the left edge of each row. */
+.log-panel tbody tr td:first-child { box-shadow: inset 3px 0 0 transparent; }
+.log-panel tbody tr:has(.badge.ERROR, .badge.FATAL) td:first-child { box-shadow: inset 3px 0 0 var(--danger); }
+.log-panel tbody tr:has(.badge.WARN, .badge.WARNING) td:first-child { box-shadow: inset 3px 0 0 var(--warning); }
+.log-panel tbody tr:has(.badge.INFO) td:first-child { box-shadow: inset 3px 0 0 color-mix(in srgb, var(--accent) 60%, transparent); }
+.log-panel tbody tr:has(.badge.ERROR, .badge.FATAL) { background: color-mix(in srgb, var(--danger) 5%, transparent); }
+@media (max-width: 900px) {
+  .toolbar.log-filters { grid-template-columns: 1fr 1fr; }
+  .toolbar.log-filters input[name="search"] { grid-column: 1 / -1; }
+}

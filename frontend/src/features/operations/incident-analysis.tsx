@@ -1,15 +1,14 @@
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "../../app/auth";
 import { api } from "../../shared/api";
-import { DetailLink } from "../../shared/navigation";
 import type { IncidentAnalysis } from "../../shared/types";
-import { DataTable, ErrorState, Loading, Panel } from "../../shared/ui";
+import { DataTable, DetailLink, ErrorState, Loading, Panel } from "../../shared/ui";
 
 export function IncidentAnalysisPanels({ incidentID }: { incidentID: string }) {
-  const { apiKey } = useAuth();
+  const { credential } = useAuth();
   const query = useQuery({
     queryKey: ["incident-analysis", incidentID],
-    queryFn: ({ signal }) => api<IncidentAnalysis>(`/api/v1/incidents/${incidentID}/analysis`, apiKey, { signal }),
+    queryFn: ({ signal }) => api<IncidentAnalysis>(`/api/v1/incidents/${incidentID}/analysis`, credential, { signal }),
   });
   if (query.isPending) return <Panel title="Incident analysis"><Loading /></Panel>;
   if (query.isError) return <Panel title="Incident analysis"><ErrorState error={query.error} retry={() => void query.refetch()} /></Panel>;

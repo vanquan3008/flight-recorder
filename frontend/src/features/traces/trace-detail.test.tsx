@@ -19,7 +19,7 @@ const spans = [
 afterEach(() => { cleanup(); sessionStorage.clear(); window.location.hash = ""; vi.unstubAllGlobals(); });
 
 function open(data = spans) {
-  sessionStorage.setItem("tracepilot-api-key", "test-key");
+  localStorage.setItem("tracepilot-signed-in", "1");
   window.location.hash = `#/traces/${traceID}`;
   vi.stubGlobal("fetch", vi.fn().mockImplementation((input: string) => {
     const path = new URL(input, "http://localhost").pathname;

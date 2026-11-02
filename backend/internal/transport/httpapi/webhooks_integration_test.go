@@ -41,14 +41,11 @@ func TestWebhookManagementAPIIntegration(t *testing.T) {
 			_, _ = database.DeleteWebhook(context.Background(), projectID, webhookID)
 		}
 	})
-	bootstrap := "webhook-http-admin-key-" + projectID
-	if err := database.EnsureBootstrapAPIKey(context.Background(), projectID, bootstrap); err != nil {
-		t.Fatal(err)
-	}
-	configuration := config.Config{Notifications: config.NotificationsConfig{Enabled: true}, HTTP: config.HTTPConfig{ManagementMaxBodyBytes: 4096}, Ingestion: ingestion, Database: config.DatabaseConfig{ReadinessTimeout: time.Second}, ShutdownTimeout: time.Second}
+	bootstrap := newIntegrationAdmin(t, database)
+	configuration := config.Config{Notifications: config.NotificationsConfig{Enabled: true}, Auth: config.AuthConfig{JWTSecret: integrationJWTSecret}, HTTP: config.HTTPConfig{ManagementMaxBodyBytes: 4096}, Ingestion: ingestion, Database: config.DatabaseConfig{ReadinessTimeout: time.Second}, ShutdownTimeout: time.Second}
 	server := New(configuration, slog.New(slog.NewTextHandler(io.Discard, nil)), func(context.Context) error { return nil }, metrics.New("test", "test", "test"), database, nil)
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/webhooks", strings.NewReader(`{"name":"pager","url":"https://example.com/hook","events":["incident.opened"]}`))
-	request.Header.Set(apiKeyHeader, bootstrap)
+	integrationAuth(request, bootstrap, projectID)
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
 	server.httpServer.Handler.ServeHTTP(response, request)
@@ -62,14 +59,14 @@ func TestWebhookManagementAPIIntegration(t *testing.T) {
 	}
 	webhookID = created[start+6 : start+42]
 	request = httptest.NewRequest(http.MethodGet, "/api/v1/webhooks", nil)
-	request.Header.Set(apiKeyHeader, bootstrap)
+	integrationAuth(request, bootstrap, projectID)
 	response = httptest.NewRecorder()
 	server.httpServer.Handler.ServeHTTP(response, request)
 	if response.Code != http.StatusOK || strings.Contains(response.Body.String(), "whsec_") {
 		t.Fatalf("list webhook leaked secret or failed: %d %s", response.Code, response.Body.String())
 	}
 	request = httptest.NewRequest(http.MethodPost, "/api/v1/webhooks/"+webhookID+"/rotate", nil)
-	request.Header.Set(apiKeyHeader, bootstrap)
+	integrationAuth(request, bootstrap, projectID)
 	response = httptest.NewRecorder()
 	server.httpServer.Handler.ServeHTTP(response, request)
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"secret":"whsec_`) {

@@ -10,10 +10,6 @@ func (server *Server) openAPI(responseWriter http.ResponseWriter, _ *http.Reques
 	writeJSONValue(responseWriter, http.StatusOK, openAPISpecForRoutes(server.availableAPIRoutes()))
 }
 
-func openAPISpec() map[string]any {
-	return openAPISpecForRoutes(apiRouteDefinitions)
-}
-
 func openAPISpecForRoutes(routes []apiRouteDefinition) map[string]any {
 	paths := make(map[string]any)
 	for _, route := range routes {
@@ -26,7 +22,7 @@ func openAPISpecForRoutes(routes []apiRouteDefinition) map[string]any {
 			"operationId":          route.operationID,
 			"summary":              routeSummary(route.operationID),
 			"tags":                 route.tags,
-			"security":             []map[string][]string{{"APIKey": {}}},
+			"security":             openAPISecurity(route),
 			"parameters":           openAPIParameters(route.path, route.operationID),
 			"responses":            openAPIResponses(route.method, route.successStatus),
 			"x-required-api-scope": route.scope,
@@ -52,7 +48,9 @@ func openAPISpecForRoutes(routes []apiRouteDefinition) map[string]any {
 		"servers": []map[string]string{{"url": "/"}},
 		"paths":   paths,
 		"components": map[string]any{
-			"securitySchemes": map[string]any{"APIKey": map[string]string{"type": "apiKey", "in": "header", "name": apiKeyHeader}},
+			"securitySchemes": map[string]any{
+				"BearerAuth": map[string]string{"type": "http", "scheme": "bearer", "bearerFormat": "JWT", "description": "Access token from /api/v1/auth/login or /refresh (15 minutes). Project routes also send X-Project-ID."},
+			},
 			"schemas": map[string]any{
 				"Error": map[string]any{
 					"type":     "object",
@@ -72,13 +70,22 @@ func openAPISpecForRoutes(routes []apiRouteDefinition) map[string]any {
 			},
 			"responses": map[string]any{
 				"InvalidRequest": map[string]any{"description": "Invalid request", "content": map[string]any{"application/json": map[string]any{"schema": map[string]string{"$ref": "#/components/schemas/Error"}}}},
-				"Unauthorized":   map[string]any{"description": "Missing, revoked, or expired API key", "content": map[string]any{"application/json": map[string]any{"schema": map[string]string{"$ref": "#/components/schemas/Error"}}}},
-				"Forbidden":      map[string]any{"description": "API key lacks required scope", "content": map[string]any{"application/json": map[string]any{"schema": map[string]string{"$ref": "#/components/schemas/Error"}}}},
+				"Unauthorized":   map[string]any{"description": "Missing, invalid, or expired access token", "content": map[string]any{"application/json": map[string]any{"schema": map[string]string{"$ref": "#/components/schemas/Error"}}}},
+				"Forbidden":      map[string]any{"description": "Your role in this project does not allow this action", "content": map[string]any{"application/json": map[string]any{"schema": map[string]string{"$ref": "#/components/schemas/Error"}}}},
 				"NotFound":       map[string]any{"description": "Resource does not exist", "content": map[string]any{"application/json": map[string]any{"schema": map[string]string{"$ref": "#/components/schemas/Error"}}}},
 				"RateLimited":    map[string]any{"description": "Rate limit exceeded", "headers": map[string]any{"Retry-After": map[string]any{"schema": map[string]string{"type": "integer"}}}, "content": map[string]any{"application/json": map[string]any{"schema": map[string]string{"$ref": "#/components/schemas/Error"}}}},
 			},
 		},
 	}
+}
+
+// openAPISecurity lists how a caller authenticates to a route: public routes need nothing, every
+// other route takes the signed-in person's access token.
+func openAPISecurity(route apiRouteDefinition) []map[string][]string {
+	if route.public {
+		return []map[string][]string{}
+	}
+	return []map[string][]string{{"BearerAuth": {}}}
 }
 
 func openAPIResponses(method string, configuredSuccessStatus int) map[string]any {
@@ -173,7 +180,7 @@ func openAPIQueryParameters(operationID string) []map[string]any {
 		}
 	case "getRequestPerformance":
 		return combineOpenAPIParameters(openAPIPageParameters()[:1], openAPITimeParameters(), openAPIStringParameters("service", "endpoint"))
-	case "listIncidentOccurrences", "listIncidentEvents", "listIncidentStatusChanges", "listReplayExecutions", "listAPIKeys", "listAPIKeyEvents", "listWebhooks", "listWebhookDeliveries":
+	case "listIncidentOccurrences", "listIncidentEvents", "listIncidentStatusChanges", "listReplayExecutions", "listIngestTokens", "listWebhooks", "listWebhookDeliveries", "listAuditEvents", "listUsers":
 		return openAPIPageParameters()
 	default:
 		return nil

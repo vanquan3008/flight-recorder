@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/vanquan3008/tracepilot/internal/auth"
 	"github.com/vanquan3008/tracepilot/internal/domain/incident"
 )
 
@@ -12,7 +13,7 @@ var ErrInvalidStatus = errors.New("invalid incident status")
 
 // StatusStore persists an atomic incident status transition.
 type StatusStore interface {
-	UpdateIncidentStatus(context.Context, string, string, string, string, string) (incident.Incident, error)
+	UpdateIncidentStatus(context.Context, string, string, string, string, auth.Actor) (incident.Incident, error)
 }
 
 // UpdateStatusCommand identifies the incident and the authenticated actor
@@ -22,7 +23,7 @@ type UpdateStatusCommand struct {
 	EnvironmentID string
 	IncidentID    string
 	Status        string
-	ActorKeyID    string
+	Actor         auth.Actor
 }
 
 // Service owns incident command validation before delegating the atomic state
@@ -40,8 +41,8 @@ func (service *Service) UpdateStatus(ctx context.Context, command UpdateStatusCo
 	if !valid {
 		return incident.Incident{}, ErrInvalidStatus
 	}
-	if command.ActorKeyID == "" {
+	if command.Actor.IsZero() {
 		return incident.Incident{}, incident.ErrInvalidTransition
 	}
-	return service.store.UpdateIncidentStatus(ctx, command.ProjectID, command.EnvironmentID, command.IncidentID, status, command.ActorKeyID)
+	return service.store.UpdateIncidentStatus(ctx, command.ProjectID, command.EnvironmentID, command.IncidentID, status, command.Actor)
 }

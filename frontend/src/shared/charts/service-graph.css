@@ -1,0 +1,48 @@
+/* The canvas: a quiet dot grid, the graph centred in it however wide the panel is. */
+.graph-scroll { display: flex; min-height: 300px; max-height: 70vh; overflow: auto; border-radius: 0 0 18px 18px; background: radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--text) 11%, transparent) 1px, transparent 0) 0 0 / 22px 22px, var(--glass-sunken); }
+.graph-scroll:focus-visible { outline-offset: -2px; }
+.graph-svg { display: block; flex: 0 1 auto; width: 100%; height: auto; margin: auto; }
+.graph-hit { stroke: transparent; stroke-width: 16px; pointer-events: stroke; }
+
+.graph-edge { stroke: color-mix(in srgb, var(--accent) 60%, var(--faint)); stroke-linecap: round; opacity: .9; transition: opacity .15s ease; }
+.graph-edge.failing { stroke: var(--danger); }
+.graph-edge.live { stroke-dasharray: 8 6; animation: graph-flow .9s linear infinite; }
+.graph-edge.failing.live { stroke-dasharray: 7 4; }
+.graph-head.ok { fill: color-mix(in srgb, var(--accent) 60%, var(--faint)); }
+.graph-head.bad { fill: var(--danger); }
+.graph-link { transition: opacity .15s ease; }
+.graph-link.dim { opacity: .12; }
+@keyframes graph-flow { to { stroke-dashoffset: -14; } }
+@media (prefers-reduced-motion: reduce) { .graph-edge.live { animation: none; } }
+
+.graph-label { pointer-events: none; }
+.graph-label rect { fill: var(--surface-solid); stroke: var(--glass-field-edge); }
+.graph-label text { fill: var(--text); font-size: 10.5px; font-weight: 650; }
+.graph-label text.sub { fill: var(--faint); font-size: 9.5px; font-weight: 500; }
+.graph-label .err { fill: var(--danger-fg); }
+
+.graph-node { cursor: pointer; outline: none; transition: opacity .15s ease; }
+.graph-node.dim { opacity: .38; }
+.graph-card { fill: var(--surface-solid); stroke: var(--glass-field-edge); stroke-width: 1; transition: stroke .16s ease, filter .16s ease; filter: drop-shadow(0 4px 12px rgba(0, 0, 0, .16)); }
+.graph-node:hover .graph-card, .graph-node:focus-visible .graph-card { stroke: var(--accent); }
+.graph-node.selected .graph-card { stroke: var(--accent); stroke-width: 2; fill: color-mix(in srgb, var(--accent) 12%, var(--surface-solid)); filter: drop-shadow(0 8px 22px var(--accent-glow)); }
+.graph-node.failing:not(.selected) .graph-card { stroke: color-mix(in srgb, var(--danger) 45%, var(--glass-field-edge)); }
+.graph-stripe { fill: var(--accent); }
+.graph-node.type-external .graph-stripe, .graph-key-dot.type-external { fill: var(--violet); background: var(--violet); }
+.graph-node.type-database .graph-stripe, .graph-node.type-db .graph-stripe, .graph-key-dot.type-database, .graph-key-dot.type-db { fill: var(--cyan); background: var(--cyan); }
+.graph-node.type-messaging .graph-stripe, .graph-node.type-queue .graph-stripe, .graph-key-dot.type-messaging, .graph-key-dot.type-queue { fill: var(--warning); background: var(--warning); }
+.graph-name { fill: var(--text); font-size: 13.5px; font-weight: 650; letter-spacing: -.01em; }
+.graph-type { fill: var(--faint); font-size: 9.5px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; }
+.graph-stats { fill: var(--muted); font-size: 11px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.graph-badge rect { fill: var(--danger-bg); stroke: color-mix(in srgb, var(--danger) 40%, transparent); }
+.graph-badge text { fill: var(--danger-fg); font-size: 10px; font-weight: 700; }
+
+/* Legend under the canvas. */
+.graph-key { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 22px; padding: 10px 18px; border-top: 1px solid var(--glass-divider); color: var(--muted); font-size: 12px; }
+.graph-key-group, .graph-key-group > span { display: inline-flex; align-items: center; gap: 7px; }
+.graph-key-group { gap: 16px; }
+.graph-key-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+.graph-key-line { width: 22px; height: 0; border-top: 2px solid color-mix(in srgb, var(--accent) 60%, var(--faint)); }
+.graph-key-line.bad { border-top: 2px dashed var(--danger); }
+.graph-key-hint { margin-left: auto; color: var(--faint); }
+.graph-legend { margin: 0; padding: 12px 22px; border-top: 1px solid var(--glass-divider); font-size: 12.5px; }

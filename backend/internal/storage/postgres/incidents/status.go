@@ -7,17 +7,19 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/vanquan3008/tracepilot/internal/auth"
 	"github.com/vanquan3008/tracepilot/internal/domain/incident"
 	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
 	"github.com/vanquan3008/tracepilot/internal/storage/postgres/outbox"
+	"github.com/vanquan3008/tracepilot/internal/storage/postgres/pgvalue"
 	sqlcstore "github.com/vanquan3008/tracepilot/internal/storage/postgres/sqlc"
 )
 
 // UpdateIncidentStatus applies an allowed transition, records who made it and
 // queues the matching webhook in the same transaction.
-func (store *IncidentStore) UpdateIncidentStatus(ctx context.Context, projectID, environmentID, incidentID, requestedStatus, actorKeyID string) (incident.Incident, error) {
+func (store *IncidentStore) UpdateIncidentStatus(ctx context.Context, projectID, environmentID, incidentID, requestedStatus string, actor auth.Actor) (incident.Incident, error) {
 	status, valid := incident.NormalizeStatus(requestedStatus)
-	if !valid || actorKeyID == "" {
+	if !valid || actor.IsZero() {
 		return incident.Incident{}, incident.ErrInvalidTransition
 	}
 	updateError := pgx.BeginFunc(ctx, store.pool, func(transaction pgx.Tx) error {
@@ -41,9 +43,9 @@ func (store *IncidentStore) UpdateIncidentStatus(ctx context.Context, projectID,
 			return fmt.Errorf("set incident status: %w", setError)
 		}
 		if insertError := queries.InsertIncidentStatusChange(ctx, sqlcstore.InsertIncidentStatusChangeParams{
-			ID:        telemetry.DeterministicID(changedAt, "incident-status", projectID, incidentID, previous, status, actorKeyID),
+			ID:        telemetry.DeterministicID(changedAt, "incident-status", projectID, incidentID, previous, status, actor.Label()),
 			ProjectID: projectID, IncidentID: incidentID, PreviousStatus: previous, Status: status,
-			ActorKeyID: &actorKeyID, ChangedAt: changedAt,
+			ActorUserID: pgvalue.OrNil(actor.UserID), ChangedAt: changedAt,
 		}); insertError != nil {
 			return fmt.Errorf("record incident status change: %w", insertError)
 		}
@@ -53,7 +55,7 @@ func (store *IncidentStore) UpdateIncidentStatus(ctx context.Context, projectID,
 		}
 		return outbox.EnqueueDeliveries(ctx, transaction, projectID, eventType, map[string]any{
 			"incident_id": incidentID, "environment_id": environmentID,
-			"previous_status": previous, "status": status, "actor_key_id": actorKeyID,
+			"previous_status": previous, "status": status, "actor_user_id": actor.UserID,
 		})
 	})
 	if updateError != nil {

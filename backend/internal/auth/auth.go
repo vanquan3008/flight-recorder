@@ -2,31 +2,38 @@ package auth
 
 import (
 	"errors"
-	"fmt"
-	"regexp"
-	"sort"
-	"strings"
 	"time"
 )
 
 var (
-	ErrUnauthorized       = errors.New("unauthorized")
-	ErrAPIKeyNotFound     = errors.New("API key not found")
-	ErrAPIKeyNameExists   = errors.New("API key name already exists")
-	ErrInvalidAPIKeyInput = errors.New("invalid API key input")
-	ErrLastAdminAPIKey    = errors.New("cannot revoke the last admin API key")
+	ErrUnauthorized = errors.New("unauthorized")
 )
 
-var apiKeyNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$`)
+// Scopes name what a route needs. A signed-in person gets them from their role in a project; a
+// telemetry sender holds only ScopeIngest.
+const (
+	ScopeRead   = "read"
+	ScopeWrite  = "write"
+	ScopeReplay = "replay"
+	ScopeAdmin  = "admin"
+	ScopeIngest = "ingest"
+)
 
-var allowedAPIKeyScopes = map[string]struct{}{
-	"admin": {}, "ingest": {}, "read": {}, "replay": {}, "write": {},
-}
-
+// Principal is an authenticated caller: a signed-in user acting inside one project, or a telemetry
+// sender holding an ingest token. Handlers read the project from here, never from the client.
 type Principal struct {
-	KeyID     string
 	ProjectID string
 	Scopes    []string
+	// UserID, Role and PlatformAdmin are set for a signed-in user. A user with
+	// MustChangePassword may only change it.
+	UserID             string
+	Role               string
+	PlatformAdmin      bool
+	MustChangePassword bool
+	// TokenID names the ingest token a sender presented.
+	TokenID string
+	// EnvironmentID is the environment the request reads; the router sets it for project routes.
+	EnvironmentID string
 }
 
 func (principal Principal) HasScope(wanted string) bool {
@@ -38,83 +45,56 @@ func (principal Principal) HasScope(wanted string) bool {
 	return false
 }
 
-type APIKey struct {
+// Actor names who performed an audited change. It is empty when TracePilot acted itself,
+// such as reopening an incident.
+type Actor struct {
+	UserID string
+}
+
+func (actor Actor) IsZero() bool { return actor.UserID == "" }
+
+// Label is the stable text form kept where a column cannot hold a foreign key.
+func (actor Actor) Label() string {
+	if actor.UserID == "" {
+		return "system"
+	}
+	return "user:" + actor.UserID
+}
+
+func (principal Principal) Actor() Actor {
+	return Actor{UserID: principal.UserID}
+}
+
+// IngestToken is a telemetry sender's credential as listed to an owner; the signed token itself is
+// shown once, when it is created.
+type IngestToken struct {
 	ID        string     `json:"id"`
+	ProjectID string     `json:"project_id,omitempty"`
 	Name      string     `json:"name"`
-	Scopes    []string   `json:"scopes"`
-	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 	CreatedAt time.Time  `json:"created_at"`
+	ExpiresAt time.Time  `json:"expires_at"`
 	RevokedAt *time.Time `json:"revoked_at,omitempty"`
 }
 
-type IssuedAPIKey struct {
-	APIKey APIKey
-	Key    string
+// Active reports whether the token can still be used at the given moment.
+func (token IngestToken) Active(now time.Time) bool {
+	return token.RevokedAt == nil && now.Before(token.ExpiresAt)
 }
 
-type CreateAPIKeyParams struct {
-	Name      string
-	Scopes    []string
-	ExpiresAt *time.Time
+type IssuedIngestToken struct {
+	Token IngestToken
+	// JWT is the signed credential, returned once.
+	JWT string
 }
 
-type APIKeyFilter struct {
+type CreateIngestTokenParams struct {
+	Name string
+	// ExpiresAt is when the token stops working; the console defaults it to a year.
+	ExpiresAt time.Time
+}
+
+type IngestTokenFilter struct {
 	Before   time.Time
 	CursorID string
 	Limit    int
-}
-
-type APIKeyEvent struct {
-	ID         string    `json:"id"`
-	APIKeyID   string    `json:"api_key_id"`
-	ActorKeyID string    `json:"actor_key_id"`
-	Action     string    `json:"action"`
-	CreatedAt  time.Time `json:"created_at"`
-}
-
-type APIKeyEventFilter struct {
-	Before   time.Time
-	CursorID string
-	Limit    int
-}
-
-func NormalizeAPIKeyScopes(scopes []string) ([]string, error) {
-	if len(scopes) == 0 {
-		return nil, fmt.Errorf("%w: at least one scope is required", ErrInvalidAPIKeyInput)
-	}
-	normalized := make([]string, 0, len(scopes))
-	seen := make(map[string]struct{}, len(scopes))
-	for _, scope := range scopes {
-		scope = strings.ToLower(strings.TrimSpace(scope))
-		if _, allowed := allowedAPIKeyScopes[scope]; !allowed {
-			return nil, fmt.Errorf("%w: scope %q is not allowed", ErrInvalidAPIKeyInput, scope)
-		}
-		if _, duplicate := seen[scope]; duplicate {
-			return nil, fmt.Errorf("%w: duplicate scope %q", ErrInvalidAPIKeyInput, scope)
-		}
-		seen[scope] = struct{}{}
-		normalized = append(normalized, scope)
-	}
-	sort.Strings(normalized)
-	return normalized, nil
-}
-
-func NormalizeCreateAPIKeyParams(params CreateAPIKeyParams, now time.Time) (CreateAPIKeyParams, error) {
-	params.Name = strings.TrimSpace(params.Name)
-	if !apiKeyNamePattern.MatchString(params.Name) {
-		return CreateAPIKeyParams{}, fmt.Errorf("%w: name must be 1-64 letters, digits, spaces, dots, underscores, or hyphens", ErrInvalidAPIKeyInput)
-	}
-	scopes, scopeError := NormalizeAPIKeyScopes(params.Scopes)
-	if scopeError != nil {
-		return CreateAPIKeyParams{}, scopeError
-	}
-	if params.ExpiresAt != nil {
-		expiresAt := params.ExpiresAt.UTC()
-		if !expiresAt.After(now) {
-			return CreateAPIKeyParams{}, fmt.Errorf("%w: expires_at must be in the future", ErrInvalidAPIKeyInput)
-		}
-		params.ExpiresAt = &expiresAt
-	}
-	params.Scopes = scopes
-	return params, nil
 }

@@ -7,7 +7,7 @@ const record = { id: incidentID, title: "Checkout failed", status: "OPEN", sever
 const emptyAnalysis = { incident_id: incidentID, conclusion: "Insufficient evidence", hypotheses: [], evidence: [], causal_graph: [] };
 
 function connect() {
-  sessionStorage.setItem("tracepilot-api-key", "test-key");
+  localStorage.setItem("tracepilot-signed-in", "1");
   window.location.hash = `#/incidents/${incidentID}`;
 }
 function response(data: unknown, status = 200) { return new Response(JSON.stringify(data), { status }); }
@@ -39,7 +39,7 @@ it("loads the next occurrence page and refreshes status history after a change",
       data: [{ occurred_at: "2026-10-01T00:00:00Z", service_name: "checkout", operation: url.searchParams.get("cursor") ? "second-page-operation" : "first-page-operation" }],
       next_cursor: url.searchParams.get("cursor") ? undefined : "page-two",
     });
-    if (url.pathname.endsWith("/status-changes")) return response({ data: resolved ? [{ previous_status: "OPEN", status: "RESOLVED", actor_key_id: "operator", changed_at: "2026-10-01T00:02:00Z" }] : [] });
+    if (url.pathname.endsWith("/status-changes")) return response({ data: resolved ? [{ previous_status: "OPEN", status: "RESOLVED", actor_user_id: "0190aaaa-0000-7000-8000-000000000002", changed_at: "2026-10-01T00:02:00Z" }] : [] });
     if (input === `/api/v1/incidents/${incidentID}`) return response({ ...record, status: resolved ? "RESOLVED" : "OPEN" });
     return response({ data: [] });
   });
@@ -51,7 +51,7 @@ it("loads the next occurrence page and refreshes status history after a change",
   expect(await screen.findByText("second-page-operation")).toBeTruthy();
   expect(screen.getByText("first-page-operation")).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "RESOLVED" }));
-  expect(await screen.findByText("operator")).toBeTruthy();
+  expect(await screen.findByText("user 0190aaaa")).toBeTruthy();
   await waitFor(() => expect(screen.getByRole("button", { name: "OPEN" })).toBeTruthy());
   expect(fetch.mock.calls.filter(([path]) => String(path).includes("/status-changes")).length).toBeGreaterThanOrEqual(2);
 });

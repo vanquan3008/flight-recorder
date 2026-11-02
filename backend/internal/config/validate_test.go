@@ -11,12 +11,12 @@ func TestValidateRejectsResourceExhaustingQueue(t *testing.T) {
 	}
 }
 
-func TestValidateRejectsShortBootstrapAPIKey(t *testing.T) {
+func TestValidateRejectsShortJWTSecret(t *testing.T) {
 	configuration := defaultConfig()
 	configuration.Database.URL = "postgres://test"
-	configuration.Auth.BootstrapAPIKey = "too-short"
+	configuration.Auth.JWTSecret = "too-short"
 	if err := configuration.Validate(); err == nil {
-		t.Fatal("expected short bootstrap key to fail")
+		t.Fatal("expected short JWT secret to fail")
 	}
 }
 
@@ -45,7 +45,7 @@ func TestValidateProductionRequiresAuthAndTLS(t *testing.T) {
 	if err := configuration.Validate(); err == nil {
 		t.Fatal("expected production authentication and TLS to be required")
 	}
-	configuration.Auth.BootstrapAPIKey = "production-bootstrap-key-000000000000000000000000000000"
+	configuration.Auth.JWTSecret = "production-jwt-secret-000000000000000000000000000000"
 	configuration.TLS.CertificateFile = "certificate.pem"
 	configuration.TLS.PrivateKeyFile = "private-key.pem"
 	if err := configuration.Validate(); err != nil {
@@ -80,7 +80,7 @@ func TestValidateProductionRequiresVerifiedDatabaseTransport(t *testing.T) {
 			configuration := defaultConfig()
 			configuration.Production = true
 			configuration.Database.URL = testCase.url
-			configuration.Auth.BootstrapAPIKey = "production-bootstrap-key-000000000000000000000000000000"
+			configuration.Auth.JWTSecret = "production-jwt-secret-000000000000000000000000000000"
 			configuration.TLS.CertificateFile = "certificate.pem"
 			configuration.TLS.PrivateKeyFile = "private-key.pem"
 			if err := configuration.Validate(); (err != nil) != testCase.wantErr {
@@ -162,7 +162,7 @@ func TestValidateProductionRejectsSampleSecrets(t *testing.T) {
 		configuration := defaultConfig()
 		configuration.Production = true
 		configuration.Database.URL = "postgres://tracepilot:s3cure-random-pw@db.internal/tracepilot?sslmode=verify-full"
-		configuration.Auth.BootstrapAPIKey = "b0f3a1c9e7d24a6f8c15e2d97a40b3c6f1e8d205"
+		configuration.Auth.JWTSecret = "b0f3a1c9e7d24a6f8c15e2d97a40b3c6f1e8d205"
 		configuration.TLS.CertificateFile = "certificate.pem"
 		configuration.TLS.PrivateKeyFile = "private-key.pem"
 		return configuration
@@ -171,8 +171,8 @@ func TestValidateProductionRejectsSampleSecrets(t *testing.T) {
 		t.Fatalf("a real production configuration was rejected: %v", err)
 	}
 	for name, change := range map[string]func(*Config){
-		"bootstrap key from .env.example": func(c *Config) { c.Auth.BootstrapAPIKey = "tracepilot-development-bootstrap-key-000000" },
-		"bootstrap key with a marker":     func(c *Config) { c.Auth.BootstrapAPIKey = "my-ChangeMe-key-0000000000000000000000000" },
+		"secret from .env.example": func(c *Config) { c.Auth.JWTSecret = "tracepilot-development-jwt-secret-000000000000" },
+		"secret with a marker":     func(c *Config) { c.Auth.JWTSecret = "my-ChangeMe-key-0000000000000000000000000" },
 		"database password from the sample": func(c *Config) {
 			c.Database.URL = "postgres://tracepilot:tracepilot-dev-only@db.internal/tracepilot?sslmode=verify-full"
 		},
@@ -185,7 +185,7 @@ func TestValidateProductionRejectsSampleSecrets(t *testing.T) {
 	}
 	development := defaultConfig()
 	development.Database.URL = "postgres://tracepilot:tracepilot-dev-only@localhost/tracepilot?sslmode=disable"
-	development.Auth.BootstrapAPIKey = "tracepilot-development-bootstrap-key-000000"
+	development.Auth.JWTSecret = "tracepilot-development-jwt-secret-000000000000"
 	if err := development.Validate(); err != nil {
 		t.Fatalf("the sample secrets must keep working outside production: %v", err)
 	}

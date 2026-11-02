@@ -82,6 +82,10 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); backgro
   :root, :root[data-theme="light"] { --glass: var(--surface-solid); --glass-strong: var(--surface-solid); --glass-nested: var(--surface-raised); --glass-edge: var(--line); }
 }
 
+/* Page sections keep their natural height and #content scrolls. Panels and heroes are overflow:hidden, so
+   as flex items their min-height is 0 and they would otherwise shrink into thin strips on a tall page. */
+.page-flow > * { flex-shrink: 0; }
+
 /* Topbar controls share one height so the row reads as a single aligned strip. base.css resets
    button/input padding outside any layer, which beats Tailwind padding and height utilities, so sizes live here. */
 .topbar { --ctl-h: 34px; }
@@ -96,3 +100,4 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); backgro
 .topbar .key-input-box input { width: 180px; padding: 0 12px 0 31px; }
 .topbar .connect-btn, .topbar .disconnect-btn, .topbar-actions > a { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 0 14px; }
 @media (max-width: 640px) { .topbar .key-input-box input { width: 140px; } }
+

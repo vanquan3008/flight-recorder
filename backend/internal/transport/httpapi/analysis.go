@@ -50,7 +50,7 @@ func parseAnalysisFilter(request *http.Request) (analysis.Filter, error) {
 // analysisRequest resolves the analysis backend and the request's filter,
 // scoped to this server's environment, answering the error itself when either
 // is unavailable.
-func (server *Server) analysisRequest(responseWriter http.ResponseWriter, request *http.Request) (AnalysisBackend, analysis.Filter, bool) {
+func (server *Server) analysisRequest(responseWriter http.ResponseWriter, request *http.Request, principal auth.Principal) (AnalysisBackend, analysis.Filter, bool) {
 	backend, ok := server.analysisBackend(responseWriter)
 	if !ok {
 		return nil, analysis.Filter{}, false
@@ -60,12 +60,12 @@ func (server *Server) analysisRequest(responseWriter http.ResponseWriter, reques
 		writeInvalidQuery(responseWriter, err)
 		return nil, analysis.Filter{}, false
 	}
-	filter.EnvironmentID = server.environmentID
+	filter.EnvironmentID = principal.EnvironmentID
 	return backend, filter, true
 }
 
 func (server *Server) listTopology(responseWriter http.ResponseWriter, request *http.Request, principal auth.Principal) {
-	backend, filter, ok := server.analysisRequest(responseWriter, request)
+	backend, filter, ok := server.analysisRequest(responseWriter, request, principal)
 	if !ok {
 		return
 	}
@@ -78,7 +78,7 @@ func (server *Server) listTopology(responseWriter http.ResponseWriter, request *
 }
 
 func (server *Server) listMetricPoints(responseWriter http.ResponseWriter, request *http.Request, principal auth.Principal) {
-	backend, filter, ok := server.analysisRequest(responseWriter, request)
+	backend, filter, ok := server.analysisRequest(responseWriter, request, principal)
 	if !ok {
 		return
 	}
@@ -91,7 +91,7 @@ func (server *Server) listMetricPoints(responseWriter http.ResponseWriter, reque
 }
 
 func (server *Server) telemetryQuality(responseWriter http.ResponseWriter, request *http.Request, principal auth.Principal) {
-	backend, filter, ok := server.analysisRequest(responseWriter, request)
+	backend, filter, ok := server.analysisRequest(responseWriter, request, principal)
 	if !ok {
 		return
 	}
@@ -113,7 +113,7 @@ func (server *Server) getIncidentAnalysis(responseWriter http.ResponseWriter, re
 	if !ok {
 		return
 	}
-	result, err := backend.GetIncidentAnalysis(request.Context(), principal.ProjectID, server.environmentID, incidentID)
+	result, err := backend.GetIncidentAnalysis(request.Context(), principal.ProjectID, principal.EnvironmentID, incidentID)
 	if err != nil {
 		server.writeInternalError(responseWriter, "get incident analysis", err)
 		return

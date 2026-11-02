@@ -9,7 +9,7 @@ const respond = (data: unknown, status = 200) => new Response(JSON.stringify(dat
 afterEach(() => { cleanup(); sessionStorage.clear(); window.location.hash = ""; vi.unstubAllGlobals(); });
 
 function connect(hash: string) {
-  sessionStorage.setItem("tracepilot-api-key", "test-key");
+  localStorage.setItem("tracepilot-signed-in", "1");
   window.location.hash = hash;
 }
 

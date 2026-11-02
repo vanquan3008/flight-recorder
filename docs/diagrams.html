@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sơ đồ hoạt động TracePilot</title>
+<style>
+  :root { --bg:#f7f9fc; --card:#fff; --text:#0f172a; --muted:#475569; --line:#d8e0ec; --accent:#0369a1; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0b1220; --card:#111b2e; --text:#e6edf7; --muted:#9db0c8; --line:#243452; --accent:#7cc4f2; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif; }
+  header, main { max-width:1100px; margin:0 auto; padding:0 16px; }
+  header { padding-top:28px; }
+  h1 { margin:0 0 4px; font-size:26px; }
+  header p { margin:0; color:var(--muted); }
+  nav { display:flex; flex-wrap:wrap; gap:8px; margin:18px 0 8px; }
+  nav a { padding:4px 12px; border:1px solid var(--line); border-radius:999px; color:var(--accent); text-decoration:none; background:var(--card); font-size:13px; }
+  nav a:hover { border-color:var(--accent); }
+  section { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:18px 20px; margin:18px 0; scroll-margin-top:12px; }
+  h2 { margin:0 0 4px; font-size:19px; }
+  section > p { margin:0 0 14px; color:var(--muted); }
+  .diagram { overflow-x:auto; }
+  .diagram pre { margin:0; text-align:center; }
+  noscript, .fail { color:#b91c1c; }
+  footer { max-width:1100px; margin:0 auto; padding:0 16px 40px; color:var(--muted); font-size:13px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Sơ đồ hoạt động TracePilot</h1>
+  <p>Mô tả bằng lời ở <a href="FLOW.md" style="color:var(--accent)">FLOW.md</a>. Trang này tải thư viện vẽ từ mạng nên cần kết nối Internet.</p>
+  <nav>
+    <a href="#d1">1 Tổng quan</a><a href="#d2">2 Khởi động / tắt</a><a href="#d3">3 Đăng nhập</a>
+    <a href="#d4">4 Request API</a><a href="#d5">5 Ingest OTLP</a><a href="#d6">6 Incident</a>
+    <a href="#d7">7 Detection &amp; RCA</a><a href="#d8">8 Ingest token</a><a href="#d9">9 Webhook</a><a href="#d10">10 Retention</a>
+  </nav>
+</header>
+<main>
+<noscript><p>Cần bật JavaScript để vẽ sơ đồ.</p></noscript>
+
+<section id="d1">
+  <h2>1. Tổng quan hệ thống</h2>
+  <p>Một ứng dụng Go phục vụ cả API lẫn OTLP; PostgreSQL và console là hai thành phần riêng.</p>
+  <div class="diagram"><pre class="mermaid">
+flowchart LR
+  subgraph Client["Bên ngoài"]
+    App["Ứng dụng / OTel SDK"]
+    User["Người dùng"]
+    Hook["Endpoint webhook"]
+  end
+  subgraph Console["Console React - nginx"]
+    UI["Giao diện"]
+  end
+  subgraph Server["TracePilot - một tiến trình Go"]
+    OTLP["Bộ thu OTLP<br/>gRPC 4317 / HTTP 4318"]
+    Pipe["Pipeline<br/>hàng đợi có giới hạn"]
+    API["REST API :8080"]
+    Det["Detection mỗi phút"]
+    Out["Worker webhook"]
+    Maint["Partition và retention"]
+  end
+  DB[("PostgreSQL<br/>bảng chia theo ngày")]
+  App -->|"ingest token"| OTLP
+  OTLP --> Pipe
+  Pipe -->|"1 transaction rồi ACK"| DB
+  User --> UI
+  UI -->|"access token"| API
+  API <--> DB
+  Det <--> DB
+  Out -->|"đọc outbox"| DB
+  Out -->|"HMAC"| Hook
+  Maint --> DB
+  </pre></div>
+</section>
+
+<section id="d2">
+  <h2>2. Khởi động và tắt</h2>
+  <p>Server không tự migrate. Một thành phần lỗi hoặc tự dừng thì cả tiến trình dừng.</p>
+  <div class="diagram"><pre class="mermaid">
+flowchart TD
+  A(["Bắt đầu serve"]) --> B["Đọc cấu hình<br/>mặc định, .env, biến môi trường"]
+  B -->|"sai"| X2(["Thoát mã 2"])
+  B --> C{"Có JWT secret?"}
+  C -->|"không"| C1["Sinh khóa ngẫu nhiên và cảnh báo"]
+  C -->|"có"| D
+  C1 --> D["Kiểm tra schema version 2, không dirty"]
+  D -->|"lệch hoặc dirty"| X1(["Thoát mã 1"])
+  D --> E["Mở pool, tạo partition,<br/>project và environment mặc định"]
+  E -->|"lỗi"| X1
+  E --> F["Dựng replay, metrics,<br/>2 pipeline, bộ thu OTLP, API"]
+  F --> G["Chạy song song:<br/>API, OTLP, detection, partition,<br/>webhook nếu bật, retention nếu bật"]
+  G --> H{"Tín hiệu dừng<br/>hoặc một thành phần lỗi?"}
+  H -->|"chưa"| G
+  H -->|"rồi"| I["Listener ngừng nhận,<br/>chờ request đang chạy"]
+  I --> J["Drain pipeline events rồi metrics<br/>trong shutdown_timeout"]
+  J --> K{"Có lỗi thật?"}
+  K -->|"có"| X1
+  K -->|"không"| Z(["Thoát mã 0"])
+  </pre></div>
+</section>
+
+<section id="d3">
+  <h2>3. Đăng ký, đăng nhập, refresh</h2>
+  <p>Access token (15 phút) nằm trong bộ nhớ; refresh token ngẫu nhiên nằm trong cookie HttpOnly và đổi mới mỗi lần dùng.</p>
+  <div class="diagram"><pre class="mermaid">
+sequenceDiagram
+  autonumber
+  participant C as Console
+  participant A as API
+  participant D as PostgreSQL
+  C->>A: POST /auth/login
+  A->>A: Rate limit theo IP và 10 lần mỗi email
+  A->>D: Tìm tài khoản theo email
+  A->>A: Kiểm mật khẩu - email lạ vẫn tốn cùng thời gian
+  alt sai hoặc bị khóa
+    A-->>C: 401 INVALID_CREDENTIALS
+  else đúng
+    A->>D: Tạo phiên refresh - chỉ lưu SHA-256
+    A-->>C: Cookie tp_refresh + access token 15 phút + danh sách project
+  end
+  Note over C,A: Gọi API với Bearer access token
+  C->>A: Request
+  A-->>C: 401 TOKEN_EXPIRED
+  C->>A: POST /auth/refresh kèm header X-TracePilot-Refresh
+  A->>D: Đổi token cũ lấy token mới trong một câu lệnh
+  alt token hợp lệ và tài khoản còn hoạt động
+    A-->>C: Cookie mới + access token mới
+    C->>A: Gửi lại request
+  else token lạ, đã dùng, hết hạn
+    A-->>C: 401 - xóa cookie, về trang đăng nhập
+  end
+  </pre></div>
+</section>
+
+<section id="d4">
+  <h2>4. Xác thực và phân quyền một request API</h2>
+  <p>Mọi route khai báo scope trong một bảng; router kiểm trước khi gọi handler.</p>
+  <div class="diagram"><pre class="mermaid">
+flowchart TD
+  S(["Request tới /api/v1"]) --> M["Middleware: request ID, security headers, metrics,<br/>rate limit, access log, CORS, recover, giới hạn body"]
+  M --> P{"Route công khai?"}
+  P -->|"có"| H
+  P -->|"không"| T{"Bearer token hợp lệ?"}
+  T -->|"không"| R1(["401"])
+  T -->|"hết hạn"| R2(["401 TOKEN_EXPIRED"])
+  T -->|"hợp lệ"| U["Đọc tài khoản từ DB"]
+  U --> V{"Còn tồn tại, không bị khóa,<br/>token cấp sau tokens_valid_after?"}
+  V -->|"không"| R1
+  V -->|"có"| W{"Đang dùng mật khẩu tạm<br/>và route không phải me / password?"}
+  W -->|"có"| R3(["403 PASSWORD_CHANGE_REQUIRED"])
+  W -->|"không"| X{"Scope của route"}
+  X -->|"session"| Q
+  X -->|"platform"| Y{"Là super admin?"}
+  Y -->|"không"| R4(["403"])
+  Y -->|"có"| Q
+  X -->|"project: read, write, replay, admin"| Z["Lấy project từ path hoặc X-Project-ID"]
+  Z -->|"không có header"| R5(["400 PROJECT_REQUIRED"])
+  Z --> Z2{"Project tồn tại<br/>và có vai trò đủ scope?"}
+  Z2 -->|"không"| R4
+  Z2 -->|"có"| E["Resolve X-Environment<br/>mặc định là cái đầu tiên"]
+  E -->|"lạ"| R6(["400 INVALID_ENVIRONMENT"])
+  E --> Q["Xin slot truy vấn, chờ 250 ms"]
+  Q -->|"hết slot"| R7(["503 + Retry-After"])
+  Q --> H["Handler chạy dưới deadline 20 s"]
+  H -->|"quá hạn"| R8(["504"])
+  H --> OK(["Trả kết quả"])
+  </pre></div>
+</section>
+
+<section id="d5">
+  <h2>5. Ingest OTLP - ACK sau commit</h2>
+  <p>Ứng dụng chỉ nhận ACK khi dữ liệu đã nằm trong PostgreSQL. Lỗi tạm thời luôn có thể gửi lại.</p>
+  <div class="diagram"><pre class="mermaid">
+flowchart TD
+  S(["SDK gửi OTLP kèm ingest token"]) --> G{"Client đang bị chặn<br/>vì sai token quá nhiều?"}
+  G -->|"có"| R1(["429 / RESOURCE_EXHAUSTED"])
+  G -->|"không"| A["Kiểm chữ ký, hạn, loại ingest"]
+  A -->|"sai"| R2(["401 / Unauthenticated"])
+  A --> L["Tra ingest_tokens:<br/>chưa thu hồi, chưa hết hạn, đúng project"]
+  L -->|"DB lỗi"| R3(["503 / Unavailable - gửi lại"])
+  L -->|"không hợp lệ"| R2
+  L --> SC["Phân giải project + environment<br/>cache 30 s"]
+  SC -->|"environment lạ"| R4(["Từ chối"])
+  SC --> SL{"Còn slot xử lý?"}
+  SL -->|"không"| R3
+  SL --> D["Giải mã, giới hạn kích thước,<br/>chuẩn hóa, che secret"]
+  D -->|"record sai"| RJ["Đếm rejected, bỏ qua record đó"]
+  D --> Q{"Hàng đợi còn chỗ<br/>theo số event và byte?"}
+  RJ --> Q
+  Q -->|"không"| R3
+  Q --> B["Worker gom batch, nhóm theo scope"]
+  B --> TX["1 transaction:<br/>events, spans, logs, incident,<br/>evidence, outbox webhook"]
+  TX -->|"lỗi tạm"| R3
+  TX -->|"PostgreSQL từ chối nội dung"| SP["Chia đôi batch tới khi tách được event hỏng"]
+  SP --> TX
+  TX -->|"COMMIT"| ACK(["ACK. Có record bị từ chối thì kèm partial success"])
+  </pre></div>
+</section>
+
+<section id="d6">
+  <h2>6. Vòng đời incident</h2>
+  <p>Cùng fingerprint thì gộp thành một incident; mỗi lần đổi trạng thái đều ghi lịch sử.</p>
+  <div class="diagram"><pre class="mermaid">
+stateDiagram-v2
+  [*] --> OPEN: Lỗi mới hoặc detection phát hiện
+  OPEN --> OPEN: Occurrence mới - tăng bộ đếm
+  OPEN --> INVESTIGATING: Người dùng nhận xử lý
+  INVESTIGATING --> RESOLVED: Người dùng đóng
+  OPEN --> RESOLVED: Người dùng đóng
+  OPEN --> IGNORED: Người dùng bỏ qua
+  INVESTIGATING --> IGNORED: Người dùng bỏ qua
+  RESOLVED --> OPEN: Occurrence mới hơn lúc resolve<br/>trong cửa sổ 1 giờ - actor system
+  IGNORED --> OPEN: Người dùng mở lại
+  RESOLVED --> [*]: Retention sau 90 ngày yên
+  IGNORED --> [*]: Retention sau 90 ngày yên
+  note right of OPEN
+    Mở hoặc mở lại thì xếp
+    webhook vào outbox
+  end note
+  </pre></div>
+</section>
+
+<section id="d7">
+  <h2>7. Phát hiện bất thường và RCA</h2>
+  <p>Detection chạy nền, tách khỏi đường ACK. RCA tính khi xem incident.</p>
+  <div class="diagram"><pre class="mermaid">
+flowchart TD
+  T(["Mỗi phút"]) --> S["Liệt kê mọi cặp project / environment"]
+  S --> W["Lấy tín hiệu cửa sổ 5 phút gần nhất<br/>và baseline 30 phút trước đó"]
+  W --> P{"Policy ở domain:<br/>latency cần 10 call ở cả hai cửa sổ,<br/>throughput cần baseline 30 call"}
+  P -->|"không lệch"| N(["Bỏ qua"])
+  P -->|"lệch"| I["Tạo hoặc cập nhật incident<br/>kèm evidence"]
+  I --> O["Xếp webhook vào outbox"]
+  V(["Người dùng mở incident"]) --> E["Đọc evidence và quan hệ phụ thuộc dịch vụ"]
+  E --> R["BuildRCA xếp hạng giả thuyết<br/>theo độ tin cậy, rồi theo loại evidence"]
+  R --> U(["Hiển thị giả thuyết kèm bằng chứng<br/>- không phải kết luận chắc chắn"])
+  </pre></div>
+</section>
+
+<section id="d8">
+  <h2>8. Vòng đời ingest token</h2>
+  <p>Chuỗi JWT chỉ hiện một lần; thu hồi có hiệu lực ngay vì mỗi request OTLP tra lại dòng trong DB.</p>
+  <div class="diagram"><pre class="mermaid">
+sequenceDiagram
+  autonumber
+  participant O as Owner
+  participant A as API
+  participant D as PostgreSQL
+  participant S as Ứng dụng gửi telemetry
+  participant R as Bộ thu OTLP
+  O->>A: POST /projects/{id}/ingest-tokens
+  A->>D: Ghi dòng metadata + audit - cùng transaction
+  A-->>O: JWT hiện một lần
+  O->>S: Cấu hình OTEL_EXPORTER_OTLP_HEADERS
+  S->>R: Export kèm Bearer token
+  R->>D: Tra dòng theo ID trong token
+  R-->>S: ACK sau commit
+  O->>A: DELETE /ingest-tokens/{id}
+  A->>D: revoked_at = now + audit
+  S->>R: Export tiếp
+  R->>D: Tra dòng
+  R-->>S: 401 - token bị thu hồi
+  </pre></div>
+</section>
+
+<section id="d9">
+  <h2>9. Webhook và outbox</h2>
+  <p>Gửi ít nhất một lần; người nhận phải chịu được delivery ID trùng.</p>
+  <div class="diagram"><pre class="mermaid">
+flowchart TD
+  A["Transaction ingest hoặc detection<br/>mở / mở lại incident"] --> B["Ghi delivery vào outbox<br/>cùng transaction"]
+  B --> C(["Worker quét theo chu kỳ"])
+  C --> D["Nhận việc bằng FOR UPDATE SKIP LOCKED<br/>lease 6 phút"]
+  D --> E{"URL an toàn?<br/>HTTPS, không private / metadata,<br/>không theo redirect"}
+  E -->|"không"| F["Đánh dấu failed"]
+  E -->|"có"| G["Ký HMAC bằng secret đã giải mã và gửi"]
+  G --> H{"Phản hồi 2xx?"}
+  H -->|"có"| I["succeeded"]
+  H -->|"không"| J{"Còn lượt thử?"}
+  J -->|"còn"| C
+  J -->|"hết"| F
+  K["Worker chết giữa chừng"] -.->|"lease hết hạn"| D
+  </pre></div>
+</section>
+
+<section id="d10">
+  <h2>10. Partition và retention</h2>
+  <p>Bảo trì partition mỗi giờ; retention chạy theo chu kỳ, mỗi nhóm một max_age (0s là giữ mãi).</p>
+  <div class="diagram"><pre class="mermaid">
+flowchart TD
+  subgraph Part["Bảo trì partition - mỗi giờ"]
+    P1["Tạo partition ngày UTC cho 10 ngày<br/>từ hôm qua"] --> P2["Dữ liệu ngoài cửa sổ<br/>vào default partition"]
+  end
+  subgraph Ret["Retention - mỗi RETENTION_CHECK_INTERVAL"]
+    R1["Telemetry quá 7 ngày:<br/>drop partition hết cả ngày,<br/>xóa theo batch ở default"]
+    R2["Incident RESOLVED / IGNORED<br/>yên quá 90 ngày<br/>kéo theo evidence, occurrence, lịch sử"]
+    R3["Audit quá 180 ngày"]
+    R4["Webhook delivery đã xong quá 30 ngày"]
+  end
+  Ret --> N["Lỗi một nhóm không dừng nhóm khác"]
+  K["Không bao giờ xóa:<br/>incident OPEN / INVESTIGATING,<br/>delivery đang xử lý"] -.-> Ret
+  </pre></div>
+</section>
+</main>
+<footer>Sơ đồ viết bằng Mermaid; sửa trực tiếp khối <code>&lt;pre class="mermaid"&gt;</code> trong file này.</footer>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.esm.min.mjs";
+  const dark = matchMedia("(prefers-color-scheme: dark)").matches;
+  mermaid.initialize({ startOnLoad: false, theme: dark ? "dark" : "default", securityLevel: "strict", flowchart: { useMaxWidth: true, htmlLabels: true } });
+  try {
+    await mermaid.run({ querySelector: "pre.mermaid" });
+  } catch (error) {
+    const note = document.createElement("p");
+    note.className = "fail";
+    note.textContent = "Không vẽ được sơ đồ: " + error.message;
+    document.querySelector("main").prepend(note);
+  }
+</script>
+</body>
+</html>

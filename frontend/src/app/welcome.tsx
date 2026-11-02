@@ -1,50 +1,86 @@
-import { Activity, ArrowRight, Gauge, KeyRound, RadioTower, Sparkles, Terminal } from "lucide-react";
-import { useState } from "react";
-import { Link } from "react-router-dom";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { ArrowRight, Gauge, LoaderCircle } from "lucide-react";
+import { type FormEvent, useState } from "react";
+import { api, setAccessToken } from "../shared/api";
 import { useAuth } from "./auth";
+import type { SessionView } from "../shared/session";
 import "./welcome.css";
 
-const devKey = import.meta.env.DEV ? "tracepilot-development-bootstrap-key-000000" : "";
+type Mode = "signin" | "register";
 
-const features = [
-  { icon: RadioTower, title: "Unified Ingestion", text: "OTLP traces, logs & metrics via :4317/:4318." },
-  { icon: Activity, title: "Live Waterfall", text: "Sub-millisecond span request trace flow." },
-  { icon: Sparkles, title: "Instant RCA", text: "Ranked hypotheses and incident analysis." },
-];
+const post = (path: string, body: object) => api<SessionView>(path, "", { method: "POST", body: JSON.stringify(body) });
 
+/** An account is needed to enter. One form serves both: registering only adds a name field, which unfolds in place. */
 export function Welcome() {
-  const { connect } = useAuth();
-  const [keyInput, setKeyInput] = useState("");
+  const { signIn } = useAuth();
+  const [mode, setMode] = useState<Mode>("signin");
+  // Whether new accounts are accepted. If the server cannot say, offer registration and let the server decide.
+  const status = useQuery({
+    queryKey: ["auth-status"], retry: false,
+    queryFn: ({ signal }) => api<{ registration_open: boolean; first_account: boolean }>("/api/v1/auth/status", "", { signal }),
+  });
+  const registrationOpen = status.data?.registration_open !== false;
+  const firstAccount = status.data?.first_account === true;
+  const registering = mode === "register" && registrationOpen;
+
+  // The access token is kept in memory the moment it arrives, before the console renders as signed in.
+  const accept = (view: SessionView) => {
+    if (view.access_token) setAccessToken(view.access_token);
+    signIn?.(view);
+  };
+  const signInRequest = useMutation({
+    mutationFn: (body: { email: string; password: string }) => post("/api/v1/auth/login", body),
+    onSuccess: accept,
+  });
+  const register = useMutation({
+    mutationFn: (body: { email: string; display_name: string; password: string }) => post("/api/v1/auth/register", body),
+    onSuccess: accept,
+  });
+  const request = registering ? register : signInRequest;
+  const switchMode = (next: Mode) => {
+    setMode(next);
+    signInRequest.reset();
+    register.reset();
+  };
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const values = new FormData(event.currentTarget);
+    const email = String(values.get("email") || "").trim();
+    const password = String(values.get("password") || "");
+    if (registering) register.mutate({ email, display_name: String(values.get("name") || "").trim(), password });
+    else signInRequest.mutate({ email, password });
+  };
+  const subtitle = registering
+    ? firstAccount ? "You are the first here, so this account becomes the super administrator." : "Create an account, then make a project for your product."
+    : "Sign in to open your projects.";
 
   return <section className="welcome">
     <div className="welcome-hero">
-      <span className="welcome-badge"><Sparkles size={12} aria-hidden="true" /> OpenTelemetry Observability</span>
-      <div className="welcome-icon-wrap" aria-hidden="true"><Gauge size={28} /></div>
-      <h1>Welcome to TracePilot</h1>
-      <p className="welcome-subtitle">Connect the bootstrap/admin key for first-time setup, or a read-scoped key for daily investigation.</p>
+      <div className="welcome-icon-wrap" style={{ "--i": 0 } as React.CSSProperties} aria-hidden="true"><Gauge size={26} /></div>
+      <h1 style={{ "--i": 1 } as React.CSSProperties}>Welcome to TracePilot</h1>
+      <p key={mode} className="welcome-subtitle" style={{ "--i": 2 } as React.CSSProperties}>{subtitle}</p>
 
-      <form className="welcome-key-card" onSubmit={(event) => { event.preventDefault(); connect(keyInput); }}>
-        <div className="welcome-input-row">
-          <KeyRound size={16} className="welcome-key-icon" aria-hidden="true" />
-          <label htmlFor="welcome-key" className="sr-only">API key</label>
-          <input id="welcome-key" type="password" autoComplete="off" placeholder="Paste your TracePilot API key…" value={keyInput} onChange={(event) => setKeyInput(event.target.value)} />
-          <button type="submit" className="welcome-submit" disabled={!keyInput.trim()}>Connect Console <ArrowRight size={14} aria-hidden="true" /></button>
+      {registrationOpen && <div className="welcome-modes" data-mode={mode} role="group" aria-label="Sign in or register" style={{ "--i": 3 } as React.CSSProperties}>
+        <button type="button" aria-pressed={mode === "signin"} onClick={() => switchMode("signin")}>Sign in</button>
+        <button type="button" aria-pressed={mode === "register"} onClick={() => switchMode("register")}>Register</button>
+      </div>}
+
+      <form className="welcome-form" onSubmit={submit} style={{ "--i": 4 } as React.CSSProperties}>
+        <div className="welcome-fold" data-open={registering} inert={!registering}>
+          <div><label>Display name<input name="name" autoComplete="name" required={registering} disabled={!registering} maxLength={100} /></label></div>
         </div>
-        <div className="welcome-dev-hint">
-          <span>Your key stays in this browser session only.</span>
-          {devKey && <button type="button" className="welcome-quick-fill" onClick={() => connect(devKey)}><Terminal size={12} aria-hidden="true" /> Auto-fill bootstrap dev key</button>}
+        <label>Email<input type="email" name="email" autoComplete="username" required maxLength={254} placeholder="you@company.com" /></label>
+        <label>Password<input type="password" name="password" autoComplete={registering ? "new-password" : "current-password"} required minLength={registering ? 12 : undefined} maxLength={registering ? 256 : 1024} /></label>
+        <div className="welcome-fold" data-open={registering} inert={!registering}>
+          <div><small>At least 12 characters. A passphrase of a few words works well.</small></div>
         </div>
+        <div className="welcome-fold" data-open={Boolean(request.error)}>
+          <div><p className="form-error" role={request.error ? "alert" : undefined}>{request.error?.message}</p></div>
+        </div>
+        <button type="submit" className="welcome-submit" disabled={request.isPending}>
+          {request.isPending ? <><LoaderCircle className="animate-spin" size={15} aria-hidden="true" /> {registering ? "Creating…" : "Signing in…"}</> : <>{registering ? "Create account" : "Sign in"} <ArrowRight size={15} aria-hidden="true" /></>}
+        </button>
       </form>
-
-      <ul className="welcome-features">
-        {features.map(({ icon: Icon, title, text }) => <li key={title} className="welcome-feat-card">
-          <span className="welcome-feat-icon"><Icon size={16} aria-hidden="true" /></span>
-          <strong>{title}</strong>
-          <small>{text}</small>
-        </li>)}
-      </ul>
-
-      <Link to="/flow" className="welcome-learn-more">Explore architectural flow &amp; pipeline design <ArrowRight size={13} aria-hidden="true" /></Link>
     </div>
   </section>;
 }

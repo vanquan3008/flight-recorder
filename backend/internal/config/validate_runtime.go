@@ -30,8 +30,8 @@ func (configuration Config) validateNotifications() error {
 }
 
 func (configuration Config) validateRuntime() error {
-	if configuration.Production && configuration.Auth.BootstrapAPIKey == "" {
-		return errors.New("auth.bootstrap_api_key is required in production")
+	if configuration.Production && configuration.Auth.JWTSecret == "" {
+		return errors.New("auth.jwt_secret is required in production")
 	}
 	if configuration.Production && configuration.TLS.CertificateFile == "" {
 		return errors.New("tls.certificate_file and tls.private_key_file are required in production")
@@ -44,8 +44,11 @@ func (configuration Config) validateRuntime() error {
 			return err
 		}
 	}
-	if configuration.Auth.BootstrapAPIKey != "" && len(configuration.Auth.BootstrapAPIKey) < 32 {
-		return errors.New("auth.bootstrap_api_key must contain at least 32 characters")
+	if configuration.HTTP.MetricsToken != "" && len(configuration.HTTP.MetricsToken) < 32 {
+		return errors.New("http.metrics_token must contain at least 32 characters")
+	}
+	if configuration.Auth.JWTSecret != "" && len(configuration.Auth.JWTSecret) < 32 {
+		return errors.New("auth.jwt_secret must contain at least 32 characters")
 	}
 	if (configuration.TLS.CertificateFile == "") != (configuration.TLS.PrivateKeyFile == "") {
 		return errors.New("tls.certificate_file and tls.private_key_file must be set together")

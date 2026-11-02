@@ -18,7 +18,7 @@ func (server *Server) listIncidents(responseWriter http.ResponseWriter, request 
 		return
 	}
 	filter.Before, filter.CursorID = cursor.At, cursor.ID
-	filter.EnvironmentID = server.environmentID
+	filter.EnvironmentID = principal.EnvironmentID
 	incidents, queryError := server.backend.ListIncidents(request.Context(), principal.ProjectID, filter)
 	if queryError != nil {
 		server.writeInternalError(responseWriter, "list incidents", queryError)
@@ -40,7 +40,7 @@ func (server *Server) getIncident(responseWriter http.ResponseWriter, request *h
 func (server *Server) listIncidentOccurrences(responseWriter http.ResponseWriter, request *http.Request, principal auth.Principal) {
 	writeIncidentPage(server, responseWriter, request, principal, "list incident occurrences",
 		func(ctx context.Context, incidentID string, limit int, cursor pageCursor) ([]incident.Occurrence, error) {
-			return server.backend.ListIncidentOccurrences(ctx, principal.ProjectID, server.environmentID, incidentID, limit, cursor.At, cursor.ID)
+			return server.backend.ListIncidentOccurrences(ctx, principal.ProjectID, principal.EnvironmentID, incidentID, limit, cursor.At, cursor.ID)
 		},
 		func(occurrence incident.Occurrence) pageCursor {
 			return pageCursor{At: occurrence.OccurredAt, ID: occurrence.ID}
@@ -50,7 +50,7 @@ func (server *Server) listIncidentOccurrences(responseWriter http.ResponseWriter
 func (server *Server) listIncidentEvents(responseWriter http.ResponseWriter, request *http.Request, principal auth.Principal) {
 	writeIncidentPage(server, responseWriter, request, principal, "list incident events",
 		func(ctx context.Context, incidentID string, limit int, cursor pageCursor) ([]incident.Event, error) {
-			return server.backend.ListIncidentEvents(ctx, principal.ProjectID, server.environmentID, incidentID, limit, cursor.At, cursor.ID)
+			return server.backend.ListIncidentEvents(ctx, principal.ProjectID, principal.EnvironmentID, incidentID, limit, cursor.At, cursor.ID)
 		},
 		func(event incident.Event) pageCursor { return pageCursor{At: event.OccurredAt, ID: event.EventID} })
 }
@@ -58,7 +58,7 @@ func (server *Server) listIncidentEvents(responseWriter http.ResponseWriter, req
 func (server *Server) listIncidentStatusChanges(responseWriter http.ResponseWriter, request *http.Request, principal auth.Principal) {
 	writeIncidentPage(server, responseWriter, request, principal, "list incident status changes",
 		func(ctx context.Context, incidentID string, limit int, cursor pageCursor) ([]incident.StatusChange, error) {
-			return server.backend.ListIncidentStatusChanges(ctx, principal.ProjectID, server.environmentID, incidentID, limit, cursor.At, cursor.ID)
+			return server.backend.ListIncidentStatusChanges(ctx, principal.ProjectID, principal.EnvironmentID, incidentID, limit, cursor.At, cursor.ID)
 		},
 		func(change incident.StatusChange) pageCursor { return pageCursor{At: change.ChangedAt, ID: change.ID} })
 }
@@ -66,7 +66,7 @@ func (server *Server) listIncidentStatusChanges(responseWriter http.ResponseWrit
 func (server *Server) listAllowedRequestExecutions(responseWriter http.ResponseWriter, request *http.Request, principal auth.Principal) {
 	writeIncidentPage(server, responseWriter, request, principal, "list allowed request executions",
 		func(ctx context.Context, incidentID string, limit int, cursor pageCursor) ([]replaydomain.Execution, error) {
-			return server.backend.ListReplayExecutions(ctx, principal.ProjectID, server.environmentID, incidentID, replaydomain.ExecutionFilter{
+			return server.backend.ListReplayExecutions(ctx, principal.ProjectID, principal.EnvironmentID, incidentID, replaydomain.ExecutionFilter{
 				Before: cursor.At, CursorID: cursor.ID, Limit: limit,
 			})
 		},
@@ -84,7 +84,7 @@ func (server *Server) getAllowedRequestExecution(responseWriter http.ResponseWri
 	if !requireUUID(responseWriter, executionID) {
 		return
 	}
-	execution, queryError := server.backend.GetReplayExecution(request.Context(), principal.ProjectID, server.environmentID, record.ID, executionID)
+	execution, queryError := server.backend.GetReplayExecution(request.Context(), principal.ProjectID, principal.EnvironmentID, record.ID, executionID)
 	if queryError != nil {
 		server.writeInternalError(responseWriter, "get allowed request execution", queryError)
 		return
@@ -109,7 +109,7 @@ func (server *Server) updateIncident(responseWriter http.ResponseWriter, request
 		return
 	}
 	record, updateError := server.incidentCommands.UpdateStatus(request.Context(), incidentapp.UpdateStatusCommand{
-		ProjectID: principal.ProjectID, EnvironmentID: server.environmentID, IncidentID: incidentID, Status: payload.Status, ActorKeyID: principal.KeyID,
+		ProjectID: principal.ProjectID, EnvironmentID: principal.EnvironmentID, IncidentID: incidentID, Status: payload.Status, Actor: principal.Actor(),
 	})
 	switch {
 	case errors.Is(updateError, incidentapp.ErrInvalidStatus):
@@ -132,7 +132,7 @@ func (server *Server) loadIncident(responseWriter http.ResponseWriter, request *
 	if !requireUUID(responseWriter, incidentID) {
 		return incident.Incident{}, false
 	}
-	record, queryError := server.backend.GetIncident(request.Context(), principal.ProjectID, server.environmentID, incidentID)
+	record, queryError := server.backend.GetIncident(request.Context(), principal.ProjectID, principal.EnvironmentID, incidentID)
 	if queryError != nil {
 		server.writeInternalError(responseWriter, "get incident", queryError)
 		return incident.Incident{}, false
