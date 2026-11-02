@@ -1,6 +1,7 @@
 import { useId } from "react";
 import type { KeyboardEvent } from "react";
 import type { TopologyEdge, TopologyNode } from "../types";
+import { truncate } from "./graph-layout";
 import "./flow-diagram.css";
 
 export type FlowLink = { edge: TopologyEdge; node: TopologyNode };
@@ -17,7 +18,6 @@ const width = nodeWidth * 2 + centerWidth + columnGap * 2;
 const centerX = nodeWidth + columnGap;
 const rightX = centerX + centerWidth + columnGap;
 
-const truncate = (text: string, limit: number) => (text.length > limit ? `${text.slice(0, limit - 1)}…` : text);
 const plural = (value: number, noun: string) => `${value} ${noun}${value === 1 ? "" : "s"}`;
 const kindClass = (type: string) => type.toLowerCase().replace(/[^a-z0-9]/g, "");
 

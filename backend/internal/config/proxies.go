@@ -41,18 +41,13 @@ func (configuration HTTPConfig) TrustedProxyPrefixes() []netip.Prefix {
 // trusted party actually saw. A leftmost value is whatever the client chose to
 // send and is never used. forwarded holds every X-Forwarded-For header value.
 func ClientAddress(remoteAddr string, forwarded []string, trusted []netip.Prefix) string {
-	host, _, splitError := net.SplitHostPort(remoteAddr)
-	if splitError != nil {
-		host = strings.TrimSpace(remoteAddr)
-	}
-	peer, peerError := netip.ParseAddr(host)
-	if peerError != nil {
+	host, peer, parsed := splitPeer(remoteAddr)
+	if !parsed {
 		if host == "" {
 			return "unknown"
 		}
 		return host
 	}
-	peer = peer.Unmap()
 	if !containsAddress(trusted, peer) {
 		return peer.String()
 	}
@@ -70,6 +65,27 @@ func ClientAddress(remoteAddr string, forwarded []string, trusted []netip.Prefix
 		}
 	}
 	return peer.String()
+}
+
+// FromTrustedProxy reports whether the TCP peer at remoteAddr is one of the trusted proxies, the
+// only peer whose forwarded headers are believed.
+func FromTrustedProxy(remoteAddr string, trusted []netip.Prefix) bool {
+	_, peer, parsed := splitPeer(remoteAddr)
+	return parsed && containsAddress(trusted, peer)
+}
+
+// splitPeer reads the host of a connection's remote address. parsed is false when the host is not
+// an IP address, and host is then returned as it was written.
+func splitPeer(remoteAddr string) (host string, peer netip.Addr, parsed bool) {
+	host, _, splitError := net.SplitHostPort(remoteAddr)
+	if splitError != nil {
+		host = strings.TrimSpace(remoteAddr)
+	}
+	address, parseError := netip.ParseAddr(host)
+	if parseError != nil {
+		return host, netip.Addr{}, false
+	}
+	return host, address.Unmap(), true
 }
 
 func containsAddress(prefixes []netip.Prefix, address netip.Addr) bool {

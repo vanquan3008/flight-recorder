@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/vanquan3008/tracepilot/internal/auth"
+	"github.com/vanquan3008/tracepilot/internal/config"
 )
 
 const (
@@ -146,7 +147,7 @@ func (server *Server) cookieSecure(request *http.Request) bool {
 	if server.production || request.TLS != nil || server.certificateFile != "" {
 		return true
 	}
-	return strings.EqualFold(request.Header.Get("X-Forwarded-Proto"), "https") && server.fromTrustedProxy(request)
+	return strings.EqualFold(request.Header.Get("X-Forwarded-Proto"), "https") && config.FromTrustedProxy(request.RemoteAddr, server.trustedProxies)
 }
 
 func (server *Server) setRefreshCookie(responseWriter http.ResponseWriter, request *http.Request, token string) {

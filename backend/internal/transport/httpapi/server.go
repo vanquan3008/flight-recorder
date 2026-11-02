@@ -196,29 +196,22 @@ func (server *Server) metricsEndpoint(responseWriter http.ResponseWriter, reques
 }
 
 func (server *Server) live(responseWriter http.ResponseWriter, _ *http.Request) {
-	writeJSON(responseWriter, http.StatusOK, `{"status":"ok"}`)
+	writeJSONValue(responseWriter, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 func (server *Server) readiness(responseWriter http.ResponseWriter, request *http.Request) {
 	if !server.ready.Load() {
 		server.metrics.SetDatabaseReady(false)
-		writeJSON(responseWriter, http.StatusServiceUnavailable, `{"status":"not_ready"}`)
+		writeJSONValue(responseWriter, http.StatusServiceUnavailable, map[string]string{"status": "not_ready"})
 		return
 	}
 	readinessContext, cancelReadiness := context.WithTimeout(request.Context(), server.readinessTimeout)
 	defer cancelReadiness()
 	if readinessError := server.readinessCheck(readinessContext); readinessError != nil {
 		server.metrics.SetDatabaseReady(false)
-		writeJSON(responseWriter, http.StatusServiceUnavailable, `{"status":"not_ready"}`)
+		writeJSONValue(responseWriter, http.StatusServiceUnavailable, map[string]string{"status": "not_ready"})
 		return
 	}
 	server.metrics.SetDatabaseReady(true)
-	writeJSON(responseWriter, http.StatusOK, `{"status":"ready"}`)
-}
-
-func writeJSON(responseWriter http.ResponseWriter, statusCode int, responseBody string) {
-	responseWriter.Header().Set("Content-Type", "application/json")
-	responseWriter.Header().Set("Cache-Control", "no-store")
-	responseWriter.WriteHeader(statusCode)
-	_, _ = responseWriter.Write([]byte(responseBody + "\n"))
+	writeJSONValue(responseWriter, http.StatusOK, map[string]string{"status": "ready"})
 }

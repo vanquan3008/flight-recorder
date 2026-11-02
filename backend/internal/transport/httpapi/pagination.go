@@ -239,29 +239,24 @@ func pageResponse[T any](items []T, limit int, cursor func(T) pageCursor) map[st
 	return response
 }
 
+func validHex(value string, length int) bool {
+	if len(value) != length {
+		return false
+	}
+	_, decodeError := hex.DecodeString(value)
+	return decodeError == nil
+}
+
 func validUUID(value string) bool {
 	if len(value) != 36 || value[8] != '-' || value[13] != '-' || value[18] != '-' || value[23] != '-' {
 		return false
 	}
-	_, decodeError := hex.DecodeString(strings.ReplaceAll(value, "-", ""))
-	return decodeError == nil
+	return validHex(strings.ReplaceAll(value, "-", ""), 32)
 }
 
-func validTraceID(value string) bool {
-	if len(value) != 32 {
-		return false
-	}
-	_, decodeError := hex.DecodeString(value)
-	return decodeError == nil
-}
+func validTraceID(value string) bool { return validHex(value, 32) }
 
-func validSpanID(value string) bool {
-	if len(value) != 16 {
-		return false
-	}
-	_, decodeError := hex.DecodeString(value)
-	return decodeError == nil
-}
+func validSpanID(value string) bool { return validHex(value, 16) }
 
 func requireUUID(responseWriter http.ResponseWriter, value string) bool {
 	if validUUID(value) {

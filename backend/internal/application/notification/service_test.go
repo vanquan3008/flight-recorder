@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"net/netip"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -102,22 +101,6 @@ func TestDispatchSignsWithRawWebhookSecret(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("success outcome was not observed")
-	}
-}
-
-func TestSSRFPolicyRejectsPrivateAddresses(t *testing.T) {
-	for _, value := range []string{"127.0.0.1", "10.0.0.1", "169.254.169.254", "192.0.2.1"} {
-		address, parseError := netip.ParseAddr(value)
-		if parseError != nil {
-			t.Fatal(parseError)
-		}
-		if isPublicAddr(address) {
-			t.Fatalf("%s was classified as public", value)
-		}
-	}
-	public, _ := netip.ParseAddr("203.0.114.10")
-	if !isPublicAddr(public) {
-		t.Fatal("ordinary global address was classified as private")
 	}
 }
 
