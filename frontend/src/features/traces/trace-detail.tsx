@@ -3,10 +3,8 @@ import { useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useAuth } from "../../app/auth";
 import { APIError, pageItems, usePagedQuery } from "../../shared/api";
-import { BackLink, DetailLink } from "../../shared/navigation";
-import { PagedTable } from "../../shared/paged-table";
 import type { LogRecord } from "../../shared/types";
-import { Badge, ErrorState, ExpandableText, Loading, PageHeader, Panel, formatTime, json } from "../../shared/ui";
+import { BackLink, Badge, DetailLink, ErrorState, ExpandableText, Loading, PageHeader, PagedTable, Panel, formatTime, json } from "../../shared/ui";
 import { TraceFlow } from "./trace-flow";
 import { buildTrace } from "./trace-model";
 import { loadTrace, maxTraceSpans } from "./trace-pages";
@@ -15,12 +13,12 @@ import "./traces.css";
 
 export function TraceDetailPage() {
   const { traceID = "" } = useParams();
-  const { apiKey } = useAuth();
+  const { credential } = useAuth();
   const [focus, setFocus] = useState("");
-  const trace = useQuery({ queryKey: ["trace", traceID], queryFn: ({ signal }) => loadTrace(traceID, apiKey, signal) });
-  const logs = usePagedQuery<LogRecord>(["trace-logs", traceID], `/api/v1/traces/${traceID}/logs?limit=50`, apiKey);
+  const trace = useQuery({ queryKey: ["trace", traceID], queryFn: ({ signal }) => loadTrace(traceID, credential, signal) });
+  const logs = usePagedQuery<LogRecord>(["trace-logs", traceID], `/api/v1/traces/${traceID}/logs?limit=50`, credential);
   const model = useMemo(() => buildTrace(trace.data?.spans ?? []), [trace.data]);
-  if (trace.isPending) return <Loading />;
+  if (trace.isPending) return <Loading page />;
   const header = <PageHeader title="Trace detail" action={<BackLink fallback="/traces" fallbackLabel="traces" />}>{traceID}</PageHeader>;
   if (trace.isError) {
     const missing = trace.error instanceof APIError && trace.error.status === 404;

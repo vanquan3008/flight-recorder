@@ -13,7 +13,7 @@ const logs = [
 afterEach(() => { cleanup(); sessionStorage.clear(); window.location.hash = ""; vi.unstubAllGlobals(); });
 
 function open(hash: string, status = 200) {
-  sessionStorage.setItem("tracepilot-api-key", "test-key");
+  localStorage.setItem("tracepilot-signed-in", "1");
   window.location.hash = hash;
   const fetch = vi.fn().mockImplementation((input: string) => new URL(input, "http://localhost").pathname === "/api/v1/logs"
     ? (status === 200 ? respond({ data: logs }) : respond({ error: { message: "log content search range must not exceed 24 hours" } }, status))
@@ -52,7 +52,7 @@ it("opens a trace's logs without a time bound and keeps the span filter", async 
   expect(url.searchParams.get("traceId")).toBe(traceID);
   expect(url.searchParams.get("spanId")).toBe("0123456789abcdef");
   expect(url.searchParams.has("from")).toBe(false);
-  expect((screen.getByLabelText("Time range") as HTMLSelectElement).value).toBe("any");
+  expect((screen.getByLabelText("Any time") as HTMLInputElement).checked).toBe(true);
 });
 
 it("explains a rejected body search and lets the operator clear filters", async () => {
@@ -62,4 +62,16 @@ it("explains a rejected body search and lets the operator clear filters", async 
   fireEvent.click(screen.getByRole("button", { name: /Clear filters/ }));
   await waitFor(() => expect(window.location.hash).not.toContain("search="));
   expect(window.location.hash).toContain("range=7d");
+});
+
+it("filters by severity from the quick chips and keeps the other filters", async () => {
+  const fetch = open("#/logs?service=checkout");
+  await screen.findByText(/card declined/);
+  fireEvent.click(screen.getByRole("button", { name: "ERROR" }));
+  await waitFor(() => expect(window.location.hash).toContain("severity=ERROR"));
+  expect(window.location.hash).toContain("service=checkout");
+  expect(screen.getByRole("button", { name: "ERROR" }).getAttribute("aria-pressed")).toBe("true");
+  await waitFor(() => expect(fetch.mock.calls.some(([path]) => String(path).includes("severity=ERROR"))).toBe(true));
+  fireEvent.click(screen.getByRole("button", { name: "All" }));
+  await waitFor(() => expect(window.location.hash).not.toContain("severity="));
 });

@@ -1,9 +1,8 @@
 import { expect, test } from "@playwright/test";
+import { signIn } from "./session";
 
-test("connects, finds the seeded failed trace, and opens its correlated log", async ({ page }) => {
-  await page.goto("/");
-  await page.getByLabel("API key").fill(process.env.TRACEPILOT_E2E_API_KEY || "tracepilot-development-bootstrap-key-000000");
-  await page.getByRole("button", { name: "Connect" }).click();
+test("signs in, finds the seeded failed trace, and opens its correlated log", async ({ page }) => {
+  await signIn(page);
   await expect(page.getByRole("heading", { name: "Get your first trace" })).toBeVisible();
   await expect(page.getByText("First trace received.")).toBeVisible();
 

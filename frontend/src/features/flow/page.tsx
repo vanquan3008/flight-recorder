@@ -22,7 +22,7 @@ const writeFlow: FlowNode[] = [
 const readFlow: FlowNode[] = [
   { icon: Search, step: "01 · Consumer", title: "Console or API client", copy: "The browser console and external tools request telemetry independently of ingestion.", tags: ["React Console", "External client"] },
   { icon: FileSearch, step: "02 · Read API", title: "Management REST API", copy: "A separate HTTP listener exposes versioned query and management endpoints.", tags: [":8080/api/v1", "JSON", "scope: read"] },
-  { icon: KeyRound, step: "03 · Authorization", title: "Project-scoped query", copy: "The authenticated API key supplies project identity; client filters never choose another tenant.", tags: ["API key scopes", "Cursor filters"] },
+  { icon: KeyRound, step: "03 · Authorization", title: "Project-scoped query", copy: "The signed-in account and its role in the chosen project decide what it can read; a project you do not belong to answers as forbidden.", tags: ["JWT access token", "Project roles"] },
   { icon: Database, step: "04 · Result", title: "Read from PostgreSQL", copy: "Scoped queries return traces, logs and incidents without entering the ingestion pipeline.", tags: ["Read path", "JSON response"] },
 ];
 
@@ -33,8 +33,8 @@ const intelligenceFlow: FlowNode[] = [
 ];
 
 const firstRun = [
-  [KeyRound, "Connect", "Use the bootstrap/admin key for initial setup."],
-  [Sparkles, "Create a key", "Issue a least-privilege ingestion key on Overview."],
+  [KeyRound, "Register", "Create an account; the first one becomes the super administrator."],
+  [Sparkles, "Create a project", "Make a project for your product, then an ingest token for it."],
   [RadioTower, "Send a signal", "Copy the OTLP variables into one application."],
   [Search, "Find the cause", "Open a failed trace and inspect its linked logs."],
 ] as const;

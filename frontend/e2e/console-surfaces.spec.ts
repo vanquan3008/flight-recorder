@@ -1,11 +1,8 @@
 import { expect, test, type Page } from "@playwright/test";
-
-const key = process.env.TRACEPILOT_E2E_API_KEY || "tracepilot-development-bootstrap-key-000000";
+import { signIn } from "./session";
 
 async function connect(page: Page) {
-  await page.goto("/");
-  await page.getByLabel("API key").fill(key);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await signIn(page);
   await expect(page.getByText("Connected")).toBeVisible();
 }
 
@@ -36,7 +33,7 @@ test("returns from a trace to the filtered list the operator came from", async (
 test("reads logs independently and follows one to its trace", async ({ page }) => {
   await connect(page);
   await page.getByRole("link", { name: "Log explorer" }).click();
-  await page.getByLabel("Time range").selectOption("24h");
+  await page.getByRole("radio", { name: "Last 24 hours" }).check({ force: true });
   await expect(page.getByRole("heading", { name: "Log explorer" })).toBeVisible();
   await expect(page.getByRole("row").nth(1)).toBeVisible();
   await page.getByRole("link", { name: "Open trace" }).first().click();
@@ -45,22 +42,24 @@ test("reads logs independently and follows one to its trace", async ({ page }) =
   await expect(page.getByRole("heading", { name: "Log explorer" })).toBeVisible();
 });
 
-test("shows the dependency graph and opens a node's calls", async ({ page }) => {
+test("lists services and shows where one sits in the flow", async ({ page }) => {
   await connect(page);
   await page.getByRole("link", { name: "Service topology" }).click();
-  await page.getByLabel("Time range").selectOption("24h");
-  const nodes = page.getByRole("button", { name: /^service |^database / });
-  await expect(nodes.first()).toBeVisible();
-  await nodes.first().click();
-  await expect(page.getByRole("heading", { name: "Calls out" })).toBeVisible();
+  await page.getByRole("radio", { name: "Last 24 hours" }).check({ force: true });
+  const rows = page.locator(".service-row");
+  await expect(rows.first()).toBeVisible();
+  await rows.first().click();
+  await expect(page.getByRole("group", { name: /sits in the flow/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Recent logs" })).toBeVisible();
 });
 
-test("manages API keys with a one-time secret and a confirmed revoke", async ({ page }) => {
+test("manages ingest tokens with a one-time secret and a confirmed revoke", async ({ page }) => {
   await connect(page);
   await page.getByRole("link", { name: "Settings" }).click();
+  await page.getByRole("button", { name: "Ingest tokens" }).click();
   const name = `e2e-${Date.now().toString(36)}`;
   await page.getByLabel("Name").fill(name);
-  await page.getByRole("button", { name: "Create key" }).click();
+  await page.getByRole("button", { name: "Create token" }).click();
   await expect(page.getByText(/shown only once/)).toBeVisible();
   await page.getByRole("button", { name: "I have stored it" }).click();
   await expect(page.getByText(/shown only once/)).toBeHidden();
@@ -70,15 +69,14 @@ test("manages API keys with a one-time secret and a confirmed revoke", async ({ 
   await expect(page.getByRole("row", { name: new RegExp(name) }).getByText("REVOKED")).toBeVisible();
 });
 
-test("tells a read-only key why settings are unavailable", async ({ page, request }) => {
-  const issued = await request.post("/api/v1/api-keys", { headers: { "X-API-Key": key }, data: { name: `ro-${Date.now().toString(36)}`, scopes: ["read"] } });
-  expect(issued.ok()).toBeTruthy();
-  const readOnly = (await issued.json()).key as string;
+test("a newly registered person owns nothing yet and is offered a first project", async ({ page }) => {
+  const stranger = { email: `e2e-${Date.now().toString(36)}@example.test`, password: "another-e2e-passphrase" };
+  await page.request.post("/api/v1/auth/register", { data: { email: stranger.email, display_name: "Stranger", password: stranger.password }, headers: { "X-TracePilot-Refresh": "1" } });
   await page.goto("/");
-  await page.getByLabel("API key").fill(readOnly);
-  await page.getByRole("button", { name: "Connect" }).click();
-  await page.getByRole("link", { name: "Settings" }).click();
-  await expect(page.getByText("This key cannot open this view")).toBeVisible();
+  await page.getByLabel("Email").fill(stranger.email);
+  await page.getByLabel("Password").fill(stranger.password);
+  await page.getByRole("button", { name: /^Sign in/ }).last().click();
+  await expect(page.getByRole("heading", { name: "Create your first project" })).toBeVisible();
 });
 
 test("shows the request flow, time axis and waterfall for a stored trace", async ({ page }) => {

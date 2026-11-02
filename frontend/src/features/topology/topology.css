@@ -1,1 +1,90 @@
-.topology-detail h3 { margin: 0; padding: 14px 18px 6px; font-size: 13px; }
+/* One workspace: the service list on the left, the selected service on the right. */
+/* The workspace grows to the bottom of the screen; with more content than fits, the page scrolls instead. */
+.topology-workspace { display: grid; flex: 1 0 auto; grid-template-columns: 300px minmax(0, 1fr); min-height: 420px; overflow: hidden; }
+.topology-aside { display: flex; flex-direction: column; min-width: 0; min-height: 0; border-right: 1px solid var(--glass-divider); }
+.topology-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.topology-main > .topology-logs { display: flex; flex: 1 1 0; flex-direction: column; min-height: 160px; }
+.topology-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 40px; padding: 6px 16px; border-bottom: 1px solid var(--glass-divider); }
+.topology-bar h2 { margin: 0; font-size: 13px; font-weight: 650; letter-spacing: 0; }
+@media (max-width: 900px) {
+  .topology-workspace { grid-template-columns: minmax(0, 1fr); min-height: 0; }
+  .topology-aside { border-right: 0; border-bottom: 1px solid var(--glass-divider); }
+}
+
+/* The List/Graph switch sits beside the time filter, so it is in the same place in both views. */
+.header-controls { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 12px; }
+.header-controls .toolbar { margin: 0; }
+.view-switch button { min-width: 64px; padding: 5px 16px; border-radius: 7px; color: var(--muted); font-size: 12px; font-weight: 600; }
+.view-switch button:hover { color: var(--text); }
+.view-switch button[aria-pressed="true"] { background: var(--btn-bg); color: var(--btn-text); box-shadow: 0 2px 8px var(--accent-glow); }
+.topology-count { color: var(--faint); font-size: 11.5px; font-weight: 600; }
+
+.service-list { display: grid; align-content: start; gap: 2px; margin: 0; padding: 6px; overflow: auto; list-style: none; }
+.service-row { display: grid; grid-template-columns: 1fr auto; gap: 1px 8px; width: 100%; padding: 8px 12px; border-radius: 12px; text-align: left; }
+.service-row:hover { background: var(--glass-hover); }
+.service-row[aria-pressed="true"] { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.service-name { font-size: 13px; font-weight: 650; overflow-wrap: anywhere; }
+.service-type { align-self: center; color: var(--faint); font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.service-meta { grid-column: 1 / -1; color: var(--muted); font-size: 11.5px; }
+.service-errors { color: var(--danger-fg); }
+
+.flow-position { padding: 14px 18px 10px; }
+
+.topology-logs { padding: 12px 18px 14px; border-top: 1px solid var(--glass-divider); }
+.topology-logs h3, .topology-calls h3 { margin: 0 0 6px; color: var(--faint); font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+.topology-logs-head { display: flex; align-items: baseline; justify-content: space-between; }
+.topology-logs-head a { color: var(--accent); font-size: 12px; font-weight: 650; text-decoration: none; }
+.topology-logs-head a:hover { text-decoration: underline; }
+.topology-log-list { display: grid; flex: 1 1 0; align-content: start; min-height: 0; margin: 0; padding: 0; overflow: auto; list-style: none; }
+.topology-log-list li { display: grid; grid-template-columns: 150px 84px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--glass-divider); font-size: 12px; }
+.topology-log-list li:last-child { border-bottom: 0; }
+.topology-log-list time { color: var(--muted); font-family: var(--font-mono); font-size: 11.5px; white-space: nowrap; }
+.topology-log-list code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 700px) {
+  .topology-log-list li { grid-template-columns: minmax(0, 1fr) auto; }
+  .topology-log-list time, .topology-log-list code { grid-column: 1 / -1; }
+}
+
+.topology-calls { border-top: 1px solid var(--glass-divider); }
+.topology-calls summary { padding: 10px 18px; color: var(--muted); font-size: 12px; font-weight: 650; cursor: pointer; }
+.topology-calls h3 { padding: 6px 18px 0; }
+
+/* Graph view: one panel. The selected service opens in a drawer beside the graph. */
+.topology-graph-panel { overflow: hidden; }
+.topology-canvas { display: grid; grid-template-columns: minmax(0, 1fr); }
+.topology-canvas.with-drawer { grid-template-columns: minmax(0, 1fr) minmax(300px, 360px); }
+.topology-canvas .graph-scroll { border-radius: 0; max-height: 68vh; }
+.topology-drawer { display: flex; flex-direction: column; min-width: 0; max-height: 68vh; overflow: auto; border-left: 1px solid var(--glass-divider); background: var(--glass-nested); }
+.drawer-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding: 14px 16px 10px; }
+.drawer-head h2 { margin: 0; font-size: 15px; font-weight: 650; letter-spacing: -.01em; overflow-wrap: anywhere; }
+.drawer-type { color: var(--faint); font-size: 10px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; }
+.drawer-close { display: grid; flex: none; place-items: center; width: 28px; height: 28px; border-radius: 8px; color: var(--muted); }
+.drawer-close:hover { background: var(--glass-hover); color: var(--text); }
+.drawer-stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 0; padding: 0 16px 12px; }
+.drawer-stats > div { padding: 8px 10px; border: 1px solid var(--glass-divider); border-radius: 10px; background: var(--glass-field); }
+.drawer-stats dt { color: var(--faint); font-size: 10px; font-weight: 650; letter-spacing: .05em; text-transform: uppercase; }
+.drawer-stats dd { margin: 2px 0 0; font-size: 17px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.drawer-stats .bad dd { color: var(--danger-fg); }
+.drawer-section { padding: 12px 16px; border-top: 1px solid var(--glass-divider); }
+.drawer-section h3 { margin: 0 0 8px; color: var(--faint); font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+.drawer-none { margin: 0; color: var(--faint); font-size: 12px; }
+.drawer-links { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.drawer-links li { display: flex; align-items: center; gap: 8px; }
+.drawer-links button { display: grid; flex: 1; min-width: 0; padding: 7px 10px; border: 1px solid var(--glass-field-edge); border-radius: 10px; background: var(--glass-field); text-align: left; }
+.drawer-links button:hover { border-color: var(--accent); background: var(--glass-field-focus); }
+.drawer-links strong { font-size: 12.5px; }
+.drawer-links small { color: var(--muted); font-size: 11px; }
+.drawer-errors { color: var(--danger-fg); }
+.drawer-links a { font-size: 11.5px; font-weight: 650; }
+.drawer-logs-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.drawer-logs-head a { color: var(--accent); font-size: 11.5px; font-weight: 650; text-decoration: none; }
+.drawer-log-list { display: grid; margin: 0; padding: 0; list-style: none; }
+.drawer-log-list li { display: grid; grid-template-columns: auto auto minmax(0, 1fr); gap: 4px 8px; align-items: center; padding: 7px 0; border-bottom: 1px solid var(--glass-divider); font-size: 11.5px; }
+.drawer-log-list li:last-child { border-bottom: 0; }
+.drawer-log-list time { color: var(--muted); font-family: var(--font-mono); font-size: 10.5px; }
+.drawer-log-list code { grid-column: 1 / -1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.drawer-log-list a { grid-column: 3; justify-self: end; font-size: 11px; }
+@media (max-width: 900px) {
+  .topology-canvas.with-drawer { grid-template-columns: minmax(0, 1fr); }
+  .topology-drawer { max-height: none; border-left: 0; border-top: 1px solid var(--glass-divider); }
+}

@@ -1,34 +1,36 @@
+import { Check } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { api, APIError } from "../../shared/api";
 import { Panel } from "../../shared/ui";
 
-const otlpConfig = (ingestKey = "<ingest-api-key>") => `OTEL_SERVICE_NAME=my-service
+const otlpConfig = (ingestToken = "<ingest-token>") => `OTEL_SERVICE_NAME=my-service
 OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
 OTEL_EXPORTER_OTLP_ENDPOINT=http://<tracepilot-host>:4318
-OTEL_EXPORTER_OTLP_HEADERS=x-api-key=${ingestKey}`;
+OTEL_EXPORTER_OTLP_HEADERS=authorization=Bearer%20${ingestToken}`;
 
-type IssuedAPIKey = { key: string };
+type IssuedIngestToken = { jwt: string };
 
-export function Onboarding({ apiKey, hasTrace }: { apiKey: string; hasTrace: boolean }) {
+/** `canCreate` is false for a user who was only added to the project: its owner makes the ingest tokens. */
+export function Onboarding({ credential, projectID, canCreate, hasTrace }: { credential: string; projectID: string; canCreate: boolean; hasTrace: boolean }) {
   const [ingestKey, setIngestKey] = useState("");
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState("");
   const [copied, setCopied] = useState(false);
   const [copyFailed, setCopyFailed] = useState(false);
-  const createIngestKey = async () => {
+  const createIngestToken = async () => {
     setCreating(true);
     setCreateError("");
     try {
-      const issued = await api<IssuedAPIKey>("/api/v1/api-keys", apiKey, {
+      const issued = await api<IssuedIngestToken>(`/api/v1/projects/${projectID}/ingest-tokens`, credential, {
         method: "POST",
-        body: JSON.stringify({ name: `first-app-${crypto.randomUUID().slice(0, 8)}`, scopes: ["ingest"] }),
+        body: JSON.stringify({ name: `first-app-${crypto.randomUUID().slice(0, 8)}` }),
       });
-      setIngestKey(issued.key);
+      setIngestKey(issued.jwt);
     } catch (error) {
       setCreateError(error instanceof APIError && error.status === 403
-        ? "Connect with the bootstrap or an admin-scoped key to create an ingestion key."
-        : error instanceof Error ? error.message : "Unable to create an ingestion key.");
+        ? "Only an owner of this project can create an ingest token."
+        : error instanceof Error ? error.message : "Unable to create an ingest token.");
     } finally {
       setCreating(false);
     }
@@ -42,29 +44,32 @@ export function Onboarding({ apiKey, hasTrace }: { apiKey: string; hasTrace: boo
       setCopyFailed(true);
     }
   };
-  if (hasTrace) return <Panel title="Get your first trace" meta="Complete"><div className="onboarding"><p>First trace received. <Link to="/traces">Inspect traces</Link>.</p></div></Panel>;
-  return <Panel title="Get your first trace" meta="4 steps">
+  if (hasTrace) return <section className="onboarding-done"><h2>Get your first trace</h2><p>First trace received. <Link to="/traces">Inspect traces</Link>.</p></section>;
+  // Steps run in order; the first one not yet done is the current one.
+  const done = [true, Boolean(ingestKey), copied, false];
+  const current = done.indexOf(false);
+  const steps = [
+    { title: "Sign in", body: <p>You are signed in to this project.</p> },
+    { title: "Create ingest token", body: <>
+      {ingestKey ? <><p>The token is shown once. Copy the configuration before leaving this page.</p><code>{ingestKey}</code></>
+        : <>{canCreate ? <><p>Create a token that can only send telemetry into this project, for your first application.</p><button type="button" className="step-action" disabled={creating} onClick={() => void createIngestToken()}>{creating ? "Creating…" : "Create ingest token"}</button></> : <p>Ask an owner of this project to create an ingest token for your application.</p>}</>}
+      {createError && <p className="form-error" role="alert">{createError}</p>}
+    </> },
+    { title: "Configure OTLP", body: <>
+      <p>Set these variables for one OpenTelemetry SDK. Replace the host placeholder for remote deployments.</p>
+      <code>{otlpConfig(ingestKey)}</code>
+      <button type="button" className="button-secondary" disabled={!ingestKey} onClick={() => void copy()}>{copied ? "Copied" : "Copy OTLP config"}</button>
+      {copyFailed && <p className="form-error" role="status">Clipboard access was denied. Select the template and copy it manually.</p>}
+    </> },
+    { title: "Confirm signal", body: <p>Send a request from your instrumented application, then refresh this page.</p> },
+  ];
+  return <Panel title="Get your first trace" meta={`${done.filter(Boolean).length} of ${steps.length} done`}>
     <div className="onboarding">
-      <p>TracePilot is ready when a real trace appears below. Keep the console key out of your application.</p>
-      <div className="onboarding-steps">
-        <section className="onboarding-step complete"><strong>1. Connect</strong><p>Your console key is connected for this browser session.</p></section>
-        <section className={`onboarding-step ${ingestKey ? "complete" : ""}`}>
-          <strong>2. Create ingestion key</strong>
-          {ingestKey ? <><p>The key is shown once. Copy the configuration before leaving this page.</p><code>{ingestKey}</code></> : <><p>Create a least-privilege key for your first application.</p><button type="button" disabled={creating} onClick={() => void createIngestKey()}>{creating ? "Creating…" : "Create ingestion key"}</button></>}
-          {createError && <p className="form-error" role="alert">{createError}</p>}
-        </section>
-        <section className="onboarding-step">
-          <strong>3. Configure OTLP</strong>
-          <p>Set these variables for one OpenTelemetry SDK. Replace the host placeholder for remote deployments.</p>
-          <code>{otlpConfig(ingestKey)}</code>
-          <button type="button" className="button-secondary" disabled={!ingestKey} onClick={() => void copy()}>{copied ? "Copied" : "Copy OTLP config"}</button>
-          {copyFailed && <p className="form-error" role="status">Clipboard access was denied. Select the template and copy it manually.</p>}
-        </section>
-        <section className="onboarding-step">
-          <strong>4. Confirm signal</strong>
-          <p>Send a request from your instrumented application, then refresh this page.</p>
-        </section>
-      </div>
+      <p className="onboarding-lead">TracePilot is ready when a real trace appears below. Keep your sign-in out of your application: it uses the ingest token.</p>
+      <ol className="stepper">{steps.map((step, index) => <li key={step.title} className={done[index] ? "done" : index === current ? "current" : ""} aria-current={index === current ? "step" : undefined}>
+        <span className="step-marker" aria-hidden="true">{done[index] ? <Check size={13} strokeWidth={3} /> : index + 1}</span>
+        <div className="step-body"><strong>{step.title}</strong>{step.body}</div>
+      </li>)}</ol>
     </div>
   </Panel>;
 }

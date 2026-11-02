@@ -8,7 +8,6 @@
   #content { padding: 16px 6px 40px; }
   .overview-hero { padding: 24px; }
   .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .onboarding-steps { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 620px) {

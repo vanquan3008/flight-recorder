@@ -18,7 +18,7 @@ vi.mock("./trace-pages", () => ({
 afterEach(() => { cleanup(); sessionStorage.clear(); window.location.hash = ""; vi.unstubAllGlobals(); });
 
 function open() {
-  sessionStorage.setItem("tracepilot-api-key", "test-key");
+  localStorage.setItem("tracepilot-signed-in", "1");
   window.location.hash = `#/traces/${traceID}`;
   vi.stubGlobal("fetch", vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify({ data: [] }), { status: 200 }))));
   render(<App />);

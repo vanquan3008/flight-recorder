@@ -13,9 +13,9 @@ describe("Onboarding", () => {
     const descriptor = Object.getOwnPropertyDescriptor(navigator, "clipboard");
     Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: vi.fn().mockRejectedValue(new Error("denied")) } });
     try {
-      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ key: "tracepilot_ingest_secret" }), { status: 201 })));
-      render(<MemoryRouter><Onboarding apiKey="admin-key" hasTrace={false} /></MemoryRouter>);
-      fireEvent.click(screen.getByRole("button", { name: "Create ingestion key" }));
+      vi.stubGlobal("fetch", vi.fn().mockImplementation(() => new Response(JSON.stringify({ jwt: "tracepilot_ingest_secret" }), { status: 201 })));
+      render(<MemoryRouter><Onboarding credential="session" projectID="project-1" canCreate hasTrace={false} /></MemoryRouter>);
+      fireEvent.click(screen.getByRole("button", { name: "Create ingest token" }));
       await screen.findByText("tracepilot_ingest_secret");
       fireEvent.click(screen.getByRole("button", { name: "Copy OTLP config" }));
       expect((await screen.findByRole("status")).textContent).toContain("Clipboard access was denied");
@@ -25,17 +25,23 @@ describe("Onboarding", () => {
     }
   });
 
-  it("creates a least-privilege ingestion key and puts it in the OTLP template", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ key: "tracepilot_ingest_secret" }), { status: 201 })));
-    render(<MemoryRouter><Onboarding apiKey="admin-key" hasTrace={false} /></MemoryRouter>);
+  it("creates an ingest token for the project and puts it in the OTLP template", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(() => new Response(JSON.stringify({ jwt: "tracepilot_ingest_secret" }), { status: 201 })));
+    render(<MemoryRouter><Onboarding credential="session" projectID="project-1" canCreate hasTrace={false} /></MemoryRouter>);
 
-    fireEvent.click(screen.getByRole("button", { name: "Create ingestion key" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create ingest token" }));
 
     expect(await screen.findByText("tracepilot_ingest_secret")).toBeTruthy();
-    expect(screen.getByText(/x-api-key=tracepilot_ingest_secret/)).toBeTruthy();
-    expect(fetch).toHaveBeenCalledWith("/api/v1/api-keys", expect.objectContaining({
-      method: "POST",
-      body: expect.stringContaining('"scopes":["ingest"]'),
-    }));
+    expect(screen.getByText(/authorization=Bearer%20tracepilot_ingest_secret/)).toBeTruthy();
+    expect(fetch).toHaveBeenCalledWith("/api/v1/projects/project-1/ingest-tokens", expect.objectContaining({ method: "POST" }));
+  });
+});
+
+describe("Onboarding for a user who is not an owner", () => {
+  it("asks an owner for the token instead of offering to create one", () => {
+    cleanup();
+    render(<MemoryRouter><Onboarding credential="session" projectID="project-1" canCreate={false} hasTrace={false} /></MemoryRouter>);
+    expect(screen.queryByRole("button", { name: "Create ingest token" })).toBeNull();
+    expect(screen.getByText(/Ask an owner of this project/)).toBeTruthy();
   });
 });

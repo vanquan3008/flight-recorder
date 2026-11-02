@@ -15,13 +15,13 @@ export type LoadedTrace = { spans: Span[]; truncated: boolean };
  * more spans (next_cursor) than the console is willing to hold, so a partial
  * trace is never shown as if it were complete.
  */
-export async function loadTrace(traceID: string, apiKey: string, signal?: AbortSignal): Promise<LoadedTrace> {
+export async function loadTrace(traceID: string, credential: string, signal?: AbortSignal): Promise<LoadedTrace> {
   const spans: Span[] = [];
   let cursor = "";
   for (let page = 0; page < maxPages; page++) {
     const query = new URLSearchParams({ limit: String(pageSize) });
     if (cursor) query.set("cursor", cursor);
-    const result = await api<TraceDetail>(`/api/v1/traces/${traceID}?${query}`, apiKey, { signal });
+    const result = await api<TraceDetail>(`/api/v1/traces/${traceID}?${query}`, credential, { signal });
     spans.push(...result.spans);
     if (!result.next_cursor) return { spans, truncated: false };
     if (spans.length >= maxTraceSpans) return { spans, truncated: true };

@@ -1,5 +1,5 @@
 import type { CSSProperties } from "react";
-import { ServiceGraph } from "../../shared/service-graph";
+import { ServiceGraph } from "../../shared/charts";
 import { Badge, DataTable, Panel, formatDuration } from "../../shared/ui";
 import { type TraceModel, formatMs } from "./trace-model";
 

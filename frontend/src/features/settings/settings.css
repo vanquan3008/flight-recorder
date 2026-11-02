@@ -1,19 +1,61 @@
-.tabs { margin-bottom: 20px; }
-.settings-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; align-items: start; margin-bottom: 22px; padding: 22px; border: 1px solid var(--line); border-radius: 20px; background: var(--surface-raised); box-shadow: var(--shadow-bento); backdrop-filter: blur(12px); }
-.settings-form label, .settings-form fieldset { display: grid; gap: 6px; min-width: 0; color: var(--muted); font-size: 12px; font-weight: 700; }
-.settings-form fieldset { margin: 0; padding: 0; border: 0; }
-.settings-form legend { margin-bottom: 8px; padding: 0; }
-.settings-form .check { display: flex; align-items: flex-start; gap: 8px; font-weight: 500; }
-.settings-form .check input { margin-top: 3px; }
-.settings-form .check b { color: var(--text); }
-.settings-form .muted { align-self: end; margin: 0; }
-.settings-submit { display: grid; align-content: end; }
-.scope-list { display: flex; flex-wrap: wrap; gap: 6px; }
-.secret-notice { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 16px; align-items: start; margin-bottom: 22px; padding: 18px 22px; border: 1px solid var(--warning); border-radius: 20px; background: var(--warn-bg); color: var(--warn-fg); box-shadow: var(--shadow-bento); }
-.secret-notice p { margin: 2px 0 10px; }
-.secret-notice code { display: block; padding: 10px 14px; border-radius: 12px; background: var(--surface-sunken); color: var(--text); user-select: all; font-family: var(--font-mono); border: 1px solid var(--line-soft); }
-.secret-actions { display: grid; justify-items: end; gap: 10px; }
+/* Settings: one panel per area, the create form on top of its list. */
+.segmented.tabs { align-self: flex-start; margin-bottom: 14px; }
+.segmented.tabs button { padding: 4px 16px; border-radius: 7px; color: var(--muted); font-size: 12px; font-weight: 600; }
+.segmented.tabs button:hover { color: var(--text); }
+.segmented.tabs button[aria-pressed="true"] { background: var(--btn-bg); color: var(--btn-text); box-shadow: 0 2px 8px var(--accent-glow); }
+
+/* The form sits inside the panel, so it drops its own card. */
+.panel .settings-form { display: grid; grid-template-columns: minmax(200px, 1.4fr) minmax(160px, 1fr) auto; gap: 12px; align-items: end; margin: 0; padding: 14px 16px 16px; border: 0; border-bottom: 1px solid var(--glass-divider); border-radius: 0; background: transparent; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; }
+.settings-form-title { grid-column: 1 / -1; margin: 0; color: var(--faint); font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+.settings-form label, .settings-form fieldset { display: grid; gap: 6px; min-width: 0; color: var(--muted); font-size: 11px; font-weight: 650; letter-spacing: .04em; }
+.settings-form label input { width: 100%; padding: 7px 12px; font-size: 13px; font-weight: 500; letter-spacing: 0; }
+.settings-form .settings-submit { display: grid; }
+.settings-form .settings-submit button { padding: 8px 18px; border: 1px solid var(--btn-border); border-radius: 8px; background: var(--btn-bg); color: var(--btn-text); font-size: 12.5px; font-weight: 650; white-space: nowrap; box-shadow: 0 4px 14px var(--accent-glow); }
+.settings-form .settings-submit button:hover:not(:disabled) { background: var(--btn-bg-hover); }
+
+/* Scopes are selectable pills; the checkbox stays in the DOM for keyboard and form use. */
+.settings-form fieldset { grid-column: 1 / -1; grid-template-columns: none; display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; border: 0; }
+.settings-form legend { flex-basis: 100%; margin: 0 0 2px; padding: 0; }
+.settings-form .check { position: relative; display: inline-flex; gap: 0; cursor: pointer; font-weight: 500; letter-spacing: 0; }
+.settings-form .check input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; padding: 0; border: 0; opacity: 0; cursor: pointer; }
+.settings-form .check span { display: inline-flex; align-items: baseline; gap: 8px; padding: 6px 14px; border: 1px solid var(--glass-field-edge); border-radius: 999px; background: var(--glass-field); color: var(--muted); font-size: 12px; transition: background .16s ease, border-color .16s ease; }
+.settings-form .check:hover span { border-color: color-mix(in srgb, var(--accent) 45%, var(--glass-field-edge)); }
+.settings-form .check b { color: var(--text); font-weight: 650; }
+.settings-form .check small { color: var(--faint); font-size: 11px; }
+.settings-form .check input:checked + span { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.settings-form .check input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* The webhook form has no scopes: its hint takes the second row. */
+.hook-form { grid-template-columns: minmax(180px, 1fr) minmax(240px, 1.6fr) auto; }
+.settings-hint { grid-column: 1 / -1; margin: 0; color: var(--faint); font-size: 12px; }
+.form-error { margin: 0; padding: 10px 16px; border-bottom: 1px solid var(--glass-divider); background: var(--danger-bg); color: var(--danger-fg); font-size: 12.5px; }
+
+/* Lists. */
+.scope-list { display: flex; flex-wrap: wrap; gap: 4px; }
+.table-actions, .inline-confirm { display: inline-flex; flex-wrap: wrap; gap: 6px; }
+.panel td code { color: var(--code); font-size: 12px; }
+
+/* A secret shown once: the strongest block on the page until it is dismissed. */
+.secret-notice { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 14px; align-items: start; margin-bottom: 14px; padding: 16px 20px; border: 1px solid color-mix(in srgb, var(--warning) 55%, var(--glass-edge)); border-radius: 16px; background: color-mix(in srgb, var(--warning) 10%, var(--glass)); color: var(--warn-fg); }
+.secret-notice > svg { margin-top: 2px; }
+.secret-notice strong { color: var(--text); font-size: 13.5px; }
+.secret-notice p { margin: 2px 0 10px; color: var(--muted); font-size: 12.5px; }
+.secret-notice code { display: block; padding: 10px 14px; border: 1px solid var(--glass-divider); border-radius: 10px; background: var(--glass-sunken); color: var(--text); font-family: var(--font-mono); font-size: 12.5px; user-select: all; overflow-wrap: anywhere; }
+.secret-actions { display: grid; justify-items: end; gap: 8px; }
+
+@media (max-width: 900px) {
+  .panel .settings-form, .hook-form { grid-template-columns: minmax(0, 1fr); }
+}
 @media (max-width: 620px) {
   .secret-notice { grid-template-columns: 1fr; }
   .secret-actions { justify-items: start; }
 }
+
+/* Access management: people, roles and the wide rows of their forms. */
+.settings-wide { grid-column: 1 / -1; }
+.project-form { grid-template-columns: minmax(160px, 1.2fr) minmax(140px, 1fr) minmax(140px, 1fr) auto; }
+.person { display: grid; gap: 1px; }
+.person b { font-weight: 650; }
+.person small { color: var(--faint); font-size: 11.5px; }
+.muted-note { color: var(--faint); font-size: 12px; }
+.settings-form select { width: 100%; padding: 7px 12px; font-size: 13px; font-weight: 500; }

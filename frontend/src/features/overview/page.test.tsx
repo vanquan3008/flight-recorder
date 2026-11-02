@@ -6,7 +6,7 @@ import { emptyPerformance } from "../performance/test-data";
 afterEach(() => { cleanup(); sessionStorage.clear(); window.location.hash = ""; vi.unstubAllGlobals(); });
 
 it("uses one selected window and labels the complete metric count accurately", async () => {
-  sessionStorage.setItem("tracepilot-api-key", "test-key");
+  localStorage.setItem("tracepilot-signed-in", "1");
   window.location.hash = "#/overview?range=1h&to=2026-10-01T01%3A00%3A00Z";
   const fetch = vi.fn().mockImplementation((input: string) => new Response(JSON.stringify(
     input.startsWith("/api/v1/telemetry/quality") ? { metric_points: 123 } : input.startsWith("/api/v1/performance") ? emptyPerformance : { data: [] },
@@ -25,6 +25,6 @@ it("uses one selected window and labels the complete metric count accurately", a
     expect(url.searchParams.get("from")).toBe("2026-10-01T00:00:00.000Z");
     expect(url.searchParams.get("to")).toBe("2026-10-01T01:00:00.000Z");
   }
-  fireEvent.change(screen.getByLabelText("Time range"), { target: { value: "24h" } });
+  fireEvent.click(screen.getByLabelText("Last 24 hours"));
   await waitFor(() => expect(window.location.hash).toContain("range=24h"));
 });

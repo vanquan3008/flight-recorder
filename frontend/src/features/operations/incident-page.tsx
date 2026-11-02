@@ -1,12 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { useParams } from "react-router-dom";
-import { BackLink, DetailLink } from "../../shared/navigation";
 import { useAuth } from "../../app/auth";
 import { api, pageItems, usePagedQuery } from "../../shared/api";
-import { PagedTable } from "../../shared/paged-table";
 import type { Incident, IncidentEvent, IncidentOccurrence, StatusChange } from "../../shared/types";
-import { Badge, ErrorState, Loading, PageHeader, Panel, formatTime } from "../../shared/ui";
+import { BackLink, Badge, DetailLink, ErrorState, Loading, PageHeader, PagedTable, Panel, formatTime } from "../../shared/ui";
 import { IncidentAnalysisPanels } from "./incident-analysis";
 
 const transitions: Record<string, string[]> = {
@@ -18,25 +16,25 @@ const transitions: Record<string, string[]> = {
 
 export function IncidentPage() {
   const { incidentID = "" } = useParams();
-  const { apiKey } = useAuth();
+  const { credential } = useAuth();
   const queryClient = useQueryClient();
   const path = `/api/v1/incidents/${incidentID}`;
   const incident = useQuery({
     queryKey: ["incident", incidentID],
-    queryFn: ({ signal }) => api<Incident>(path, apiKey, { signal }),
+    queryFn: ({ signal }) => api<Incident>(path, credential, { signal }),
   });
-  const occurrences = usePagedQuery<IncidentOccurrence>(["incident-occurrences", incidentID], `${path}/occurrences?limit=100`, apiKey);
-  const events = usePagedQuery<IncidentEvent>(["incident-events", incidentID], `${path}/events?limit=100`, apiKey);
-  const changes = usePagedQuery<StatusChange>(["incident-changes", incidentID], `${path}/status-changes?limit=100`, apiKey);
+  const occurrences = usePagedQuery<IncidentOccurrence>(["incident-occurrences", incidentID], `${path}/occurrences?limit=100`, credential);
+  const events = usePagedQuery<IncidentEvent>(["incident-events", incidentID], `${path}/events?limit=100`, credential);
+  const changes = usePagedQuery<StatusChange>(["incident-changes", incidentID], `${path}/status-changes?limit=100`, credential);
   const mutation = useMutation({
-    mutationFn: (status: string) => api<Incident>(path, apiKey, { method: "PATCH", body: JSON.stringify({ status }) }),
+    mutationFn: (status: string) => api<Incident>(path, credential, { method: "PATCH", body: JSON.stringify({ status }) }),
     onSuccess: async () => {
       await Promise.all([
         ["incident", incidentID], ["incident-changes", incidentID], ["incidents"], ["overview"],
       ].map((queryKey) => queryClient.invalidateQueries({ queryKey })));
     },
   });
-  if (incident.isPending) return <Loading />;
+  if (incident.isPending) return <Loading page />;
   if (incident.isError) return <ErrorState error={incident.error} retry={() => void incident.refetch()} />;
   const record = incident.data;
   const occurrenceItems = pageItems(occurrences.data?.pages);
@@ -80,7 +78,7 @@ export function IncidentPage() {
       <PagedTable query={changes} headers={["Changed", "From", "To", "Actor"]}
         empty="No status changes have been recorded."
         rows={changeItems.map((item) => [formatTime(item.changed_at), <Badge value={item.previous_status} />,
-          <Badge value={item.status} />, item.actor_key_id || "system"])} />
+          <Badge value={item.status} />, item.actor_user_id ? `user ${item.actor_user_id.slice(0, 8)}` : "system"])} />
     </Panel>
   </>;
 }
