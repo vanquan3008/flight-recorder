@@ -34,11 +34,11 @@ func TestTrustedProxiesAreReadFromTheEnvironment(t *testing.T) {
 func TestFromTrustedProxyJudgesOnlyTheConnectionPeer(t *testing.T) {
 	trusted := []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}
 	for remoteAddr, want := range map[string]bool{
-		"10.1.2.3:4567":      true,
+		"10.1.2.3:4567":       true,
 		"[::ffff:10.1.2.3]:1": true,
-		"203.0.113.9:4567":   false,
-		"not-an-address":     false,
-		"":                   false,
+		"203.0.113.9:4567":    false,
+		"not-an-address":      false,
+		"":                    false,
 	} {
 		if got := FromTrustedProxy(remoteAddr, trusted); got != want {
 			t.Errorf("FromTrustedProxy(%q) = %t, want %t", remoteAddr, got, want)

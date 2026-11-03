@@ -50,6 +50,9 @@ func (configuration Config) validateRuntime() error {
 	if configuration.Auth.JWTSecret != "" && len(configuration.Auth.JWTSecret) < 32 {
 		return errors.New("auth.jwt_secret must contain at least 32 characters")
 	}
+	if configuration.Auth.IngestJWTSecret != "" && len(configuration.Auth.IngestJWTSecret) < 32 {
+		return errors.New("auth.ingest_jwt_secret must contain at least 32 characters")
+	}
 	if (configuration.TLS.CertificateFile == "") != (configuration.TLS.PrivateKeyFile == "") {
 		return errors.New("tls.certificate_file and tls.private_key_file must be set together")
 	}
