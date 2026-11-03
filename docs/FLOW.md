@@ -27,8 +27,9 @@ Khởi động theo thứ tự, bước nào lỗi thì thoát với mã 1:
    chạy `tracepilot migrate up` riêng.
 4. Mở pool, tạo partition theo ngày, tạo project/environment mặc định.
 5. Dựng replay (nếu bật), metrics, hai pipeline (events, metrics), bộ thu OTLP, API.
-6. Chạy song song: API, OTLP, detection, bảo trì partition, webhook (nếu bật), retention
-   (nếu có max_age). Một thành phần lỗi hoặc tự dừng thì cả tiến trình dừng.
+6. Chạy song song: API, OTLP (thành phần cốt lõi; lỗi hoặc dừng thì tiến trình dừng),
+   cùng detection, bảo trì partition, webhook (nếu bật), retention (nếu có max_age)
+   được giám sát phục hồi tự động (restart with backoff) để đảm bảo tính sẵn sàng cao.
 
 Tắt (SIGINT/SIGTERM hoặc một thành phần lỗi): listener ngừng nhận và chờ request, rồi pipeline
 events và pipeline metrics drain lần lượt trong `shutdown_timeout` (15s). Đặt grace của container
@@ -60,20 +61,23 @@ Router kiểm theo **scope** mà bảng route khai báo; handler không tự ki�
 2. Đọc tài khoản từ DB: không có, bị khóa, hoặc token cấp trước `tokens_valid_after` → 401.
 3. Đang dùng mật khẩu tạm mà không phải route cho phép → 403 `PASSWORD_CHANGE_REQUIRED`.
 4. Scope `session` (mọi người đã đăng nhập) → xong. Scope `platform` → cần super admin.
-5. Route theo project: lấy project từ path hoặc `X-Project-ID` (ID hoặc slug). Project không có và
-   project không được phép đều trả cùng 403 để không dò được tên.
-6. Vai trò: super admin = owner ở mọi project; người khác lấy từ `project_members`.
-   `user` → `read, write`; `owner` → thêm `replay, admin`. Thiếu scope → 403.
-7. Resolve environment (`X-Environment`, mặc định là cái đầu tiên); sai → 400.
-8. Xin một trong 4 slot truy vấn (chờ 250 ms, hết → 503), chạy dưới deadline 20 s (quá → 504).
+5. Route theo project: lấy project từ path hoặc `X-Project-ID` (ID hoặc slug, cache bộ nhớ 30s).
+   Project không có và project không được phép đều trả cùng 403 để không dò được tên.
+6. Vai trò: super admin = owner ở mọi project; người khác lấy từ `project_members` (cache bộ nhớ 30s,
+   xóa cache khi đổi thành viên). `user` → `read, write`; `owner` → thêm `replay, admin`. Thiếu scope → 403.
+7. Resolve environment (`X-Environment`, mặc định là cái đầu tiên, cache 30s); sai → 400.
+8. Xin slot truy vấn (chờ 500 ms, hết → 503), chạy dưới deadline 20 s (quá → 504). Các route xác thực
+   công khai (`/auth/*`) có ngân sách slot riêng (16 slot) để không bao giờ bị nghẽn bởi truy vấn telemetry.
+   Thời gian chờ và số slot active được giám sát bằng Prometheus metrics (`tracepilot_concurrency_gate_*`),
+   kèm hiệu năng bộ đệm xác thực (`tracepilot_auth_cache_requests_total`).
 
 ## 5. Ingest OTLP [5]
 
 1. Request đến HTTP hoặc gRPC; lấy `Authorization: Bearer <ingest token>` và `X-Environment` (gRPC:
    metadata `x-environment`).
 2. Kiểm sổ chặn: client sai token quá `AUTH_FAILURE_LIMIT` lần/cửa sổ → 429, không truy vấn DB.
-3. Xác thực: chữ ký, issuer/audience, loại `ingest`, hạn; sau đó tra `ingest_tokens` (chưa thu hồi,
-   chưa hết hạn, đúng project). Token sai → 401; DB lỗi → 503 để exporter retry.
+3. Xác thực: chữ ký, issuer/audience, loại `ingest`, hạn; sau đó tra `ingest_tokens` qua bộ đệm
+   bộ nhớ (cache 30s, thu hồi xóa tức thì). Token sai → 401; DB lỗi → 503 để exporter retry.
 4. Phân giải scope (project + environment) qua `scopeCatalog` (cache 30 s). Environment lạ → từ chối.
 5. Lấy slot xử lý (hết slot → 503), giải mã (giới hạn cả body nén và giải nén), chuẩn hóa, che key
    nhạy cảm và pattern secret trong văn bản tự do. Record sai → đếm `rejected`, vẫn xử lý phần còn lại.
@@ -95,16 +99,18 @@ Router kiểm theo **scope** mà bảng route khai báo; handler không tự ki�
 
 ## 7. Phát hiện bất thường và RCA [7]
 
-Mỗi phút, với từng cặp project/environment: so cửa sổ 5 phút gần nhất với baseline 30 phút trước đó.
-SQL lấy tín hiệu, policy thuần ở domain quyết định lệch (latency cần ≥ 10 call ở cả hai cửa sổ; throughput
-cần baseline ≥ 30 call). Có lệch → tạo/cập nhật incident kèm evidence. Khi xem incident, RCA lấy evidence
-và quan hệ phụ thuộc rồi xếp hạng giả thuyết theo độ tin cậy. Đây là giả thuyết có bằng chứng, không phải kết luận.
+Mỗi phút, với từng cặp project/environment: worker pool chạy song song có giới hạn (tối đa 4 goroutines)
+so cửa sổ 5 phút gần nhất với baseline 30 phút trước đó. SQL lấy tín hiệu, policy thuần ở domain quyết định
+lệch (latency cần ≥ 10 call ở cả hai cửa sổ; throughput cần baseline ≥ 30 call). Có lệch → tạo/cập nhật
+incident kèm evidence. Khi xem incident, RCA lấy evidence và quan hệ phụ thuộc rồi xếp hạng giả thuyết
+theo độ tin cậy. Đây là giả thuyết có bằng chứng, không phải kết luận.
 
 ## 8. Ingest token [8]
 
 Owner tạo token (tên duy nhất trong project, mặc định hết hạn sau 1 năm, tối đa 3 năm). JWT chỉ hiện **một lần**;
-DB chỉ lưu dòng metadata. Dùng token: bộ thu tra dòng đó mỗi request nên **thu hồi có hiệu lực ngay**. Đổi
-`JWT_SECRET` thu hồi mọi token và phiên.
+DB chỉ lưu dòng metadata. Token được ký bằng khóa riêng biệt `INGEST_JWT_SECRET` (hoặc fallback `JWT_SECRET` nếu chưa cấu hình).
+Dùng token: bộ thu tra dòng đó qua cache bộ nhớ (30s); khi chủ project thu hồi token qua API, cache xóa ngay lập tức
+nên **thu hồi có hiệu lực ngay**. Tách riêng khóa ký giúp xoay khóa tài khoản người dùng mà không gián đoạn OTLP ingestion của máy móc.
 
 ## 9. Webhook và outbox [9]
 
@@ -123,7 +129,6 @@ mở và delivery đang xử lý không bao giờ bị xóa.
 
 - Rate limit tính theo từng tiến trình; nhiều replica thì đặt thêm ở reverse proxy.
 - Ngân sách byte của queue là ước lượng, không phải giới hạn RSS (gRPC giải mã trước khi vào hàng đợi).
-- Mỗi request OTLP tốn một truy vấn kiểm ingest token.
 - Chưa có SSO/MFA, đặt lại mật khẩu qua email, xóa project/environment.
 - Chưa đo tải/SLO; test tích hợp PostgreSQL cần database dùng một lần (`TRACEPILOT_INTEGRATION_TEST=1`).
 - DB tạo bằng lịch sử migration cũ (version 1–5) không nâng cấp tại chỗ; version 2 cũ **trùng số** với

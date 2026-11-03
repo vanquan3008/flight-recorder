@@ -177,6 +177,7 @@ Chỉ có **một biến bắt buộc** khi chạy thử là `TRACEPILOT_DATABAS
 | :--- | :--- | :--- |
 | `TRACEPILOT_DATABASE_URL` | *(bắt buộc)* | Chuỗi kết nối PostgreSQL của dịch vụ ngoài, ví dụ `postgres://tracepilot:secret@db.internal:5432/tracepilot?sslmode=require`. |
 | `TRACEPILOT_AUTH_JWT_SECRET` | *(trống)* | Khóa ký JWT (phiên đăng nhập và ingest token), tối thiểu 32 ký tự. Bắt buộc khi `PRODUCTION=true`, và không được chứa dấu hiệu khóa mẫu. Để trống thì sinh ngẫu nhiên mỗi lần chạy (đăng nhập và token cũ mất hiệu lực khi khởi động lại, các replica không nhận token của nhau). Đổi khóa là thu hồi mọi phiên và token. |
+| `TRACEPILOT_AUTH_INGEST_JWT_SECRET` | *(trống)* | Khóa ký JWT riêng cho ingest token OTLP (tối thiểu 32 ký tự). Để trống sẽ tự động dùng chung với `TRACEPILOT_AUTH_JWT_SECRET`. Tách riêng giúp xoay khóa đăng nhập của con người mà không làm gián đoạn ingestion của máy móc. |
 | `TRACEPILOT_AUTH_ALLOW_REGISTRATION` | `true` | Cho phép đăng ký tài khoản. Tài khoản đầu tiên luôn được phép. |
 | `TRACEPILOT_PRODUCTION` | `false` | Bật chế độ chạy thật: bắt buộc TLS, `sslmode` an toàn và từ chối secret mẫu. |
 | `TRACEPILOT_LOG_LEVEL` | `info` | `debug`, `info`, `warn` hoặc `error`. |
@@ -198,7 +199,7 @@ Chỉ có **một biến bắt buộc** khi chạy thử là `TRACEPILOT_DATABAS
 
 | Biến | Mặc định | Ý nghĩa |
 | :--- | :--- | :--- |
-| `TRACEPILOT_HTTP_MAX_CONCURRENT_QUERIES` | `4` | Số request quản trị chạy đồng thời; phần vượt trả 503. |
+| `TRACEPILOT_HTTP_MAX_CONCURRENT_QUERIES` | `4` | Số request telemetry chạy đồng thời; phần vượt trả 503 (route auth có ngân sách riêng). |
 | `TRACEPILOT_HTTP_REQUEST_TIMEOUT` | `20s` | Thời gian tối đa mỗi request; quá hạn trả 504. |
 | `TRACEPILOT_HTTP_READ_HEADER_TIMEOUT` / `READ_TIMEOUT` / `WRITE_TIMEOUT` / `IDLE_TIMEOUT` | `5s` / `15s` / `30s` / `1m` | Timeout của HTTP server. |
 | `TRACEPILOT_HTTP_MAX_HEADER_BYTES` | `1048576` | Kích thước header tối đa. |
