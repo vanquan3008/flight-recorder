@@ -28,17 +28,15 @@ SET status = CASE
     updated_at = now()
 WHERE project_id = @project_id AND id = @id AND webhook_id = @webhook_id;
 
--- Requests are capped at five minutes; a lease older than six minutes belongs
--- to a crashed process and goes back to pending.
--- name: ResetStaleDeliveryLeases :exec
-UPDATE webhook_deliveries
-SET status = 'pending', next_attempt_at = now()
-WHERE status = 'sending' AND updated_at < now() - interval '6 minutes';
-
+-- Requests are capped at five minutes, so a lease older than six belongs to a
+-- crashed process and the delivery is claimable again.
 -- name: ClaimDueDeliveries :many
 WITH claim AS (
     SELECT d.id FROM webhook_deliveries d
-    WHERE d.status = 'pending' AND d.next_attempt_at <= now()
+    WHERE (
+            (d.status = 'pending' AND d.next_attempt_at <= now())
+         OR (d.status = 'sending' AND d.updated_at < now() - interval '6 minutes')
+          )
       AND EXISTS (
           SELECT 1 FROM webhooks w
           WHERE w.project_id = d.project_id AND w.id = d.webhook_id AND w.enabled = true
@@ -49,10 +47,9 @@ WITH claim AS (
 )
 UPDATE webhook_deliveries d
 SET status = 'sending', updated_at = now()
-FROM claim c
-JOIN webhook_deliveries claimed ON claimed.id = c.id
-JOIN webhooks w ON w.project_id = claimed.project_id AND w.id = claimed.webhook_id
-WHERE d.id = c.id AND w.enabled = true
+FROM claim c, webhooks w
+WHERE d.id = c.id
+  AND w.project_id = d.project_id AND w.id = d.webhook_id AND w.enabled = true
 RETURNING d.id, d.webhook_id, d.event_type, d.status, d.attempt, d.max_attempts, d.http_status,
           COALESCE(d.last_error, '')::text AS last_error, d.next_attempt_at, d.created_at,
           d.project_id, w.url, w.secret, d.payload;

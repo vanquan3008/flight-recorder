@@ -51,3 +51,31 @@ func TestInvalidEventIsIsolatedFromItsBatch(t *testing.T) {
 		t.Fatalf("store called %d times; invalid content was retried", storeCalls)
 	}
 }
+
+func TestEstimateEventBytesProducesProportionalEstimates(t *testing.T) {
+	small := telemetry.Event{
+		ID:          "small-id",
+		ServiceName: "frontend",
+		Operation:   "GET /home",
+	}
+	large := telemetry.Event{
+		ID:           "large-id",
+		ServiceName:  "payment-service",
+		Operation:    "POST /checkout",
+		ErrorMessage: string(make([]byte, 4096)),
+		Attributes: map[string]any{
+			"http.headers": "Bearer token...",
+			"retry_count":  3,
+		},
+	}
+
+	smallSize := estimateEventBytes(small)
+	largeSize := estimateEventBytes(large)
+
+	if smallSize < 256 {
+		t.Fatalf("small size estimate %d should include envelope base", smallSize)
+	}
+	if largeSize <= smallSize+4096 {
+		t.Fatalf("large size estimate %d should account for 4KB payload", largeSize)
+	}
+}
