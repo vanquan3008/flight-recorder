@@ -7,8 +7,9 @@ export function App() {
   const [queryClient] = useState(() => new QueryClient({
     defaultOptions: {
       queries: {
-        // Client errors and 501 (feature disabled) are permanent; retry only transient server/network failures once.
-        retry: (count, error) => !(error instanceof Error && "status" in error && ((error as { status: number }).status < 500 || (error as { status: number }).status === 501)) && count < 1,
+        // Client errors and 501 (feature disabled) are permanent; retry transient server/network failures with backoff.
+        retry: (count, error) => !(error instanceof Error && "status" in error && ((error as { status: number }).status < 500 || (error as { status: number }).status === 501)) && count < 2,
+        retryDelay: (attemptIndex) => Math.min(500 * (2 ** attemptIndex), 3000),
         staleTime: 15_000,
       },
     },
