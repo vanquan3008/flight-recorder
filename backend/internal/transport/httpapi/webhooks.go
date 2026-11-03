@@ -10,6 +10,16 @@ import (
 	notificationdomain "github.com/vanquan3008/tracepilot/internal/domain/notification"
 )
 
+var webhookRoutes = []apiRouteDefinition{
+	{path: "/api/v1/webhooks", method: http.MethodGet, scope: "admin", tags: []string{"webhooks"}, operationID: "listWebhooks", handler: (*Server).listWebhooks},
+	{path: "/api/v1/webhooks", method: http.MethodPost, scope: "admin", tags: []string{"webhooks"}, operationID: "createWebhook", requestBody: true, handler: (*Server).createWebhook},
+	{path: "/api/v1/webhooks/{webhookID}", method: http.MethodGet, scope: "admin", tags: []string{"webhooks"}, operationID: "getWebhook", handler: (*Server).getWebhook},
+	{path: "/api/v1/webhooks/{webhookID}", method: http.MethodPut, scope: "admin", tags: []string{"webhooks"}, operationID: "updateWebhook", requestBody: true, handler: (*Server).updateWebhook},
+	{path: "/api/v1/webhooks/{webhookID}", method: http.MethodDelete, scope: "admin", tags: []string{"webhooks"}, operationID: "deleteWebhook", handler: (*Server).deleteWebhook},
+	{path: "/api/v1/webhooks/{webhookID}/rotate", method: http.MethodPost, scope: "admin", tags: []string{"webhooks"}, operationID: "rotateWebhookSecret", successStatus: http.StatusOK, handler: (*Server).rotateWebhookSecret},
+	{path: "/api/v1/webhooks/{webhookID}/deliveries", method: http.MethodGet, scope: "admin", tags: []string{"webhooks"}, operationID: "listWebhookDeliveries", handler: (*Server).listWebhookDeliveries},
+}
+
 type webhookRequest struct {
 	Name    string   `json:"name"`
 	URL     string   `json:"url"`

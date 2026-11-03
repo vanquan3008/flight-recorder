@@ -54,19 +54,36 @@ func (limiter *requestRateLimiter) allow(key string, limit int, now time.Time) (
 }
 
 func (limiter *requestRateLimiter) evictOldest(now time.Time) {
-	oldestKey := ""
-	oldestAt := now
+	// 1. Purge all expired clients.
 	for key, bucket := range limiter.clients {
 		if now.Sub(bucket.startedAt) >= limiter.window {
 			delete(limiter.clients, key)
-			continue
-		}
-		if oldestKey == "" || bucket.startedAt.Before(oldestAt) {
-			oldestKey, oldestAt = key, bucket.startedAt
 		}
 	}
-	if oldestKey != "" {
-		delete(limiter.clients, oldestKey)
+	// 2. If still full (active client flood), batch-evict oldest quarter so subsequent
+	// requests do not repeatedly scan the map on every arrival.
+	if len(limiter.clients) >= maxRateLimitClients {
+		threshold := now.Add(-limiter.window / 2)
+		evicted := 0
+		for key, bucket := range limiter.clients {
+			if bucket.startedAt.Before(threshold) {
+				delete(limiter.clients, key)
+				evicted++
+				if evicted >= maxRateLimitClients/4 {
+					break
+				}
+			}
+		}
+		// Fallback: if all entries are within window/2, evict oldest quarter to relieve lock.
+		if len(limiter.clients) >= maxRateLimitClients {
+			for key := range limiter.clients {
+				delete(limiter.clients, key)
+				evicted++
+				if evicted >= maxRateLimitClients/4 {
+					break
+				}
+			}
+		}
 	}
 }
 

@@ -123,3 +123,32 @@ func (registry *Registry) SetDatabaseReady(ready bool) {
 	}
 	registry.databaseReady.Set(0)
 }
+
+func (registry *Registry) ObserveAuthCache(kind, result string) {
+	if registry == nil || registry.authCacheRequests == nil {
+		return
+	}
+	registry.authCacheRequests.WithLabelValues(kind, result).Inc()
+}
+
+func (registry *Registry) ObserveGateWait(gate string, duration time.Duration) {
+	if registry == nil || registry.gateWaitDuration == nil {
+		return
+	}
+	registry.gateWaitDuration.WithLabelValues(gate).Observe(duration.Seconds())
+}
+
+func (registry *Registry) IncGateActive(gate string) {
+	if registry == nil || registry.gateActiveSlots == nil {
+		return
+	}
+	registry.gateActiveSlots.WithLabelValues(gate).Inc()
+}
+
+func (registry *Registry) DecGateActive(gate string) {
+	if registry == nil || registry.gateActiveSlots == nil {
+		return
+	}
+	registry.gateActiveSlots.WithLabelValues(gate).Dec()
+}
+

@@ -9,19 +9,11 @@ import (
 	"time"
 
 	"github.com/vanquan3008/tracepilot/internal/auth"
-	"github.com/vanquan3008/tracepilot/internal/config"
 )
 
 const (
 	projectHeader     = "X-Project-ID"
 	environmentHeader = "X-Environment"
-	// refreshCookieName holds the opaque refresh token. It is only ever sent to the auth routes.
-	refreshCookieName = "tp_refresh"
-	// refreshHeader must accompany a request that uses the refresh cookie. A page on another site
-	// cannot add a custom header to a cross-site request without a CORS preflight this server refuses,
-	// so the cookie alone cannot be used to act on a signed-in person's behalf.
-	refreshHeader = "X-TracePilot-Refresh"
-	refreshPath   = "/api/v1/auth"
 )
 
 func bearerToken(request *http.Request) string {
@@ -104,22 +96,51 @@ func (server *Server) principalFor(responseWriter http.ResponseWriter, request *
 		writeAPIError(responseWriter, http.StatusBadRequest, "PROJECT_REQUIRED", "choose a project with the "+projectHeader+" header")
 		return auth.Principal{}, false
 	}
-	project, projectError := server.backend.GetProject(request.Context(), reference)
-	if errors.Is(projectError, auth.ErrProjectNotFound) {
-		// The same answer as for a project the caller cannot open, so names cannot be probed.
-		writeAPIError(responseWriter, http.StatusForbidden, "FORBIDDEN", "you do not have access to this project")
-		return auth.Principal{}, false
+	now := time.Now()
+	var (
+		project       auth.Project
+		projectError  error
+		cachedProject bool
+	)
+	if server.identity != nil {
+		project, cachedProject = server.identity.getProject(reference, now)
 	}
-	if projectError != nil {
-		server.writeInternalError(responseWriter, "get project", projectError)
-		return auth.Principal{}, false
+	if cachedProject {
+		server.metrics.ObserveAuthCache("project", "hit")
+	} else {
+		server.metrics.ObserveAuthCache("project", "miss")
+		project, projectError = server.backend.GetProject(request.Context(), reference)
+		if errors.Is(projectError, auth.ErrProjectNotFound) {
+			// The same answer as for a project the caller cannot open, so names cannot be probed.
+			writeAPIError(responseWriter, http.StatusForbidden, "FORBIDDEN", "you do not have access to this project")
+			return auth.Principal{}, false
+		}
+		if projectError != nil {
+			server.writeInternalError(responseWriter, "get project", projectError)
+			return auth.Principal{}, false
+		}
+		if server.identity != nil {
+			server.identity.putProject(reference, project, now)
+		}
 	}
 	role := auth.RoleOwner
 	if !user.PlatformAdmin {
 		var roleError error
-		if role, roleError = server.backend.MemberRole(request.Context(), project.ID, user.ID); roleError != nil {
-			server.writeInternalError(responseWriter, "get member role", roleError)
-			return auth.Principal{}, false
+		cachedRole := false
+		if server.identity != nil {
+			role, cachedRole = server.identity.getRole(project.ID, user.ID, now)
+		}
+		if cachedRole {
+			server.metrics.ObserveAuthCache("role", "hit")
+		} else {
+			server.metrics.ObserveAuthCache("role", "miss")
+			if role, roleError = server.backend.MemberRole(request.Context(), project.ID, user.ID); roleError != nil {
+				server.writeInternalError(responseWriter, "get member role", roleError)
+				return auth.Principal{}, false
+			}
+			if server.identity != nil {
+				server.identity.putRole(project.ID, user.ID, role, now)
+			}
 		}
 	}
 	principal.ProjectID, principal.Role = project.ID, role
@@ -129,39 +150,6 @@ func (server *Server) principalFor(responseWriter http.ResponseWriter, request *
 		return auth.Principal{}, false
 	}
 	return principal, true
-}
-
-// refreshToken returns the caller's refresh cookie, or "" when the request does not prove it came
-// from the console (see refreshHeader).
-func refreshToken(request *http.Request) string {
-	if request.Header.Get(refreshHeader) == "" {
-		return ""
-	}
-	if cookie, cookieError := request.Cookie(refreshCookieName); cookieError == nil {
-		return cookie.Value
-	}
-	return ""
-}
-
-func (server *Server) cookieSecure(request *http.Request) bool {
-	if server.production || request.TLS != nil || server.certificateFile != "" {
-		return true
-	}
-	return strings.EqualFold(request.Header.Get("X-Forwarded-Proto"), "https") && config.FromTrustedProxy(request.RemoteAddr, server.trustedProxies)
-}
-
-func (server *Server) setRefreshCookie(responseWriter http.ResponseWriter, request *http.Request, token string) {
-	http.SetCookie(responseWriter, &http.Cookie{
-		Name: refreshCookieName, Value: token, Path: refreshPath, MaxAge: int((30 * 24 * time.Hour).Seconds()),
-		HttpOnly: true, Secure: server.cookieSecure(request), SameSite: http.SameSiteStrictMode,
-	})
-}
-
-func (server *Server) clearRefreshCookie(responseWriter http.ResponseWriter, request *http.Request) {
-	http.SetCookie(responseWriter, &http.Cookie{
-		Name: refreshCookieName, Value: "", Path: refreshPath, MaxAge: -1,
-		HttpOnly: true, Secure: server.cookieSecure(request), SameSite: http.SameSiteStrictMode,
-	})
 }
 
 var errEnvironmentNotFound = errors.New("environment not found")

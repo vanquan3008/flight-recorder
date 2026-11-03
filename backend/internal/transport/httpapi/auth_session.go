@@ -7,7 +7,28 @@ import (
 	"time"
 
 	"github.com/vanquan3008/tracepilot/internal/auth"
+	"github.com/vanquan3008/tracepilot/internal/config"
 )
+
+const (
+	// refreshCookieName holds the opaque refresh token. It is only ever sent to the auth routes.
+	refreshCookieName = "tp_refresh"
+	// refreshHeader must accompany a request that uses the refresh cookie. A page on another site
+	// cannot add a custom header to a cross-site request without a CORS preflight this server refuses,
+	// so the cookie alone cannot be used to act on a signed-in person's behalf.
+	refreshHeader = "X-TracePilot-Refresh"
+	refreshPath   = "/api/v1/auth"
+)
+
+var authRoutes = []apiRouteDefinition{
+	{path: "/api/v1/auth/status", method: http.MethodGet, scope: "public", public: true, tags: []string{"auth"}, operationID: "getAuthStatus", handler: (*Server).authStatus},
+	{path: "/api/v1/auth/register", method: http.MethodPost, scope: "public", public: true, tags: []string{"auth"}, operationID: "register", successStatus: http.StatusCreated, requestBody: true, handler: (*Server).authRegister},
+	{path: "/api/v1/auth/refresh", method: http.MethodPost, scope: "public", public: true, tags: []string{"auth"}, operationID: "refreshSession", successStatus: http.StatusOK, handler: (*Server).authRefresh},
+	{path: "/api/v1/auth/login", method: http.MethodPost, scope: "public", public: true, tags: []string{"auth"}, operationID: "login", successStatus: http.StatusOK, requestBody: true, handler: (*Server).authLogin},
+	{path: "/api/v1/auth/logout", method: http.MethodPost, scope: "public", public: true, tags: []string{"auth"}, operationID: "logout", successStatus: http.StatusNoContent, handler: (*Server).authLogout},
+	{path: "/api/v1/auth/me", method: http.MethodGet, scope: auth.ScopeSession, tags: []string{"auth"}, operationID: "getCurrentUser", handler: (*Server).authMe},
+	{path: "/api/v1/auth/password", method: http.MethodPost, scope: auth.ScopeSession, tags: []string{"auth"}, operationID: "changePassword", successStatus: http.StatusOK, requestBody: true, handler: (*Server).authChangePassword},
+}
 
 func (server *Server) authStatus(responseWriter http.ResponseWriter, request *http.Request, _ auth.Principal) {
 	hasUsers, checkError := server.backend.HasUsers(request.Context())
@@ -44,6 +65,39 @@ func (server *Server) writeSession(responseWriter http.ResponseWriter, request *
 	}
 	server.setRefreshCookie(responseWriter, request, refresh)
 	writeJSONValue(responseWriter, status, sessionView{User: user, Memberships: memberships, AccessToken: token, ExpiresAt: &expires})
+}
+
+// refreshToken returns the caller's refresh cookie, or "" when the request does not prove it came
+// from the console (see refreshHeader).
+func refreshToken(request *http.Request) string {
+	if request.Header.Get(refreshHeader) == "" {
+		return ""
+	}
+	if cookie, cookieError := request.Cookie(refreshCookieName); cookieError == nil {
+		return cookie.Value
+	}
+	return ""
+}
+
+func (server *Server) cookieSecure(request *http.Request) bool {
+	if server.production || request.TLS != nil || server.certificateFile != "" {
+		return true
+	}
+	return strings.EqualFold(request.Header.Get("X-Forwarded-Proto"), "https") && config.FromTrustedProxy(request.RemoteAddr, server.trustedProxies)
+}
+
+func (server *Server) setRefreshCookie(responseWriter http.ResponseWriter, request *http.Request, token string) {
+	http.SetCookie(responseWriter, &http.Cookie{
+		Name: refreshCookieName, Value: token, Path: refreshPath, MaxAge: int((30 * 24 * time.Hour).Seconds()),
+		HttpOnly: true, Secure: server.cookieSecure(request), SameSite: http.SameSiteStrictMode,
+	})
+}
+
+func (server *Server) clearRefreshCookie(responseWriter http.ResponseWriter, request *http.Request) {
+	http.SetCookie(responseWriter, &http.Cookie{
+		Name: refreshCookieName, Value: "", Path: refreshPath, MaxAge: -1,
+		HttpOnly: true, Secure: server.cookieSecure(request), SameSite: http.SameSiteStrictMode,
+	})
 }
 
 // authRegister creates an account the person chooses themselves and signs them in. The first account on
@@ -178,6 +232,9 @@ func (server *Server) authChangePassword(responseWriter http.ResponseWriter, req
 	keep := refreshToken(request)
 	if setError := server.backend.SetPassword(request.Context(), principal.UserID, payload.NewPassword, false, keep, principal.Actor()); server.writeIdentityError(responseWriter, "set password", setError) {
 		return
+	}
+	if server.identity != nil {
+		server.identity.forgetUser(principal.UserID)
 	}
 	user, userError := server.backend.GetUser(request.Context(), principal.UserID)
 	if server.writeIdentityError(responseWriter, "get user", userError) {

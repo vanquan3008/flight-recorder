@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"sync"
 	"time"
 
 	"github.com/vanquan3008/tracepilot/internal/application/detection"
@@ -34,8 +35,10 @@ func detectionServiceFor(database *postgres.Database, scope config.IngestionConf
 		bind(database.DetectServiceEvidence), bind(database.DetectDependencyEvidence), bind(database.DetectMetricEvidence))
 }
 
-// buildObservabilityDetectionFunc runs detection in every project environment. One that fails does
-// not stop the rest: its error is reported after the others have been evaluated.
+const maxConcurrentDetection = 4
+
+// buildObservabilityDetectionFunc runs detection in project environments with bounded concurrency.
+// One that fails does not stop the rest: its error is reported after the others have been evaluated.
 func buildObservabilityDetectionFunc(scopes *scopeCatalog, database *postgres.Database, selfMetrics *metrics.Registry) func(context.Context) (int, error) {
 	return func(ctx context.Context) (int, error) {
 		startedAt := time.Now()
@@ -44,12 +47,43 @@ func buildObservabilityDetectionFunc(scopes *scopeCatalog, database *postgres.Da
 			selfMetrics.ObserveIncidentDetection(time.Since(startedAt), 0, true)
 			return 0, listError
 		}
-		total, runError := 0, error(nil)
-		for _, scope := range all {
-			count, evaluateError := detectionServiceFor(database, scope).Run(ctx, time.Now())
-			total += count
-			runError = errors.Join(runError, evaluateError)
+		if len(all) == 0 {
+			selfMetrics.ObserveIncidentDetection(time.Since(startedAt), 0, false)
+			return 0, nil
 		}
+		workerCount := min(len(all), maxConcurrentDetection)
+		jobs := make(chan config.IngestionConfig, len(all))
+		for _, scope := range all {
+			jobs <- scope
+		}
+		close(jobs)
+
+		var (
+			mu       sync.Mutex
+			total    int
+			runError error
+			wg       sync.WaitGroup
+			now      = time.Now()
+		)
+		for range workerCount {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for scope := range jobs {
+					if ctx.Err() != nil {
+						return
+					}
+					scopeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+					count, evaluateError := detectionServiceFor(database, scope).Run(scopeCtx, now)
+					cancel()
+					mu.Lock()
+					total += count
+					runError = errors.Join(runError, evaluateError)
+					mu.Unlock()
+				}
+			}()
+		}
+		wg.Wait()
 		selfMetrics.ObserveIncidentDetection(time.Since(startedAt), total, runError != nil)
 		return total, runError
 	}

@@ -18,6 +18,11 @@ import (
 	"github.com/vanquan3008/tracepilot/internal/observability/metrics"
 )
 
+// TokenInvalidator is an optional callback to immediately invalidate revoked ingest tokens in cache.
+type TokenInvalidator interface {
+	Invalidate(tokenID string)
+}
+
 type Server struct {
 	httpServer              *http.Server
 	logger                  *slog.Logger
@@ -28,10 +33,12 @@ type Server struct {
 	environmentID           string
 	defaultProjectID        string
 	jwtSecret               []byte
+	ingestJWTSecret         []byte
 	metricsToken            string
 	allowRegistration       bool
 	production              bool
 	environments            *environmentCache
+	identity                *identityCache
 	maxBodyBytes            int64
 	ready                   atomic.Bool
 	shutdownTimeout         time.Duration
@@ -42,6 +49,8 @@ type Server struct {
 	allowedOrigins          map[string]struct{}
 	trustedProxies          []netip.Prefix
 	queryGate               chan struct{}
+	authGate                chan struct{}
+	tokenInvalidator        TokenInvalidator
 	requestTimeout          time.Duration
 	corsAllowedMethods      string
 	metricsRequireAuth      bool
@@ -64,10 +73,12 @@ func New(configuration config.Config, logger *slog.Logger, readinessCheck func(c
 		environmentID:           configuration.Ingestion.EnvironmentID,
 		defaultProjectID:        configuration.Ingestion.ProjectID,
 		jwtSecret:               []byte(configuration.Auth.JWTSecret),
+		ingestJWTSecret:         []byte(configuration.Auth.EffectiveIngestJWTSecret()),
 		metricsToken:            configuration.HTTP.MetricsToken,
 		allowRegistration:       configuration.Auth.AllowRegistration,
 		production:              configuration.Production,
 		environments:            newEnvironmentCache(),
+		identity:                newIdentityCache(),
 		maxBodyBytes:            configuration.HTTP.ManagementMaxBodyBytes,
 		shutdownTimeout:         configuration.ShutdownTimeout,
 		backend:                 backend,
@@ -99,6 +110,7 @@ func New(configuration config.Config, logger *slog.Logger, readinessCheck func(c
 	}
 	server.trustedProxies = configuration.HTTP.TrustedProxyPrefixes()
 	server.queryGate = make(chan struct{}, positiveOr(configuration.HTTP.MaxConcurrentQueries, defaultConcurrentQueries))
+	server.authGate = make(chan struct{}, defaultAuthConcurrentQueries)
 	server.requestTimeout = configuration.HTTP.RequestTimeout
 	if server.requestTimeout <= 0 {
 		server.requestTimeout = defaultRequestTimeout
@@ -136,6 +148,11 @@ func New(configuration config.Config, logger *slog.Logger, readinessCheck func(c
 	if server.certificateFile != "" {
 		server.httpServer.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
 	}
+	return server
+}
+
+func (server *Server) WithTokenInvalidator(invalidator TokenInvalidator) *Server {
+	server.tokenInvalidator = invalidator
 	return server
 }
 

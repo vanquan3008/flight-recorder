@@ -9,6 +9,14 @@ import (
 	"github.com/vanquan3008/tracepilot/internal/query"
 )
 
+var traceRoutes = []apiRouteDefinition{
+	{path: "/api/v1/traces", method: http.MethodGet, scope: "read", tags: []string{"traces"}, operationID: "listTraces", handler: (*Server).listTraces},
+	{path: "/api/v1/traces/{traceID}", method: http.MethodGet, scope: "read", tags: []string{"traces"}, operationID: "getTrace", handler: (*Server).getTrace},
+	{path: "/api/v1/traces/{traceID}/logs", method: http.MethodGet, scope: "read", tags: []string{"traces", "logs"}, operationID: "listTraceLogs", handler: (*Server).listTraceLogs},
+	{path: "/api/v1/logs", method: http.MethodGet, scope: "read", tags: []string{"logs"}, operationID: "listLogs", handler: (*Server).listLogs},
+	{path: "/api/v1/logs/{eventID}", method: http.MethodGet, scope: "read", tags: []string{"logs"}, operationID: "getLog", handler: (*Server).getLog},
+}
+
 func (server *Server) listTraces(responseWriter http.ResponseWriter, request *http.Request, principal auth.Principal) {
 	filter, cursor, parseError := parseTraceFilter(request)
 	if parseError != nil {
@@ -100,4 +108,45 @@ func (server *Server) listTraceLogs(responseWriter http.ResponseWriter, request 
 	}
 	filter.TraceID = traceID
 	server.writeLogPage(responseWriter, request, principal, "list trace logs", filter, cursor)
+}
+
+func (server *Server) listLogs(responseWriter http.ResponseWriter, request *http.Request, principal auth.Principal) {
+	filter, cursor, parseError := parseLogFilter(request)
+	if parseError != nil {
+		writeInvalidQuery(responseWriter, parseError)
+		return
+	}
+	server.writeLogPage(responseWriter, request, principal, "list logs", filter, cursor)
+}
+
+func (server *Server) getLog(responseWriter http.ResponseWriter, request *http.Request, principal auth.Principal) {
+	eventID := request.PathValue("eventID")
+	if !requireUUID(responseWriter, eventID) {
+		return
+	}
+	record, queryError := server.backend.GetLog(request.Context(), principal.ProjectID, principal.EnvironmentID, eventID)
+	if queryError != nil {
+		server.writeInternalError(responseWriter, "get log", queryError)
+		return
+	}
+	if record.EventID == "" {
+		writeNotFound(responseWriter, "log")
+		return
+	}
+	writeJSONValue(responseWriter, http.StatusOK, record)
+}
+
+// writeLogPage scopes a parsed log filter to this server's environment and
+// writes one page of matching logs.
+func (server *Server) writeLogPage(responseWriter http.ResponseWriter, request *http.Request, principal auth.Principal, operation string, filter query.LogFilter, cursor pageCursor) {
+	filter.EnvironmentID = principal.EnvironmentID
+	filter.Before, filter.CursorID = cursor.At, cursor.ID
+	logs, queryError := server.backend.ListLogs(request.Context(), principal.ProjectID, filter)
+	if queryError != nil {
+		server.writeInternalError(responseWriter, operation, queryError)
+		return
+	}
+	writePage(responseWriter, logs, filter.Limit, func(record query.LogRecord) pageCursor {
+		return pageCursor{At: record.OccurredAt, ID: record.EventID}
+	})
 }

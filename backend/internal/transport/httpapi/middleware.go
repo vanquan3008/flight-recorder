@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/vanquan3008/tracepilot/internal/config"
 )
 
 const corsMaxAgeSeconds = "600"
@@ -166,4 +168,10 @@ func newRequestID() string {
 		return hex.EncodeToString([]byte(timestamp))
 	}
 	return hex.EncodeToString(randomBytes[:])
+}
+
+// clientAddress is the address that rate limits are keyed on; see
+// config.ClientAddress for how forwarded headers are trusted.
+func (server *Server) clientAddress(request *http.Request) string {
+	return config.ClientAddress(request.RemoteAddr, request.Header.Values("X-Forwarded-For"), server.trustedProxies)
 }

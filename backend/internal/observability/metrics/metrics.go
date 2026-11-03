@@ -31,6 +31,9 @@ type Registry struct {
 	detectionRuns      *prometheus.CounterVec
 	detectionDuration  prometheus.Histogram
 	webhookAttempts    *prometheus.CounterVec
+	authCacheRequests  *prometheus.CounterVec
+	gateWaitDuration   *prometheus.HistogramVec
+	gateActiveSlots    *prometheus.GaugeVec
 }
 
 func New(version, commit, buildTime string) *Registry {
@@ -148,13 +151,23 @@ func New(version, commit, buildTime string) *Registry {
 	webhookAttempts := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "tracepilot", Name: "webhook_delivery_attempts_total", Help: "Outbound webhook delivery attempts by bounded outcome.",
 	}, []string{"outcome"})
+	authCacheRequests := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "tracepilot", Name: "auth_cache_requests_total", Help: "In-memory authentication and identity cache lookups.",
+	}, []string{"kind", "result"})
+	gateWaitDuration := prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Namespace: "tracepilot", Name: "concurrency_gate_wait_seconds", Help: "Duration requests waited for a concurrency gate slot.",
+		Buckets: []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1},
+	}, []string{"gate"})
+	gateActiveSlots := prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: "tracepilot", Name: "concurrency_gate_active_slots", Help: "Active concurrency slots held by in-flight requests.",
+	}, []string{"gate"})
 	buildInfo := prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: "tracepilot",
 		Name:      "build_info",
 		Help:      "TracePilot build and runtime information.",
 	}, []string{"version", "commit", "build_time", "go_version"})
 
-	prometheusRegistry.MustRegister(httpRequests, httpDuration, databaseReady, ingestedRecords, rejectedRecords, ingestionQueue, ingestionBytes, ingestionInflight, ingestionShutdowns, batchDuration, storageErrors, ingestionRetries, admissionTimeouts, otlpRequests, otlpDuration, retentionDeleted, retentionByGroup, retentionBacklog, retentionErrors, retentionDuration, detectionRuns, detectionDuration, webhookAttempts, buildInfo)
+	prometheusRegistry.MustRegister(httpRequests, httpDuration, databaseReady, ingestedRecords, rejectedRecords, ingestionQueue, ingestionBytes, ingestionInflight, ingestionShutdowns, batchDuration, storageErrors, ingestionRetries, admissionTimeouts, otlpRequests, otlpDuration, retentionDeleted, retentionByGroup, retentionBacklog, retentionErrors, retentionDuration, detectionRuns, detectionDuration, webhookAttempts, authCacheRequests, gateWaitDuration, gateActiveSlots, buildInfo)
 	buildInfo.WithLabelValues(version, commit, buildTime, runtime.Version()).Set(1)
 
 	return &Registry{
@@ -182,5 +195,8 @@ func New(version, commit, buildTime string) *Registry {
 		detectionRuns:      detectionRuns,
 		detectionDuration:  detectionDuration,
 		webhookAttempts:    webhookAttempts,
+		authCacheRequests:  authCacheRequests,
+		gateWaitDuration:   gateWaitDuration,
+		gateActiveSlots:    gateActiveSlots,
 	}
 }
