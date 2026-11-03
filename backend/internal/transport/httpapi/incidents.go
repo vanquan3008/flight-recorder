@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 
 	incidentapp "github.com/vanquan3008/tracepilot/internal/application/incident"
 	"github.com/vanquan3008/tracepilot/internal/application/replay"
@@ -222,3 +223,37 @@ func (server *Server) replayIncident(responseWriter http.ResponseWriter, request
 	}
 	writeJSONValue(responseWriter, http.StatusCreated, outcome)
 }
+
+func parseIncidentFilter(request *http.Request) (incident.Filter, pageCursor, error) {
+	values := request.URL.Query()
+	limit, parseError := parsePageSize(values.Get("limit"))
+	if parseError != nil {
+		return incident.Filter{}, pageCursor{}, parseError
+	}
+	from, parseError := parseTime(values.Get("from"))
+	if parseError != nil {
+		return incident.Filter{}, pageCursor{}, parseError
+	}
+	to, parseError := parseTime(values.Get("to"))
+	if parseError != nil {
+		return incident.Filter{}, pageCursor{}, parseError
+	}
+	if rangeError := validateTimeRange(from, to); rangeError != nil {
+		return incident.Filter{}, pageCursor{}, rangeError
+	}
+	status := strings.ToUpper(strings.TrimSpace(values.Get("status")))
+	if status != "" {
+		if _, valid := incident.NormalizeStatus(status); !valid {
+			return incident.Filter{}, pageCursor{}, errors.New("incident status is invalid")
+		}
+	}
+	cursor, parseError := parsePageCursor(values.Get("cursor"), validUUID)
+	if parseError != nil {
+		return incident.Filter{}, pageCursor{}, parseError
+	}
+	return incident.Filter{
+		Service: strings.TrimSpace(values.Get("service")), Severity: strings.ToUpper(strings.TrimSpace(values.Get("severity"))),
+		Status: status, From: from, To: to, Limit: limit,
+	}, cursor, nil
+}
+

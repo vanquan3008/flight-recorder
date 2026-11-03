@@ -156,6 +156,21 @@ func (server *Server) WithTokenInvalidator(invalidator TokenInvalidator) *Server
 	return server
 }
 
+// Handler returns the underlying http.Handler.
+func (server *Server) Handler() http.Handler {
+	return server.httpServer.Handler
+}
+
+// ServeHTTP delegates directly to the underlying http.Handler.
+func (server *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	server.httpServer.Handler.ServeHTTP(w, r)
+}
+
+// RegisterAPIRoutes mounts the server's API routes onto a ServeMux.
+func (server *Server) RegisterAPIRoutes(router *http.ServeMux) {
+	server.registerAPIRoutes(router)
+}
+
 func (server *Server) Run(applicationContext context.Context) error {
 	listener, listenError := net.Listen("tcp", server.httpServer.Addr)
 	if listenError != nil {

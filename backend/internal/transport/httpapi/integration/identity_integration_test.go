@@ -1,4 +1,4 @@
-package httpapi
+package integration
 
 import (
 	"context"
@@ -17,6 +17,7 @@ import (
 	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
 	"github.com/vanquan3008/tracepilot/internal/observability/metrics"
 	"github.com/vanquan3008/tracepilot/internal/storage/postgres"
+	"github.com/vanquan3008/tracepilot/internal/transport/httpapi"
 )
 
 func TestAccountsProjectsAndTokensIntegration(t *testing.T) {
@@ -59,12 +60,12 @@ func TestAccountsProjectsAndTokensIntegration(t *testing.T) {
 			}
 		}
 	})
-	server := New(config.Config{
+	server := httpapi.New(config.Config{
 		HTTP: config.HTTPConfig{ManagementMaxBodyBytes: 4096}, Ingestion: ingestion, Auth: config.AuthConfig{JWTSecret: integrationJWTSecret, AllowRegistration: true},
 		Database: config.DatabaseConfig{ReadinessTimeout: time.Second}, ShutdownTimeout: time.Second,
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)), func(context.Context) error { return nil }, metrics.New("test", "test", "test"), database, nil)
 	router := http.NewServeMux()
-	server.registerAPIRoutes(router)
+	server.RegisterAPIRoutes(router)
 
 	// Anyone can register; nobody sees a project until they make one or are let in.
 	hasUsers, _ := database.HasUsers(ctx)
@@ -101,8 +102,8 @@ func TestAccountsProjectsAndTokensIntegration(t *testing.T) {
 	}
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/services", nil)
 	request.Header.Set("Authorization", "Bearer "+alice.access)
-	request.Header.Set(projectHeader, acme)
-	request.Header.Set(environmentHeader, "no-such-environment")
+	request.Header.Set(httpapi.HeaderProjectID, acme)
+	request.Header.Set(httpapi.HeaderEnvironment, "no-such-environment")
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusBadRequest {

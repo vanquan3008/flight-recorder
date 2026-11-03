@@ -140,7 +140,7 @@ func (server *Server) authLogin(responseWriter http.ResponseWriter, request *htt
 	}
 	// Guessing is limited per client by the router and per account here, so spreading attempts
 	// across addresses does not help.
-	if allowed, retryAfter := server.rateLimiter.allow("login:"+email, loginAttemptsPerEmail, time.Now()); !allowed {
+	if allowed, retryAfter := server.rateLimiter.Allow("login:"+email, loginAttemptsPerEmail, time.Now()); !allowed {
 		responseWriter.Header().Set("Retry-After", retryAfterSeconds(retryAfter))
 		writeAPIError(responseWriter, http.StatusTooManyRequests, "RATE_LIMITED", "too many sign-in attempts; try again later")
 		return
@@ -211,7 +211,7 @@ func (server *Server) authChangePassword(responseWriter http.ResponseWriter, req
 		writeAPIError(responseWriter, http.StatusBadRequest, "INVALID_REQUEST", decodeError.Error())
 		return
 	}
-	if allowed, retryAfter := server.rateLimiter.allow("password:"+principal.UserID, loginAttemptsPerEmail, time.Now()); !allowed {
+	if allowed, retryAfter := server.rateLimiter.Allow("password:"+principal.UserID, loginAttemptsPerEmail, time.Now()); !allowed {
 		responseWriter.Header().Set("Retry-After", retryAfterSeconds(retryAfter))
 		writeAPIError(responseWriter, http.StatusTooManyRequests, "RATE_LIMITED", "too many attempts; try again later")
 		return

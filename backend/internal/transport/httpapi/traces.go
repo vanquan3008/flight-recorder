@@ -1,9 +1,12 @@
 package httpapi
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/vanquan3008/tracepilot/internal/auth"
 	"github.com/vanquan3008/tracepilot/internal/query"
@@ -150,3 +153,94 @@ func (server *Server) writeLogPage(responseWriter http.ResponseWriter, request *
 		return pageCursor{At: record.OccurredAt, ID: record.EventID}
 	})
 }
+
+func parseTraceFilter(request *http.Request) (query.TraceFilter, pageCursor, error) {
+	values := request.URL.Query()
+	limit, parseError := parsePageSize(values.Get("limit"))
+	if parseError != nil {
+		return query.TraceFilter{}, pageCursor{}, parseError
+	}
+	from, parseError := parseTime(values.Get("from"))
+	if parseError != nil {
+		return query.TraceFilter{}, pageCursor{}, parseError
+	}
+	to, parseError := parseTime(values.Get("to"))
+	if parseError != nil {
+		return query.TraceFilter{}, pageCursor{}, parseError
+	}
+	if rangeError := validateTimeRange(from, to); rangeError != nil {
+		return query.TraceFilter{}, pageCursor{}, rangeError
+	}
+	minimumDuration, parseError := parseDurationNanos(values.Get("minDuration"))
+	if parseError != nil {
+		return query.TraceFilter{}, pageCursor{}, parseError
+	}
+	maximumDuration, parseError := parseDurationNanos(values.Get("maxDuration"))
+	if parseError != nil {
+		return query.TraceFilter{}, pageCursor{}, parseError
+	}
+	if minimumDuration != nil && maximumDuration != nil && *minimumDuration > *maximumDuration {
+		return query.TraceFilter{}, pageCursor{}, errors.New("minDuration must not exceed maxDuration")
+	}
+	cursor, parseError := parsePageCursor(values.Get("cursor"), validTraceID)
+	if parseError != nil {
+		return query.TraceFilter{}, pageCursor{}, parseError
+	}
+	traceID := strings.TrimSpace(values.Get("traceId"))
+	if traceID != "" && !validTraceID(traceID) {
+		return query.TraceFilter{}, pageCursor{}, errors.New("traceId must be 16 bytes of hexadecimal")
+	}
+	return query.TraceFilter{Service: values.Get("service"), Operation: values.Get("operation"), Status: values.Get("status"), TraceID: traceID, From: from, To: to, MinDurationNs: minimumDuration, MaxDurationNs: maximumDuration, Limit: limit}, cursor, nil
+}
+
+func parseLogFilter(request *http.Request) (query.LogFilter, pageCursor, error) {
+	values := request.URL.Query()
+	limit, parseError := parsePageSize(values.Get("limit"))
+	if parseError != nil {
+		return query.LogFilter{}, pageCursor{}, parseError
+	}
+	from, parseError := parseTime(values.Get("from"))
+	if parseError != nil {
+		return query.LogFilter{}, pageCursor{}, parseError
+	}
+	to, parseError := parseTime(values.Get("to"))
+	if parseError != nil {
+		return query.LogFilter{}, pageCursor{}, parseError
+	}
+	if rangeError := validateTimeRange(from, to); rangeError != nil {
+		return query.LogFilter{}, pageCursor{}, rangeError
+	}
+	search := strings.TrimSpace(values.Get("search"))
+	if search != "" && (from.IsZero() || to.IsZero()) {
+		return query.LogFilter{}, pageCursor{}, errors.New("log content search requires from and to")
+	}
+	if search != "" && to.Sub(from) > 24*time.Hour {
+		return query.LogFilter{}, pageCursor{}, errors.New("log content search range must not exceed 24 hours")
+	}
+	cursor, parseError := parsePageCursor(values.Get("cursor"), validUUID)
+	if parseError != nil {
+		return query.LogFilter{}, pageCursor{}, parseError
+	}
+	traceID := strings.TrimSpace(values.Get("traceId"))
+	if traceID != "" && !validTraceID(traceID) {
+		return query.LogFilter{}, pageCursor{}, errors.New("traceId must be 16 bytes of hexadecimal")
+	}
+	spanID := strings.TrimSpace(values.Get("spanId"))
+	if spanID != "" && !validSpanID(spanID) {
+		return query.LogFilter{}, pageCursor{}, errors.New("spanId must be 8 bytes of hexadecimal")
+	}
+	return query.LogFilter{Service: values.Get("service"), Severity: values.Get("severity"), TraceID: traceID, SpanID: spanID, Search: search, From: from, To: to, Limit: limit}, cursor, nil
+}
+
+func validTraceID(value string) bool { return validHex(value, 32) }
+
+func validSpanID(value string) bool { return validHex(value, 16) }
+
+func requireTraceID(responseWriter http.ResponseWriter, value string) bool {
+	if validTraceID(value) {
+		return true
+	}
+	writeAPIError(responseWriter, http.StatusBadRequest, "INVALID_PATH", "trace identifier must be 16 bytes of hexadecimal")
+	return false
+}
+
