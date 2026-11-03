@@ -192,6 +192,9 @@ func (pipeline *Pipeline) observeShutdown(outcome string) {
 }
 
 func estimateBytes(value any) int64 {
+	if event, ok := value.(telemetry.Event); ok {
+		return estimateEventBytes(event)
+	}
 	estimator := estimateEncoders.Get().(*estimateEncoder)
 	estimator.buffer.Reset()
 	encodeError := estimator.encoder.Encode(value)

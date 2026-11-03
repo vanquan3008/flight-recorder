@@ -34,3 +34,10 @@ func TestNumericConversionsStayInRange(t *testing.T) {
 		t.Fatal("IntPointer must widen without losing NULL")
 	}
 }
+
+func TestStringOrEmptyReadsNullAsEmpty(t *testing.T) {
+	value := "checkout"
+	if StringOrEmpty(nil) != "" || StringOrEmpty(&value) != "checkout" {
+		t.Fatal("StringOrEmpty must map only NULL to the empty string")
+	}
+}

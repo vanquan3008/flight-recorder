@@ -1,4 +1,4 @@
-package httpapi
+package integration
 
 import (
 	"context"

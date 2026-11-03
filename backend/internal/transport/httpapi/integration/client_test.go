@@ -1,4 +1,4 @@
-package httpapi
+package integration
 
 import (
 	"encoding/json"
@@ -6,9 +6,16 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/vanquan3008/tracepilot/internal/transport/httpapi"
 )
 
-// client is one browser: it keeps the access token in memory and the refresh cookie, as the console does.
+const (
+	refreshCookieName = "tp_refresh"
+	refreshHeader     = "X-TracePilot-Refresh"
+	refreshPath       = "/api/v1/auth"
+)
+
 type client struct {
 	t       *testing.T
 	handler http.Handler
@@ -23,7 +30,7 @@ func (c *client) do(method, path, body, project string) (int, map[string]any) {
 		request.Header.Set("Authorization", "Bearer "+c.access)
 	}
 	if project != "" {
-		request.Header.Set(projectHeader, project)
+		request.Header.Set(httpapi.HeaderProjectID, project)
 	}
 	if strings.HasPrefix(path, refreshPath) {
 		request.Header.Set(refreshHeader, "1")

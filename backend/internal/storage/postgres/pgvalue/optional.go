@@ -28,6 +28,14 @@ func NanosOrNil(value time.Duration) *int64 {
 	return OrNil(value.Nanoseconds())
 }
 
+// StringOrEmpty reads a nullable text column as "" when it is NULL.
+func StringOrEmpty(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
+}
+
 // IntPointer widens a nullable PostgreSQL integer to the int domain models use.
 func IntPointer(value *int32) *int {
 	if value == nil {

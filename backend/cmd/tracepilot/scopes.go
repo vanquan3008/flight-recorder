@@ -124,15 +124,15 @@ func (catalog *scopeCatalog) All(ctx context.Context) ([]config.IngestionConfig,
 
 type scopeKey struct{ project, environment string }
 
-// storeEventsByScope stores a batch that may mix projects, one group per scope. Every scope is
+// storeByScope stores a batch that may mix projects, one group per scope. Every scope is
 // resolved before anything is written, and one that no longer exists marks the batch invalid so
-// the pipeline isolates those events instead of retrying forever.
-func storeEventsByScope(catalog *scopeCatalog, store func(context.Context, config.IngestionConfig, []telemetry.Event) error) func(context.Context, []telemetry.Event) error {
-	return func(ctx context.Context, events []telemetry.Event) error {
-		groups := make(map[scopeKey][]telemetry.Event)
-		for _, event := range events {
-			key := scopeKey{event.ProjectID, event.Environment}
-			groups[key] = append(groups[key], event)
+// the pipeline isolates those items instead of retrying forever.
+func storeByScope[T any](catalog *scopeCatalog, scopeOf func(T) scopeKey, store func(context.Context, config.IngestionConfig, []T) error) func(context.Context, []T) error {
+	return func(ctx context.Context, items []T) error {
+		groups := make(map[scopeKey][]T)
+		for _, item := range items {
+			key := scopeOf(item)
+			groups[key] = append(groups[key], item)
 		}
 		scopes := make(map[scopeKey]config.IngestionConfig, len(groups))
 		for key := range groups {
@@ -153,29 +153,12 @@ func storeEventsByScope(catalog *scopeCatalog, store func(context.Context, confi
 	}
 }
 
-// storeMetricsByScope is storeEventsByScope for metric data points, which name their environment by ID.
+// storeEventsByScope groups events by the project and environment name they carry.
+func storeEventsByScope(catalog *scopeCatalog, store func(context.Context, config.IngestionConfig, []telemetry.Event) error) func(context.Context, []telemetry.Event) error {
+	return storeByScope(catalog, func(event telemetry.Event) scopeKey { return scopeKey{event.ProjectID, event.Environment} }, store)
+}
+
+// storeMetricsByScope groups metric data points, which name their environment by ID.
 func storeMetricsByScope(catalog *scopeCatalog, store func(context.Context, config.IngestionConfig, []telemetry.MetricDataPoint) error) func(context.Context, []telemetry.MetricDataPoint) error {
-	return func(ctx context.Context, points []telemetry.MetricDataPoint) error {
-		groups := make(map[scopeKey][]telemetry.MetricDataPoint)
-		for _, point := range points {
-			key := scopeKey{point.ProjectID, point.EnvironmentID}
-			groups[key] = append(groups[key], point)
-		}
-		scopes := make(map[scopeKey]config.IngestionConfig, len(groups))
-		for key := range groups {
-			scope, resolveError := catalog.Resolve(ctx, key.project, key.environment)
-			if errors.Is(resolveError, ingestotlp.ErrUnknownEnvironment) {
-				return fmt.Errorf("%w: %v", telemetry.ErrInvalidEvent, resolveError)
-			}
-			if resolveError != nil {
-				return resolveError
-			}
-			scopes[key] = scope
-		}
-		var storeError error
-		for key, group := range groups {
-			storeError = errors.Join(storeError, store(ctx, scopes[key], group))
-		}
-		return storeError
-	}
+	return storeByScope(catalog, func(point telemetry.MetricDataPoint) scopeKey { return scopeKey{point.ProjectID, point.EnvironmentID} }, store)
 }

@@ -2,14 +2,31 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 
 	incidentapp "github.com/vanquan3008/tracepilot/internal/application/incident"
+	"github.com/vanquan3008/tracepilot/internal/application/replay"
+	"github.com/vanquan3008/tracepilot/internal/application/replay/capture"
 	"github.com/vanquan3008/tracepilot/internal/auth"
 	"github.com/vanquan3008/tracepilot/internal/domain/incident"
 	replaydomain "github.com/vanquan3008/tracepilot/internal/domain/replay"
 )
+
+var incidentRoutes = []apiRouteDefinition{
+	{path: "/api/v1/incidents", method: http.MethodGet, scope: "read", tags: []string{"incidents"}, operationID: "listIncidents", handler: (*Server).listIncidents},
+	{path: "/api/v1/incidents/{incidentID}", method: http.MethodGet, scope: "read", tags: []string{"incidents"}, operationID: "getIncident", handler: (*Server).getIncident},
+	{path: "/api/v1/incidents/{incidentID}/occurrences", method: http.MethodGet, scope: "read", tags: []string{"incidents"}, operationID: "listIncidentOccurrences", handler: (*Server).listIncidentOccurrences},
+	{path: "/api/v1/incidents/{incidentID}/events", method: http.MethodGet, scope: "read", tags: []string{"incidents"}, operationID: "listIncidentEvents", handler: (*Server).listIncidentEvents},
+	{path: "/api/v1/incidents/{incidentID}/status-changes", method: http.MethodGet, scope: "read", tags: []string{"incidents"}, operationID: "listIncidentStatusChanges", handler: (*Server).listIncidentStatusChanges},
+	{path: "/api/v1/incidents/{incidentID}/analysis", method: http.MethodGet, scope: "read", tags: []string{"incidents", "analysis"}, operationID: "getIncidentAnalysis", handler: (*Server).getIncidentAnalysis},
+	{path: "/api/v1/incidents/{incidentID}/executions", method: http.MethodGet, scope: "read", tags: []string{"replay"}, operationID: "listReplayExecutions", handler: (*Server).listAllowedRequestExecutions},
+	{path: "/api/v1/incidents/{incidentID}/executions/{executionID}", method: http.MethodGet, scope: "read", tags: []string{"replay"}, operationID: "getReplayExecution", handler: (*Server).getAllowedRequestExecution},
+	{path: "/api/v1/incidents/{incidentID}", method: http.MethodPatch, scope: "write", tags: []string{"incidents"}, operationID: "updateIncident", requestBody: true, handler: (*Server).updateIncident},
+	{path: "/api/v1/incidents/{incidentID}/replays", method: http.MethodPost, scope: "replay", tags: []string{"replay"}, operationID: "replayIncident", requestBody: true, requiresReplay: true, handler: (*Server).replayIncident},
+}
 
 func (server *Server) listIncidents(responseWriter http.ResponseWriter, request *http.Request, principal auth.Principal) {
 	filter, cursor, parseError := parseIncidentFilter(request)
@@ -167,3 +184,76 @@ func writeIncidentPage[T any](
 	}
 	writePage(responseWriter, items, limit, cursorOf)
 }
+
+func (server *Server) replayIncident(responseWriter http.ResponseWriter, request *http.Request, principal auth.Principal) {
+	incidentID := request.PathValue("incidentID")
+	if !requireUUID(responseWriter, incidentID) {
+		return
+	}
+	var payload struct {
+		Target  string            `json:"target"`
+		Method  string            `json:"method"`
+		Headers map[string]string `json:"headers"`
+		Body    json.RawMessage   `json:"body"`
+	}
+	if decodeError := decodeJSONBody(request, &payload); decodeError != nil {
+		writeAPIError(responseWriter, http.StatusBadRequest, "INVALID_REQUEST", "request body must contain a target")
+		return
+	}
+	headers := make(http.Header, len(payload.Headers))
+	for name, value := range payload.Headers {
+		headers.Set(name, value)
+	}
+	captured, captureError := capture.Sanitize(payload.Method, payload.Target, headers, payload.Body, server.replayMaxRequestBytes)
+	if captureError != nil {
+		writeAPIError(responseWriter, http.StatusBadRequest, "INVALID_REQUEST", captureError.Error())
+		return
+	}
+	outcome, runError := server.replay.Run(request.Context(), replay.Command{
+		ProjectID: principal.ProjectID, EnvironmentID: principal.EnvironmentID, IncidentID: incidentID,
+		Actor: principal.Actor(), RequestID: request.Header.Get(requestIDHeader), Request: captured,
+	})
+	if errors.Is(runError, replay.ErrIncidentNotFound) {
+		writeNotFound(responseWriter, "incident")
+		return
+	}
+	if runError != nil {
+		server.writeInternalError(responseWriter, "run replay", runError)
+		return
+	}
+	writeJSONValue(responseWriter, http.StatusCreated, outcome)
+}
+
+func parseIncidentFilter(request *http.Request) (incident.Filter, pageCursor, error) {
+	values := request.URL.Query()
+	limit, parseError := parsePageSize(values.Get("limit"))
+	if parseError != nil {
+		return incident.Filter{}, pageCursor{}, parseError
+	}
+	from, parseError := parseTime(values.Get("from"))
+	if parseError != nil {
+		return incident.Filter{}, pageCursor{}, parseError
+	}
+	to, parseError := parseTime(values.Get("to"))
+	if parseError != nil {
+		return incident.Filter{}, pageCursor{}, parseError
+	}
+	if rangeError := validateTimeRange(from, to); rangeError != nil {
+		return incident.Filter{}, pageCursor{}, rangeError
+	}
+	status := strings.ToUpper(strings.TrimSpace(values.Get("status")))
+	if status != "" {
+		if _, valid := incident.NormalizeStatus(status); !valid {
+			return incident.Filter{}, pageCursor{}, errors.New("incident status is invalid")
+		}
+	}
+	cursor, parseError := parsePageCursor(values.Get("cursor"), validUUID)
+	if parseError != nil {
+		return incident.Filter{}, pageCursor{}, parseError
+	}
+	return incident.Filter{
+		Service: strings.TrimSpace(values.Get("service")), Severity: strings.ToUpper(strings.TrimSpace(values.Get("severity"))),
+		Status: status, From: from, To: to, Limit: limit,
+	}, cursor, nil
+}
+

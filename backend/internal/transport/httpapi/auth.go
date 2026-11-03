@@ -12,15 +12,11 @@ import (
 )
 
 const (
-	projectHeader     = "X-Project-ID"
-	environmentHeader = "X-Environment"
-	// refreshCookieName holds the opaque refresh token. It is only ever sent to the auth routes.
-	refreshCookieName = "tp_refresh"
-	// refreshHeader must accompany a request that uses the refresh cookie. A page on another site
-	// cannot add a custom header to a cross-site request without a CORS preflight this server refuses,
-	// so the cookie alone cannot be used to act on a signed-in person's behalf.
-	refreshHeader = "X-TracePilot-Refresh"
-	refreshPath   = "/api/v1/auth"
+	HeaderProjectID   = "X-Project-ID"
+	HeaderEnvironment = "X-Environment"
+
+	projectHeader     = HeaderProjectID
+	environmentHeader = HeaderEnvironment
 )
 
 func bearerToken(request *http.Request) string {
@@ -103,22 +99,51 @@ func (server *Server) principalFor(responseWriter http.ResponseWriter, request *
 		writeAPIError(responseWriter, http.StatusBadRequest, "PROJECT_REQUIRED", "choose a project with the "+projectHeader+" header")
 		return auth.Principal{}, false
 	}
-	project, projectError := server.backend.GetProject(request.Context(), reference)
-	if errors.Is(projectError, auth.ErrProjectNotFound) {
-		// The same answer as for a project the caller cannot open, so names cannot be probed.
-		writeAPIError(responseWriter, http.StatusForbidden, "FORBIDDEN", "you do not have access to this project")
-		return auth.Principal{}, false
+	now := time.Now()
+	var (
+		project       auth.Project
+		projectError  error
+		cachedProject bool
+	)
+	if server.identity != nil {
+		project, cachedProject = server.identity.getProject(reference, now)
 	}
-	if projectError != nil {
-		server.writeInternalError(responseWriter, "get project", projectError)
-		return auth.Principal{}, false
+	if cachedProject {
+		server.metrics.ObserveAuthCache("project", "hit")
+	} else {
+		server.metrics.ObserveAuthCache("project", "miss")
+		project, projectError = server.backend.GetProject(request.Context(), reference)
+		if errors.Is(projectError, auth.ErrProjectNotFound) {
+			// The same answer as for a project the caller cannot open, so names cannot be probed.
+			writeAPIError(responseWriter, http.StatusForbidden, "FORBIDDEN", "you do not have access to this project")
+			return auth.Principal{}, false
+		}
+		if projectError != nil {
+			server.writeInternalError(responseWriter, "get project", projectError)
+			return auth.Principal{}, false
+		}
+		if server.identity != nil {
+			server.identity.putProject(reference, project, now)
+		}
 	}
 	role := auth.RoleOwner
 	if !user.PlatformAdmin {
 		var roleError error
-		if role, roleError = server.backend.MemberRole(request.Context(), project.ID, user.ID); roleError != nil {
-			server.writeInternalError(responseWriter, "get member role", roleError)
-			return auth.Principal{}, false
+		cachedRole := false
+		if server.identity != nil {
+			role, cachedRole = server.identity.getRole(project.ID, user.ID, now)
+		}
+		if cachedRole {
+			server.metrics.ObserveAuthCache("role", "hit")
+		} else {
+			server.metrics.ObserveAuthCache("role", "miss")
+			if role, roleError = server.backend.MemberRole(request.Context(), project.ID, user.ID); roleError != nil {
+				server.writeInternalError(responseWriter, "get member role", roleError)
+				return auth.Principal{}, false
+			}
+			if server.identity != nil {
+				server.identity.putRole(project.ID, user.ID, role, now)
+			}
 		}
 	}
 	principal.ProjectID, principal.Role = project.ID, role
@@ -128,39 +153,6 @@ func (server *Server) principalFor(responseWriter http.ResponseWriter, request *
 		return auth.Principal{}, false
 	}
 	return principal, true
-}
-
-// refreshToken returns the caller's refresh cookie, or "" when the request does not prove it came
-// from the console (see refreshHeader).
-func refreshToken(request *http.Request) string {
-	if request.Header.Get(refreshHeader) == "" {
-		return ""
-	}
-	if cookie, cookieError := request.Cookie(refreshCookieName); cookieError == nil {
-		return cookie.Value
-	}
-	return ""
-}
-
-func (server *Server) cookieSecure(request *http.Request) bool {
-	if server.production || request.TLS != nil || server.certificateFile != "" {
-		return true
-	}
-	return strings.EqualFold(request.Header.Get("X-Forwarded-Proto"), "https") && server.fromTrustedProxy(request)
-}
-
-func (server *Server) setRefreshCookie(responseWriter http.ResponseWriter, request *http.Request, token string) {
-	http.SetCookie(responseWriter, &http.Cookie{
-		Name: refreshCookieName, Value: token, Path: refreshPath, MaxAge: int((30 * 24 * time.Hour).Seconds()),
-		HttpOnly: true, Secure: server.cookieSecure(request), SameSite: http.SameSiteStrictMode,
-	})
-}
-
-func (server *Server) clearRefreshCookie(responseWriter http.ResponseWriter, request *http.Request) {
-	http.SetCookie(responseWriter, &http.Cookie{
-		Name: refreshCookieName, Value: "", Path: refreshPath, MaxAge: -1,
-		HttpOnly: true, Secure: server.cookieSecure(request), SameSite: http.SameSiteStrictMode,
-	})
 }
 
 var errEnvironmentNotFound = errors.New("environment not found")
@@ -233,3 +225,113 @@ func (server *Server) resolveEnvironment(ctx context.Context, projectID, referen
 	}
 	return "", errEnvironmentNotFound
 }
+
+const (
+	identityCacheTTL   = 30 * time.Second
+	identityCacheLimit = 1024
+)
+
+type cachedUserEntry struct {
+	user     auth.User
+	loadedAt time.Time
+}
+
+type cachedProjectEntry struct {
+	project  auth.Project
+	loadedAt time.Time
+}
+
+type cachedRoleEntry struct {
+	role     string
+	loadedAt time.Time
+}
+
+type identityCache struct {
+	mu       sync.Mutex
+	users    map[string]cachedUserEntry
+	projects map[string]cachedProjectEntry
+	roles    map[string]cachedRoleEntry
+}
+
+func newIdentityCache() *identityCache {
+	return &identityCache{
+		users:    make(map[string]cachedUserEntry),
+		projects: make(map[string]cachedProjectEntry),
+		roles:    make(map[string]cachedRoleEntry),
+	}
+}
+
+func (cache *identityCache) getUser(id string, now time.Time) (auth.User, bool) {
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	entry, ok := cache.users[id]
+	return entry.user, ok && now.Sub(entry.loadedAt) < identityCacheTTL
+}
+
+func (cache *identityCache) putUser(id string, user auth.User, now time.Time) {
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	if len(cache.users) >= identityCacheLimit {
+		cache.users = make(map[string]cachedUserEntry)
+	}
+	cache.users[id] = cachedUserEntry{user: user, loadedAt: now}
+}
+
+func (cache *identityCache) forgetUser(id string) {
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	delete(cache.users, id)
+}
+
+func (cache *identityCache) getProject(ref string, now time.Time) (auth.Project, bool) {
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	entry, ok := cache.projects[ref]
+	return entry.project, ok && now.Sub(entry.loadedAt) < identityCacheTTL
+}
+
+func (cache *identityCache) putProject(ref string, project auth.Project, now time.Time) {
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	if len(cache.projects) >= identityCacheLimit {
+		cache.projects = make(map[string]cachedProjectEntry)
+	}
+	entry := cachedProjectEntry{project: project, loadedAt: now}
+	cache.projects[ref] = entry
+	cache.projects[project.ID] = entry
+	if project.Slug != "" {
+		cache.projects[project.Slug] = entry
+	}
+}
+
+func (cache *identityCache) forgetProject(id, slug string) {
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	delete(cache.projects, id)
+	if slug != "" {
+		delete(cache.projects, slug)
+	}
+}
+
+func (cache *identityCache) getRole(projectID, userID string, now time.Time) (string, bool) {
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	entry, ok := cache.roles[projectID+":"+userID]
+	return entry.role, ok && now.Sub(entry.loadedAt) < identityCacheTTL
+}
+
+func (cache *identityCache) putRole(projectID, userID, role string, now time.Time) {
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	if len(cache.roles) >= identityCacheLimit {
+		cache.roles = make(map[string]cachedRoleEntry)
+	}
+	cache.roles[projectID+":"+userID] = cachedRoleEntry{role: role, loadedAt: now}
+}
+
+func (cache *identityCache) forgetRole(projectID, userID string) {
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	delete(cache.roles, projectID+":"+userID)
+}
+

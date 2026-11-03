@@ -6,7 +6,6 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -48,11 +47,7 @@ func newID() string {
 }
 
 func newToken() (string, error) {
-	secret := make([]byte, 32)
-	if _, readError := rand.Read(secret); readError != nil {
-		return "", fmt.Errorf("generate token: %w", readError)
-	}
-	return base64.RawURLEncoding.EncodeToString(secret), nil
+	return auth.RandomToken(32)
 }
 
 func hashToken(token string) []byte {
@@ -113,7 +108,7 @@ func (store *IdentityStore) ListAuditEvents(ctx context.Context, projectID strin
 	for _, row := range rows {
 		event := auth.AuditEvent{
 			ID: row.ID, Action: row.Action, TargetType: row.TargetType, TargetID: row.TargetID, CreatedAt: row.CreatedAt,
-			ProjectID: deref(row.ProjectID), ActorUserID: deref(row.ActorUserID),
+			ProjectID: pgvalue.StringOrEmpty(row.ProjectID), ActorUserID: pgvalue.StringOrEmpty(row.ActorUserID),
 		}
 		if unmarshalError := json.Unmarshal(row.Detail, &event.Detail); unmarshalError != nil {
 			return nil, fmt.Errorf("decode audit detail: %w", unmarshalError)
@@ -121,11 +116,4 @@ func (store *IdentityStore) ListAuditEvents(ctx context.Context, projectID strin
 		events = append(events, event)
 	}
 	return events, nil
-}
-
-func deref(value *string) string {
-	if value == nil {
-		return ""
-	}
-	return *value
 }

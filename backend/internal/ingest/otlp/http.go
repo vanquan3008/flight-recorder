@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/vanquan3008/tracepilot/internal/auth"
@@ -178,6 +179,23 @@ func (server *Server) admitHTTP(responseWriter http.ResponseWriter, request *htt
 	return nil, "overloaded"
 }
 
+var gzipReaderPool sync.Pool
+
+func getGzipReader(reader io.Reader) (*gzip.Reader, error) {
+	if cached := gzipReaderPool.Get(); cached != nil {
+		gzipReader := cached.(*gzip.Reader)
+		if resetError := gzipReader.Reset(reader); resetError == nil {
+			return gzipReader, nil
+		}
+	}
+	return gzip.NewReader(reader)
+}
+
+func putGzipReader(gzipReader *gzip.Reader) {
+	_ = gzipReader.Close()
+	gzipReaderPool.Put(gzipReader)
+}
+
 func (server *Server) decodeHTTP(responseWriter http.ResponseWriter, request *http.Request, message proto.Message) (string, error) {
 	encoding := responseEncoding(request)
 	mediaType, _, parseError := mime.ParseMediaType(request.Header.Get("Content-Type"))
@@ -193,12 +211,12 @@ func (server *Server) decodeHTTP(responseWriter http.ResponseWriter, request *ht
 			server.writeHTTPError(responseWriter, encoding, http.StatusUnsupportedMediaType, "unsupported OTLP content encoding")
 			return encoding, errors.New("unsupported content encoding")
 		}
-		gzipReader, gzipError := gzip.NewReader(limitedBody)
+		gzipReader, gzipError := getGzipReader(limitedBody)
 		if gzipError != nil {
 			server.writeHTTPError(responseWriter, encoding, http.StatusBadRequest, "invalid gzip body")
 			return encoding, gzipError
 		}
-		defer gzipReader.Close()
+		defer putGzipReader(gzipReader)
 		reader = gzipReader
 	}
 	body, readError := io.ReadAll(io.LimitReader(reader, server.maxRequestBytes+1))

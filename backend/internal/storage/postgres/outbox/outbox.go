@@ -65,8 +65,8 @@ func (store *OutboxStore) RecordDeliveryAttempt(ctx context.Context, deliveryID,
 	return nil
 }
 
-// ClaimDueDeliveries atomically leases pending work. Stale leases are reset so
-// a process crash cannot leave a notification permanently stuck in sending.
+// ClaimDueDeliveries atomically leases due work, including deliveries whose
+// lease expired because the process holding it crashed.
 func (store *OutboxStore) ClaimDueDeliveries(ctx context.Context, limit int) ([]notificationdomain.DeliveryAttempt, error) {
 	if limit < 1 {
 		return nil, errors.New("delivery claim limit must be positive")
@@ -76,9 +76,6 @@ func (store *OutboxStore) ClaimDueDeliveries(ctx context.Context, limit int) ([]
 	// instead of leaving deliveries stuck in sending until the lease expires.
 	claimError := pgx.BeginFunc(ctx, store.pool, func(transaction pgx.Tx) error {
 		queries := store.queries.WithTx(transaction)
-		if resetError := queries.ResetStaleDeliveryLeases(ctx); resetError != nil {
-			return fmt.Errorf("reset stale webhook leases: %w", resetError)
-		}
 		rows, queryError := queries.ClaimDueDeliveries(ctx, int32(limit))
 		if queryError != nil {
 			return queryError

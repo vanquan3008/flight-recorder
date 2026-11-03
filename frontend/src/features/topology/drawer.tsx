@@ -3,10 +3,9 @@ import { Link } from "react-router-dom";
 import type { UseQueryResult } from "@tanstack/react-query";
 import type { FlowLink } from "../../shared/charts";
 import type { LogRecord, Page, TopologyNode } from "../../shared/types";
-import { Badge, DetailLink, Empty, ErrorState, Loading, formatDuration, formatTime, logBodyText } from "../../shared/ui";
+import { Badge, DetailLink, Empty, ErrorState, Loading, formatCount, formatDuration, formatTime, logBodyText } from "../../shared/ui";
 
 const shownLogs = 8;
-const count = (value: number, noun: string) => `${value.toLocaleString()} ${noun}${value === 1 ? "" : "s"}`;
 
 type Props = {
   node: TopologyNode;
@@ -25,7 +24,7 @@ function Neighbours({ title, links, other, onSelect }: { title: string; links: F
     {links.length === 0 ? <p className="drawer-none">None observed</p> : <ul className="drawer-links">{links.map(({ edge, node }) => <li key={`${edge.source_node_id}>${edge.target_node_id}>${edge.kind}`}>
       <button type="button" aria-label={`${other === "caller" ? "Called by" : "Calls"} ${node.name}`} onClick={() => onSelect(node.id)}>
         <strong>{node.name}</strong>
-        <small>{count(edge.call_count, "call")}{edge.error_count > 0 && <span className="drawer-errors"> · {count(edge.error_count, "error")}</span>} · avg {formatDuration(edge.average_latency_nanos)}</small>
+        <small>{formatCount(edge.call_count, "call")}{edge.error_count > 0 && <span className="drawer-errors"> · {formatCount(edge.error_count, "error")}</span>} · avg {formatDuration(edge.average_latency_nanos)}</small>
       </button>
       {edge.trace_ids[0] && <DetailLink to={`/traces/${edge.trace_ids[0]}`}>Trace</DetailLink>}
     </li>)}</ul>}

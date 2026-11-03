@@ -6,6 +6,13 @@ import (
 	"github.com/vanquan3008/tracepilot/internal/auth"
 )
 
+var userRoutes = []apiRouteDefinition{
+	{path: "/api/v1/users", method: http.MethodGet, scope: auth.ScopePlatform, tags: []string{"users"}, operationID: "listUsers", handler: (*Server).listUsers},
+	{path: "/api/v1/users", method: http.MethodPost, scope: auth.ScopePlatform, tags: []string{"users"}, operationID: "createUser", requestBody: true, handler: (*Server).createUser},
+	{path: "/api/v1/users/{userID}", method: http.MethodPatch, scope: auth.ScopePlatform, tags: []string{"users"}, operationID: "updateUser", requestBody: true, successStatus: http.StatusOK, handler: (*Server).updateUser},
+	{path: "/api/v1/users/{userID}/password-reset", method: http.MethodPost, scope: auth.ScopePlatform, tags: []string{"users"}, operationID: "resetUserPassword", successStatus: http.StatusOK, handler: (*Server).resetUserPassword},
+}
+
 func (server *Server) listUsers(responseWriter http.ResponseWriter, request *http.Request, _ auth.Principal) {
 	limit, cursor, parseError := parsePagination(request, validUUID)
 	if parseError != nil {
@@ -77,6 +84,9 @@ func (server *Server) updateUser(responseWriter http.ResponseWriter, request *ht
 	if server.writeIdentityError(responseWriter, "update user", updateError) {
 		return
 	}
+	if server.identity != nil {
+		server.identity.forgetUser(userID)
+	}
 	writeJSONValue(responseWriter, http.StatusOK, map[string]any{"user": user})
 }
 
@@ -93,6 +103,9 @@ func (server *Server) resetUserPassword(responseWriter http.ResponseWriter, requ
 	}
 	if setError := server.backend.SetPassword(request.Context(), userID, password, true, "", principal.Actor()); server.writeIdentityError(responseWriter, "reset password", setError) {
 		return
+	}
+	if server.identity != nil {
+		server.identity.forgetUser(userID)
 	}
 	writeJSONValue(responseWriter, http.StatusOK, map[string]any{"temporary_password": password})
 }

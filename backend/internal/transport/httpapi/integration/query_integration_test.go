@@ -1,4 +1,4 @@
-package httpapi
+package integration
 
 import (
 	"context"
@@ -19,6 +19,7 @@ import (
 	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
 	"github.com/vanquan3008/tracepilot/internal/observability/metrics"
 	"github.com/vanquan3008/tracepilot/internal/query"
+	"github.com/vanquan3008/tracepilot/internal/transport/httpapi"
 )
 
 func TestAuthenticatedLogQueryIntegration(t *testing.T) {
@@ -99,32 +100,32 @@ func TestAuthenticatedLogQueryIntegration(t *testing.T) {
 		t.Fatal(executorError)
 	}
 	replayService := replay.NewService(database, executor)
-	server := New(configuration, slog.New(slog.NewTextHandler(io.Discard, nil)), func(context.Context) error { return nil }, metrics.New("test", "test", "test"), database, replayService)
+	server := httpapi.New(configuration, slog.New(slog.NewTextHandler(io.Discard, nil)), func(context.Context) error { return nil }, metrics.New("test", "test", "test"), database, replayService)
 	traceRequest := httptest.NewRequest(http.MethodGet, "/api/v1/traces?minDuration=250ms", nil)
 	integrationAuth(traceRequest, bootstrapKey, ingestion.ProjectID)
 	traceResponse := httptest.NewRecorder()
-	server.httpServer.Handler.ServeHTTP(traceResponse, traceRequest)
+	server.ServeHTTP(traceResponse, traceRequest)
 	if traceResponse.Code != http.StatusOK || !strings.Contains(traceResponse.Body.String(), spanEvent.TraceID) {
 		t.Fatalf("trace query status = %d, body = %s", traceResponse.Code, traceResponse.Body.String())
 	}
 	secureConfiguration := configuration
 	secureConfiguration.Production = true
-	secureServer := New(secureConfiguration, slog.New(slog.NewTextHandler(io.Discard, nil)), func(context.Context) error { return nil }, metrics.New("test", "test", "test"), database, replayService)
+	secureServer := httpapi.New(secureConfiguration, slog.New(slog.NewTextHandler(io.Discard, nil)), func(context.Context) error { return nil }, metrics.New("test", "test", "test"), database, replayService)
 	secureMetrics := httptest.NewRecorder()
-	secureServer.httpServer.Handler.ServeHTTP(secureMetrics, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	secureServer.ServeHTTP(secureMetrics, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 	if secureMetrics.Code != http.StatusUnauthorized {
 		t.Fatalf("unauthenticated production metrics status = %d", secureMetrics.Code)
 	}
 	secureMetrics = httptest.NewRecorder()
 	secureMetricsRequest := httptest.NewRequest(http.MethodGet, "/metrics", nil)
 	integrationAuth(secureMetricsRequest, bootstrapKey, ingestion.ProjectID)
-	secureServer.httpServer.Handler.ServeHTTP(secureMetrics, secureMetricsRequest)
+	secureServer.ServeHTTP(secureMetrics, secureMetricsRequest)
 	if secureMetrics.Code != http.StatusOK || !strings.Contains(secureMetrics.Body.String(), "tracepilot_build_info") {
 		t.Fatalf("authenticated production metrics status = %d body=%s", secureMetrics.Code, secureMetrics.Body.String())
 	}
 
 	unauthorized := httptest.NewRecorder()
-	server.httpServer.Handler.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, "/api/v1/logs", nil))
+	server.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, "/api/v1/logs", nil))
 	if unauthorized.Code != http.StatusUnauthorized {
 		t.Fatalf("unauthorized status = %d", unauthorized.Code)
 	}
@@ -134,7 +135,7 @@ func TestAuthenticatedLogQueryIntegration(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/logs?search=bounded-search-needle&from="+from+"&to="+to, nil)
 	integrationAuth(request, bootstrapKey, ingestion.ProjectID)
 	response := httptest.NewRecorder()
-	server.httpServer.Handler.ServeHTTP(response, request)
+	server.ServeHTTP(response, request)
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), event.ID) || strings.Contains(response.Body.String(), otherEvent.ID) {
 		t.Fatalf("query status = %d, body = %s", response.Code, response.Body.String())
 	}
@@ -157,7 +158,7 @@ func TestAuthenticatedLogQueryIntegration(t *testing.T) {
 		integrationAuth(request, bootstrapKey, ingestion.ProjectID)
 		request.Header.Set("Content-Type", "application/json")
 		response = httptest.NewRecorder()
-		server.httpServer.Handler.ServeHTTP(response, request)
+		server.ServeHTTP(response, request)
 		if response.Code != http.StatusBadRequest {
 			t.Fatalf("invalid incident request %s %s status=%d body=%s", testCase.method, testCase.path, response.Code, response.Body.String())
 		}
@@ -169,7 +170,7 @@ func TestAuthenticatedLogQueryIntegration(t *testing.T) {
 		request = httptest.NewRequest(http.MethodGet, path, nil)
 		integrationAuth(request, bootstrapKey, ingestion.ProjectID)
 		response = httptest.NewRecorder()
-		server.httpServer.Handler.ServeHTTP(response, request)
+		server.ServeHTTP(response, request)
 		if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"data":[`) || !strings.Contains(response.Body.String(), "next_cursor") {
 			t.Fatalf("incident evidence %s: status=%d body=%s", path, response.Code, response.Body.String())
 		}
@@ -179,7 +180,7 @@ func TestAuthenticatedLogQueryIntegration(t *testing.T) {
 	integrationAuth(request, bootstrapKey, ingestion.ProjectID)
 	request.Header.Set("Content-Type", "application/json")
 	response = httptest.NewRecorder()
-	server.httpServer.Handler.ServeHTTP(response, request)
+	server.ServeHTTP(response, request)
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"status":"INVESTIGATING"`) {
 		t.Fatalf("update incident status = %d, body = %s", response.Code, response.Body.String())
 	}
@@ -187,7 +188,7 @@ func TestAuthenticatedLogQueryIntegration(t *testing.T) {
 	request = httptest.NewRequest(http.MethodGet, "/api/v1/incidents/"+incidentID+"/status-changes", nil)
 	integrationAuth(request, bootstrapKey, ingestion.ProjectID)
 	response = httptest.NewRecorder()
-	server.httpServer.Handler.ServeHTTP(response, request)
+	server.ServeHTTP(response, request)
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"previous_status":"OPEN"`) {
 		t.Fatalf("incident status history = %d, body = %s", response.Code, response.Body.String())
 	}
@@ -195,7 +196,7 @@ func TestAuthenticatedLogQueryIntegration(t *testing.T) {
 	request = httptest.NewRequest(http.MethodPatch, "/api/v1/incidents/"+incidentID, strings.NewReader(`{"status":"OPEN"}`))
 	integrationAuth(request, bootstrapKey, ingestion.ProjectID)
 	response = httptest.NewRecorder()
-	server.httpServer.Handler.ServeHTTP(response, request)
+	server.ServeHTTP(response, request)
 	if response.Code != http.StatusConflict {
 		t.Fatalf("invalid incident transition status = %d, body = %s", response.Code, response.Body.String())
 	}
@@ -204,7 +205,7 @@ func TestAuthenticatedLogQueryIntegration(t *testing.T) {
 	integrationAuth(request, bootstrapKey, ingestion.ProjectID)
 	request.Header.Set("Content-Type", "application/json")
 	response = httptest.NewRecorder()
-	server.httpServer.Handler.ServeHTTP(response, request)
+	server.ServeHTTP(response, request)
 	if response.Code != http.StatusCreated {
 		t.Fatalf("allowed request execution status = %d, body = %s", response.Code, response.Body.String())
 	}
@@ -219,7 +220,7 @@ func TestAuthenticatedLogQueryIntegration(t *testing.T) {
 		request = httptest.NewRequest(http.MethodGet, path, nil)
 		integrationAuth(request, bootstrapKey, ingestion.ProjectID)
 		response = httptest.NewRecorder()
-		server.httpServer.Handler.ServeHTTP(response, request)
+		server.ServeHTTP(response, request)
 		if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), executions[0].ID) {
 			t.Fatalf("allowed request history %s: status=%d body=%s", path, response.Code, response.Body.String())
 		}
@@ -239,7 +240,7 @@ func TestAuthenticatedLogQueryIntegration(t *testing.T) {
 	response = httptest.NewRecorder()
 	done := make(chan struct{})
 	go func() {
-		server.httpServer.Handler.ServeHTTP(response, request)
+		server.ServeHTTP(response, request)
 		close(done)
 	}()
 	select {

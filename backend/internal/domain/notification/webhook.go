@@ -12,11 +12,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/netip"
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/vanquan3008/tracepilot/internal/domain/netaddr"
 )
 
 var (
@@ -125,7 +126,7 @@ func (p CreateWebhookParams) Validate() error {
 	if parseError != nil || parsed.Scheme != "https" || parsed.Hostname() == "" || parsed.User != nil || parsed.Fragment != "" || strings.Contains(p.URL, "#") {
 		return fmt.Errorf("%w: webhook URL must be an HTTPS URL without credentials or fragments", ErrInvalidWebhook)
 	}
-	if net.ParseIP(parsed.Hostname()) != nil && !isPublicIP(net.ParseIP(parsed.Hostname())) {
+	if address, addressError := netip.ParseAddr(parsed.Hostname()); addressError == nil && !netaddr.IsPublic(address) {
 		return fmt.Errorf("%w: webhook URL must not target a private or reserved IP", ErrInvalidWebhook)
 	}
 	if len(p.URL) > 2048 {
@@ -212,12 +213,4 @@ func DecryptSecret(key []byte, value string) (string, error) {
 		return "", errors.New("webhook secret authentication failed")
 	}
 	return string(plaintext), nil
-}
-
-func isPublicIP(ip net.IP) bool {
-	parsed, parseError := netip.ParseAddr(ip.String())
-	if parseError != nil {
-		return false
-	}
-	return parsed.IsGlobalUnicast() && !parsed.IsPrivate() && !parsed.IsLoopback() && !parsed.IsLinkLocalUnicast() && !parsed.IsUnspecified() && !parsed.IsMulticast()
 }

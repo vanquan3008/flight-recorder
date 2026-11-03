@@ -66,11 +66,11 @@ func buildReplaySubsystem(ctx context.Context, cfg config.Config, database *post
 	return replay.NewService(database, executor), nil
 }
 
-func buildOTLPReceiver(cfg config.Config, pipe *pipeline.Pipeline, metricsPipe *pipeline.MetricsPipeline, selfMetrics *metrics.Registry, database *postgres.Database, catalog *scopeCatalog) *ingestotlp.Receiver {
+func buildOTLPReceiver(cfg config.Config, pipe *pipeline.Pipeline, metricsPipe *pipeline.MetricsPipeline, selfMetrics *metrics.Registry, tokenSource auth.IngestTokenSource, catalog *scopeCatalog) *ingestotlp.Receiver {
 	// Telemetry senders present an ingest token: a JWT for one project that its owner can revoke.
-	secret := []byte(cfg.Auth.JWTSecret)
+	secret := []byte(cfg.Auth.EffectiveIngestJWTSecret())
 	authenticateOTLP := func(ctx context.Context, raw string) (auth.Principal, error) {
-		return auth.AuthenticateIngestToken(ctx, secret, database, raw, time.Now())
+		return auth.AuthenticateIngestToken(ctx, secret, tokenSource, raw, time.Now())
 	}
 	return ingestotlp.NewReceiver(cfg.Ingestion, pipe, metricsPipe, selfMetrics, authenticateOTLP).
 		WithScopes(catalog.Resolve).

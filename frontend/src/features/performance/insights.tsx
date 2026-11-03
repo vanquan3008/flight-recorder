@@ -1,9 +1,8 @@
 import { queryString } from "../../shared/api";
 import type { PerformanceGroup, TelemetryQuality } from "../../shared/types";
-import { DetailLink, Empty, formatDuration } from "../../shared/ui";
+import { DetailLink, Empty, formatDuration, formatPercent } from "../../shared/ui";
 
 const topServices = 6;
-const percent = (value: number) => `${(value * 100).toFixed(value > 0 && value < 0.001 ? 2 : 1)}%`;
 
 // Services ranked by request errors. The bar is relative to the worst service in the window.
 export function ServiceErrorBars({ services, from, to }: { services: PerformanceGroup[]; from: string; to: string }) {
@@ -16,7 +15,7 @@ export function ServiceErrorBars({ services, from, to }: { services: Performance
       <div className="bar-track" role="img" aria-label={`${service.service}: ${service.errors} errors of ${service.requests} requests`}>
         {service.errors > 0 && <div className="bar-fill" style={{ width: `${Math.max(3, (service.errors / worst) * 100)}%` }} />}
       </div>
-      <span className="bar-meta"><span><strong>{service.errors.toLocaleString()}</strong> errors · {percent(service.error_rate)}</span>
+      <span className="bar-meta"><span><strong>{service.errors.toLocaleString()}</strong> errors · {formatPercent(service.error_rate)}</span>
         <small>{service.requests.toLocaleString()} req · p95 {service.requests ? formatDuration(service.p95_latency_nanos) : "—"}</small></span>
     </li>)}</ul>
     {worst === 0 && <p className="insight-note">No request errors in this window.</p>}

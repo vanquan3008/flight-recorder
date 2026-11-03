@@ -59,3 +59,17 @@ func TestPolicyAllowlistIsHostOnly(t *testing.T) {
 		t.Fatalf("host-only allowlist rejected a different port: %v", validateError)
 	}
 }
+
+// Carrier-grade NAT space is not public: cloud providers serve metadata from it.
+func TestPolicyRejectsSharedAddressSpace(t *testing.T) {
+	policy, policyError := NewPolicy([]string{"public.example.test"}, false)
+	if policyError != nil {
+		t.Fatal(policyError)
+	}
+	policy.lookup = func(context.Context, string) ([]net.IPAddr, error) {
+		return []net.IPAddr{{IP: net.ParseIP("100.100.100.200")}}, nil
+	}
+	if _, validateError := policy.Validate(context.Background(), "https://public.example.test"); validateError == nil {
+		t.Fatal("target resolving to shared address space was accepted")
+	}
+}

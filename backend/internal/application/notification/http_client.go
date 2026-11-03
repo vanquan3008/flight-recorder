@@ -6,8 +6,9 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"net/netip"
 	"time"
+
+	"github.com/vanquan3008/tracepilot/internal/domain/netaddr"
 )
 
 // safeClient returns the restricted HTTP client used for outbound webhooks.
@@ -39,7 +40,7 @@ func dialPublic(ctx context.Context, network, address string) (net.Conn, error) 
 		return nil, errors.New("webhook host resolved to no addresses")
 	}
 	for _, address := range addresses {
-		if !isPublicAddr(address) {
+		if !netaddr.IsPublic(address) {
 			return nil, fmt.Errorf("webhook host resolves to a private or reserved address")
 		}
 	}
@@ -52,24 +53,4 @@ func dialPublic(ctx context.Context, network, address string) (net.Conn, error) 
 		lastError = dialError
 	}
 	return nil, lastError
-}
-
-func isPublicAddr(address netip.Addr) bool {
-	if !address.IsGlobalUnicast() || address.IsPrivate() || address.IsLoopback() || address.IsLinkLocalUnicast() || address.IsUnspecified() || address.IsMulticast() {
-		return false
-	}
-	for _, prefix := range []string{
-		"100.64.0.0/10",
-		"169.254.0.0/16",
-		"192.0.2.0/24",
-		"198.18.0.0/15",
-		"198.51.100.0/24",
-		"203.0.113.0/24",
-		"::ffff:0:0/96",
-	} {
-		if parsed, err := netip.ParsePrefix(prefix); err == nil && parsed.Contains(address) {
-			return false
-		}
-	}
-	return true
 }

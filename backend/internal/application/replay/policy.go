@@ -10,6 +10,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/vanquan3008/tracepilot/internal/domain/netaddr"
 )
 
 type Policy struct {
@@ -91,7 +93,7 @@ func (policy *Policy) addresses(ctx context.Context, host string) ([]netip.Addr,
 		return nil, errors.New("replay target host is not allowed")
 	}
 	if address, parseError := netip.ParseAddr(normalized); parseError == nil {
-		if policy.allowPrivate || publicAddress(address) {
+		if policy.allowPrivate || netaddr.IsPublic(address) {
 			return []netip.Addr{address}, nil
 		}
 		return nil, errors.New("replay target resolves to a private address")
@@ -103,14 +105,10 @@ func (policy *Policy) addresses(ctx context.Context, host string) ([]netip.Addr,
 	resolved := make([]netip.Addr, 0, len(addresses))
 	for _, address := range addresses {
 		parsed, valid := netip.AddrFromSlice(address.IP)
-		if !valid || (!policy.allowPrivate && !publicAddress(parsed)) {
+		if !valid || (!policy.allowPrivate && !netaddr.IsPublic(parsed)) {
 			return nil, errors.New("replay target resolves to a private address")
 		}
 		resolved = append(resolved, parsed)
 	}
 	return resolved, nil
-}
-
-func publicAddress(address netip.Addr) bool {
-	return address.IsValid() && !address.IsPrivate() && !address.IsLoopback() && !address.IsLinkLocalUnicast() && !address.IsLinkLocalMulticast() && !address.IsMulticast() && !address.IsUnspecified()
 }

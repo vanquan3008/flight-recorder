@@ -1,4 +1,4 @@
-package httpapi
+package integration
 
 import (
 	"context"
@@ -9,12 +9,12 @@ import (
 
 	"github.com/vanquan3008/tracepilot/internal/auth"
 	"github.com/vanquan3008/tracepilot/internal/storage/postgres"
+	"github.com/vanquan3008/tracepilot/internal/transport/httpapi"
 )
 
 const integrationJWTSecret = "integration-jwt-secret-0123456789abcdef0123"
 
-// newIntegrationAdmin creates a super administrator and returns an access token for them. A super
-// administrator opens every project as its owner, which is what these tests need.
+// newIntegrationAdmin creates a super administrator and returns an access token for them.
 func newIntegrationAdmin(t testing.TB, database *postgres.Database) string {
 	t.Helper()
 	email := fmt.Sprintf("integration-admin-%d@example.test", time.Now().UnixNano())
@@ -34,5 +34,5 @@ func newIntegrationAdmin(t testing.TB, database *postgres.Database) string {
 // integrationAuth signs a request in and points it at a project.
 func integrationAuth(request *http.Request, token, projectID string) {
 	request.Header.Set("Authorization", "Bearer "+token)
-	request.Header.Set(projectHeader, projectID)
+	request.Header.Set(httpapi.HeaderProjectID, projectID)
 }

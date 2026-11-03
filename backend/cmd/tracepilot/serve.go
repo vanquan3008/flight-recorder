@@ -9,10 +9,12 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/vanquan3008/tracepilot/internal/application/intelligence"
 	"github.com/vanquan3008/tracepilot/internal/application/notification"
 	"github.com/vanquan3008/tracepilot/internal/application/retention"
+	"github.com/vanquan3008/tracepilot/internal/auth"
 	"github.com/vanquan3008/tracepilot/internal/config"
 	ingestotlp "github.com/vanquan3008/tracepilot/internal/ingest/otlp"
 	"github.com/vanquan3008/tracepilot/internal/observability/metrics"
@@ -117,7 +119,8 @@ func runServer(arguments []string) int {
 	// 5. Transport servers
 	// ---------------------------------------------------------
 
-	otlpReceiver := buildOTLPReceiver(cfg, ingestionPipeline, metricsPipeline, selfMetrics, database, scopes)
+	tokenCache := auth.NewCachedTokenSource(database, 30*time.Second).WithObserver(selfMetrics)
+	otlpReceiver := buildOTLPReceiver(cfg, ingestionPipeline, metricsPipeline, selfMetrics, tokenCache, scopes)
 	otlpServer := ingestotlp.NewServer(cfg, otlpReceiver)
 
 	managementServer := httpapi.New(
@@ -127,19 +130,19 @@ func runServer(arguments []string) int {
 		selfMetrics,
 		database,
 		replayService,
-	)
+	).WithTokenInvalidator(tokenCache)
 
 	// ---------------------------------------------------------
 	// 6. Runtime components
 	// ---------------------------------------------------------
 
 	components := []component{
-		{"management-server", managementServer.Run},
-		{"otlp-server", otlpServer.Run},
-		{"intelligence", func(ctx context.Context) error {
+		{"management-server", true, managementServer.Run},
+		{"otlp-server", true, otlpServer.Run},
+		{"intelligence", false, func(ctx context.Context) error {
 			return intelligence.Run(ctx, logger, buildObservabilityDetectionFunc(scopes, database, selfMetrics), intelligence.DefaultInterval)
 		}},
-		{"partition-maintenance", func(ctx context.Context) error {
+		{"partition-maintenance", false, func(ctx context.Context) error {
 			return runPartitionMaintenance(ctx, logger, database)
 		}},
 	}
@@ -152,7 +155,7 @@ func runServer(arguments []string) int {
 			Timeout:      cfg.Notifications.RequestTimeout,
 			Observer:     selfMetrics,
 		})
-		components = append(components, component{"webhook-notification", webhookService.Run})
+		components = append(components, component{"webhook-notification", false, webhookService.Run})
 	}
 
 	policy := retention.Policy{
@@ -162,7 +165,7 @@ func runServer(arguments []string) int {
 		Deliveries: cfg.Retention.DeliveryMaxAge,
 	}
 	if policy.Enabled() {
-		components = append(components, component{"retention", func(ctx context.Context) error {
+		components = append(components, component{"retention", false, func(ctx context.Context) error {
 			return retention.Run(ctx, logger, database, selfMetrics, policy, cfg.Retention.CheckInterval, cfg.Retention.BatchSize)
 		}})
 	}
@@ -184,7 +187,7 @@ func runServer(arguments []string) int {
 	logger.Info("server started")
 
 	// Wait until an OS termination signal is received, or a component fails or exits unexpectedly.
-	serveError := superviseComponents(appCtx, components)
+	serveError := superviseComponents(appCtx, logger, components)
 
 	// ---------------------------------------------------------
 	// 8. Graceful shutdown

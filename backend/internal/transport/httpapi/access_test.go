@@ -1,13 +1,18 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/vanquan3008/tracepilot/internal/auth"
+	"github.com/vanquan3008/tracepilot/internal/config"
+	"github.com/vanquan3008/tracepilot/internal/observability/metrics"
 )
 
 func TestRequestsNeedAValidAccessTokenAndAProject(t *testing.T) {
@@ -120,6 +125,35 @@ func TestIngestTokensAreSignedForTheirProject(t *testing.T) {
 	claims, err := auth.VerifyJWT([]byte(testJWTSecret), body.JWT, auth.TokenIngest, time.Now())
 	if err != nil || claims.Subject != testProjectIDForRoutes || claims.ID != "token-1" {
 		t.Fatalf("claims = %+v, error = %v; the token must name this project and its row", claims, err)
+	}
+}
+
+func TestIngestTokensUseDistinctIngestSecretWhenConfigured(t *testing.T) {
+	backend := newIdentityBackend(auth.RoleOwner)
+	distinctSecret := "custom-ingest-secret-000000000000000000"
+	cfg := config.Config{
+		HTTP:            config.HTTPConfig{ManagementMaxBodyBytes: 1024},
+		Auth:            config.AuthConfig{JWTSecret: testJWTSecret, IngestJWTSecret: distinctSecret, AllowRegistration: true},
+		Database:        config.DatabaseConfig{ReadinessTimeout: time.Second},
+		ShutdownTimeout: time.Second,
+	}
+	server := New(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)), func(context.Context) error { return nil }, metrics.New("test", "test", "test"), backend, nil)
+	router := http.NewServeMux()
+	server.registerAPIRoutes(router)
+
+	response := call(router, http.MethodPost, "/api/v1/projects/"+testProjectIDForRoutes+"/ingest-tokens", `{"name":"checkout"}`, "owner")
+	var body struct {
+		JWT string `json:"jwt"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil || body.JWT == "" {
+		t.Fatalf("status %d body %s", response.Code, response.Body)
+	}
+	if _, err := auth.VerifyJWT([]byte(testJWTSecret), body.JWT, auth.TokenIngest, time.Now()); err == nil {
+		t.Fatal("expected verification with auth session secret to fail")
+	}
+	claims, err := auth.VerifyJWT([]byte(distinctSecret), body.JWT, auth.TokenIngest, time.Now())
+	if err != nil || claims.Subject != testProjectIDForRoutes {
+		t.Fatalf("claims = %+v, error = %v", claims, err)
 	}
 }
 

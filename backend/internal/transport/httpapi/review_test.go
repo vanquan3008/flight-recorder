@@ -137,12 +137,11 @@ func TestSignInDoesNotKeepAnOversizedEmailAsARateLimitKey(t *testing.T) {
 	if recorder.Code != http.StatusUnauthorized || errorCode(t, recorder) != "INVALID_CREDENTIALS" {
 		t.Fatalf("status %d body %.200s, want 401 INVALID_CREDENTIALS", recorder.Code, recorder.Body)
 	}
-	server.rateLimiter.mu.Lock()
-	defer server.rateLimiter.mu.Unlock()
-	if len(server.rateLimiter.clients) == 0 {
+	clientKeys := server.rateLimiter.ClientKeys()
+	if len(clientKeys) == 0 {
 		t.Fatal("the attempt was not counted")
 	}
-	for key := range server.rateLimiter.clients {
+	for _, key := range clientKeys {
 		if len(key) > len("login:")+maxEmailLength {
 			t.Fatalf("a rate-limit key of %d bytes was stored", len(key))
 		}

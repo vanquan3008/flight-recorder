@@ -177,6 +177,7 @@ Chỉ có **một biến bắt buộc** khi chạy thử là `TRACEPILOT_DATABAS
 | :--- | :--- | :--- |
 | `TRACEPILOT_DATABASE_URL` | *(bắt buộc)* | Chuỗi kết nối PostgreSQL của dịch vụ ngoài, ví dụ `postgres://tracepilot:secret@db.internal:5432/tracepilot?sslmode=require`. |
 | `TRACEPILOT_AUTH_JWT_SECRET` | *(trống)* | Khóa ký JWT (phiên đăng nhập và ingest token), tối thiểu 32 ký tự. Bắt buộc khi `PRODUCTION=true`, và không được chứa dấu hiệu khóa mẫu. Để trống thì sinh ngẫu nhiên mỗi lần chạy (đăng nhập và token cũ mất hiệu lực khi khởi động lại, các replica không nhận token của nhau). Đổi khóa là thu hồi mọi phiên và token. |
+| `TRACEPILOT_AUTH_INGEST_JWT_SECRET` | *(trống)* | Khóa ký JWT riêng cho ingest token OTLP (tối thiểu 32 ký tự). Để trống sẽ tự động dùng chung với `TRACEPILOT_AUTH_JWT_SECRET`. Tách riêng giúp xoay khóa đăng nhập của con người mà không làm gián đoạn ingestion của máy móc. |
 | `TRACEPILOT_AUTH_ALLOW_REGISTRATION` | `true` | Cho phép đăng ký tài khoản. Tài khoản đầu tiên luôn được phép. |
 | `TRACEPILOT_PRODUCTION` | `false` | Bật chế độ chạy thật: bắt buộc TLS, `sslmode` an toàn và từ chối secret mẫu. |
 | `TRACEPILOT_LOG_LEVEL` | `info` | `debug`, `info`, `warn` hoặc `error`. |
@@ -198,7 +199,7 @@ Chỉ có **một biến bắt buộc** khi chạy thử là `TRACEPILOT_DATABAS
 
 | Biến | Mặc định | Ý nghĩa |
 | :--- | :--- | :--- |
-| `TRACEPILOT_HTTP_MAX_CONCURRENT_QUERIES` | `4` | Số request quản trị chạy đồng thời; phần vượt trả 503. |
+| `TRACEPILOT_HTTP_MAX_CONCURRENT_QUERIES` | `4` | Số request telemetry chạy đồng thời; phần vượt trả 503 (route auth có ngân sách riêng). |
 | `TRACEPILOT_HTTP_REQUEST_TIMEOUT` | `20s` | Thời gian tối đa mỗi request; quá hạn trả 504. |
 | `TRACEPILOT_HTTP_READ_HEADER_TIMEOUT` / `READ_TIMEOUT` / `WRITE_TIMEOUT` / `IDLE_TIMEOUT` | `5s` / `15s` / `30s` / `1m` | Timeout của HTTP server. |
 | `TRACEPILOT_HTTP_MAX_HEADER_BYTES` | `1048576` | Kích thước header tối đa. |
@@ -281,7 +282,7 @@ npm --prefix frontend run test
 npm --prefix frontend run build  # build ra frontend/dist
 ```
 
-Test cần PostgreSQL tự bỏ qua trừ khi đặt `TRACEPILOT_INTEGRATION_TEST=1` và `TRACEPILOT_DATABASE_URL` trỏ tới **một database dùng một lần**. Thay đổi SQL hoặc migration phải chạy `migrate up`, `migrate down 1`, `migrate up` trên database sạch (schema là một migration `000001_init`). Không chạy migrate down trên database thật; rollback image chỉ an toàn khi schema tương thích. Unit test không phải chứng nhận production.
+Test cần PostgreSQL tự bỏ qua trừ khi đặt `TRACEPILOT_INTEGRATION_TEST=1` và `TRACEPILOT_DATABASE_URL` trỏ tới **một database dùng một lần**. Thay đổi SQL hoặc migration phải chạy `migrate up`, `migrate down 1`, `migrate up` trên database sạch (hiện có `000001_init` và `000002_identity`). Không chạy migrate down trên database thật; rollback image chỉ an toàn khi schema tương thích. Unit test không phải chứng nhận production.
 
 **SQL (SQL-first).** Schema là `backend/db/migrations` (golang-migrate); truy vấn viết trong `backend/db/queries/<chức năng>.sql` (`@tên`, `sqlc.narg(tên)`), `sqlc` kiểm với schema rồi sinh hàm Go có kiểu qua pgx. `make sqlc-check` chạy sinh lại, so sánh với bản đã commit và `sqlc vet` (luật trong `sqlc.yaml`: `UPDATE`/`DELETE` phải có `WHERE`). Không truyền chuỗi SQL vào `Exec/Query` trong Go: architecture test báo lỗi, trừ các ngoại lệ có lý do trong `storage_sql_test.go` (DDL partition cần tên bảng, savepoint, dọn partition mặc định). Bảng của golang-migrate (`schema_migrations`) khai báo riêng cho sqlc ở `db/external/`. Tham số phải đặt tên rõ (`@tên::kiểu`): đừng để tham số nằm trong biểu thức như `@a::timestamptz - interval '1 hour'`, vì sqlc sẽ tự đặt một tham số phụ mà Go không gán; test `TestSqlcParametersAreNamed` bắt lỗi này. Không sửa code sinh ra bằng tay.
 

@@ -95,11 +95,17 @@ var DummyPasswordHash = sync.OnceValue(func() string {
 	return hash
 })
 
-// NewTemporaryPassword returns a random password for an administrator to hand over once.
-func NewTemporaryPassword() (string, error) {
-	secret := make([]byte, 18)
+// RandomToken returns byteLength random bytes as unpadded URL-safe base64, for secrets that are
+// shown once and compared by hash.
+func RandomToken(byteLength int) (string, error) {
+	secret := make([]byte, byteLength)
 	if _, readError := rand.Read(secret); readError != nil {
-		return "", fmt.Errorf("generate temporary password: %w", readError)
+		return "", fmt.Errorf("generate random token: %w", readError)
 	}
 	return base64.RawURLEncoding.EncodeToString(secret), nil
+}
+
+// NewTemporaryPassword returns a random password for an administrator to hand over once.
+func NewTemporaryPassword() (string, error) {
+	return RandomToken(18)
 }

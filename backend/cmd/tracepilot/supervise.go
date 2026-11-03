@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"golang.org/x/sync/errgroup"
 
@@ -17,18 +18,46 @@ import (
 
 // component is one long-running part of the process, such as a server or a background worker.
 type component struct {
-	name string
-	run  func(context.Context) error
+	name     string
+	critical bool
+	run      func(context.Context) error
 }
 
-// superviseComponents runs every component until the context ends or one of them stops. The first
-// failure cancels the rest, and the error it returns is the first one.
-func superviseComponents(ctx context.Context, components []component) error {
+// superviseComponents runs every component until the context ends or one of them stops.
+// Critical components failing will cancel the rest; auxiliary workers are automatically
+// restarted with backoff to protect system availability.
+func superviseComponents(ctx context.Context, logger *slog.Logger, components []component) error {
 	group, groupContext := errgroup.WithContext(ctx)
 	for _, part := range components {
-		group.Go(func() error { return runComponent(groupContext, part.name, part.run) })
+		if part.critical {
+			group.Go(func() error { return runComponent(groupContext, part.name, part.run) })
+		} else {
+			group.Go(func() error { return runResilientComponent(groupContext, logger, part.name, part.run) })
+		}
 	}
 	return group.Wait()
+}
+
+func runResilientComponent(ctx context.Context, logger *slog.Logger, name string, run func(context.Context) error) error {
+	for {
+		if ctx.Err() != nil {
+			return nil
+		}
+		err := run(ctx)
+		if ctx.Err() != nil {
+			return nil
+		}
+		if err == nil {
+			logger.Warn("auxiliary background worker exited unexpectedly; restarting", "worker", name)
+		} else {
+			logger.Error("auxiliary background worker failed; restarting with backoff", "worker", name, "error", err)
+		}
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-time.After(2 * time.Second):
+		}
+	}
 }
 
 // runComponent adapts a component's result for supervision:
@@ -54,15 +83,17 @@ func runComponent(ctx context.Context, name string, run func(context.Context) er
 // the API and the OTLP receiver; a random one is fine for a single local process, but configure one
 // so tokens survive restarts and replicas agree.
 func ensureJWTSecret(cfg *config.Config, logger *slog.Logger) error {
-	if cfg.Auth.JWTSecret != "" {
-		return nil
+	if cfg.Auth.JWTSecret == "" {
+		generated, secretError := auth.NewJWTSecret()
+		if secretError != nil {
+			return secretError
+		}
+		cfg.Auth.JWTSecret = hex.EncodeToString(generated)
+		logger.Warn("TRACEPILOT_AUTH_JWT_SECRET is not set; using a random secret, so sign-ins and ingest tokens stop working when this process restarts")
 	}
-	generated, secretError := auth.NewJWTSecret()
-	if secretError != nil {
-		return secretError
+	if cfg.Auth.IngestJWTSecret == "" {
+		cfg.Auth.IngestJWTSecret = cfg.Auth.JWTSecret
 	}
-	cfg.Auth.JWTSecret = hex.EncodeToString(generated)
-	logger.Warn("TRACEPILOT_AUTH_JWT_SECRET is not set; using a random secret, so sign-ins and ingest tokens stop working when this process restarts")
 	return nil
 }
 

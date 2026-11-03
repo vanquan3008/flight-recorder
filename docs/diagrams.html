@@ -77,7 +77,7 @@ flowchart LR
 
 <section id="d2">
   <h2>2. Khởi động và tắt</h2>
-  <p>Server không tự migrate. Một thành phần lỗi hoặc tự dừng thì cả tiến trình dừng.</p>
+  <p>Server không tự migrate. Thành phần cốt lõi dừng thì tiến trình dừng; worker phụ tự phục hồi với backoff.</p>
   <div class="diagram"><pre class="mermaid">
 flowchart TD
   A(["Bắt đầu serve"]) --> B["Đọc cấu hình<br/>mặc định, .env, biến môi trường"]
@@ -90,8 +90,8 @@ flowchart TD
   D --> E["Mở pool, tạo partition,<br/>project và environment mặc định"]
   E -->|"lỗi"| X1
   E --> F["Dựng replay, metrics,<br/>2 pipeline, bộ thu OTLP, API"]
-  F --> G["Chạy song song:<br/>API, OTLP, detection, partition,<br/>webhook nếu bật, retention nếu bật"]
-  G --> H{"Tín hiệu dừng<br/>hoặc một thành phần lỗi?"}
+  F --> G["Chạy song song:<br/>API, OTLP (cốt lõi),<br/>detection, partition, webhook, retention (tự phục hồi)"]
+  G --> H{"Tín hiệu dừng<br/>hoặc server cốt lõi lỗi?"}
   H -->|"chưa"| G
   H -->|"rồi"| I["Listener ngừng nhận,<br/>chờ request đang chạy"]
   I --> J["Drain pipeline events rồi metrics<br/>trong shutdown_timeout"]
@@ -141,7 +141,8 @@ sequenceDiagram
 flowchart TD
   S(["Request tới /api/v1"]) --> M["Middleware: request ID, security headers, metrics,<br/>rate limit, access log, CORS, recover, giới hạn body"]
   M --> P{"Route công khai?"}
-  P -->|"có"| H
+  P -->|"có (/auth/*)"| QA["Xin slot auth (16 slot)"]
+  QA --> H
   P -->|"không"| T{"Bearer token hợp lệ?"}
   T -->|"không"| R1(["401"])
   T -->|"hết hạn"| R2(["401 TOKEN_EXPIRED"])
@@ -155,13 +156,13 @@ flowchart TD
   X -->|"platform"| Y{"Là super admin?"}
   Y -->|"không"| R4(["403"])
   Y -->|"có"| Q
-  X -->|"project: read, write, replay, admin"| Z["Lấy project từ path hoặc X-Project-ID"]
+  X -->|"project: read, write, replay, admin"| Z["Lấy project (cache 30s)"]
   Z -->|"không có header"| R5(["400 PROJECT_REQUIRED"])
-  Z --> Z2{"Project tồn tại<br/>và có vai trò đủ scope?"}
+  Z --> Z2{"Project tồn tại<br/>và vai trò đủ scope (cache 30s)?"}
   Z2 -->|"không"| R4
-  Z2 -->|"có"| E["Resolve X-Environment<br/>mặc định là cái đầu tiên"]
+  Z2 -->|"có"| E["Resolve X-Environment<br/>cache 30s"]
   E -->|"lạ"| R6(["400 INVALID_ENVIRONMENT"])
-  E --> Q["Xin slot truy vấn, chờ 250 ms"]
+  E --> Q["Xin slot truy vấn, chờ 500 ms"]
   Q -->|"hết slot"| R7(["503 + Retry-After"])
   Q --> H["Handler chạy dưới deadline 20 s"]
   H -->|"quá hạn"| R8(["504"])
@@ -178,7 +179,7 @@ flowchart TD
   G -->|"có"| R1(["429 / RESOURCE_EXHAUSTED"])
   G -->|"không"| A["Kiểm chữ ký, hạn, loại ingest"]
   A -->|"sai"| R2(["401 / Unauthenticated"])
-  A --> L["Tra ingest_tokens:<br/>chưa thu hồi, chưa hết hạn, đúng project"]
+  A --> L["Tra ingest_tokens qua cache 30s<br/>(thu hồi xóa tức thì)"]
   L -->|"DB lỗi"| R3(["503 / Unavailable - gửi lại"])
   L -->|"không hợp lệ"| R2
   L --> SC["Phân giải project + environment<br/>cache 30 s"]
@@ -241,27 +242,32 @@ flowchart TD
 
 <section id="d8">
   <h2>8. Vòng đời ingest token</h2>
-  <p>Chuỗi JWT chỉ hiện một lần; thu hồi có hiệu lực ngay vì mỗi request OTLP tra lại dòng trong DB.</p>
+  <p>Chuỗi JWT chỉ hiện một lần, ký bằng secret riêng; thu hồi có hiệu lực ngay nhờ bộ đệm tự xóa khi bị thu hồi.</p>
   <div class="diagram"><pre class="mermaid">
 sequenceDiagram
   autonumber
   participant O as Owner
   participant A as API
+  participant C as Token Cache
   participant D as PostgreSQL
   participant S as Ứng dụng gửi telemetry
   participant R as Bộ thu OTLP
   O->>A: POST /projects/{id}/ingest-tokens
-  A->>D: Ghi dòng metadata + audit - cùng transaction
+  A->>D: Ghi metadata + audit (ký bằng INGEST_JWT_SECRET)
   A-->>O: JWT hiện một lần
   O->>S: Cấu hình OTEL_EXPORTER_OTLP_HEADERS
   S->>R: Export kèm Bearer token
-  R->>D: Tra dòng theo ID trong token
+  R->>C: Tra cứu bộ đệm in-memory (TTL 30s)
+  alt Cache miss
+    C->>D: Tra DB rồi lưu vào bộ đệm
+  end
   R-->>S: ACK sau commit
   O->>A: DELETE /ingest-tokens/{id}
   A->>D: revoked_at = now + audit
+  A->>C: Invalidate(tokenID) xóa cache ngay lập tức
   S->>R: Export tiếp
-  R->>D: Tra dòng
-  R-->>S: 401 - token bị thu hồi
+  R->>C: Cache miss -> tra DB
+  R-->>S: 401 - token đã bị thu hồi
   </pre></div>
 </section>
 

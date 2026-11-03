@@ -1,4 +1,4 @@
-package httpapi
+package render
 
 import (
 	"encoding/json"
@@ -9,8 +9,8 @@ import (
 
 func TestWriteAPIErrorIncludesRequestID(t *testing.T) {
 	response := httptest.NewRecorder()
-	response.Header().Set(requestIDHeader, "request-123")
-	writeAPIError(response, http.StatusBadRequest, "INVALID_REQUEST", "bad input")
+	response.Header().Set(RequestIDHeader, "request-123")
+	WriteAPIError(response, http.StatusBadRequest, "INVALID_REQUEST", "bad input")
 
 	var body struct {
 		Error struct {

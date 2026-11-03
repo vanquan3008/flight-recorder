@@ -113,9 +113,20 @@ type AuthConfig struct {
 	// JWTSecret signs console access tokens and ingest tokens. Without one, a random secret is made at
 	// startup, so tokens stop working on restart and replicas do not accept each other's.
 	JWTSecret string `config:"jwt_secret"`
+	// IngestJWTSecret signs and validates telemetry ingest tokens independently from console user tokens.
+	// When unset, it falls back to JWTSecret.
+	IngestJWTSecret string `config:"ingest_jwt_secret"`
 	// AllowRegistration lets anyone create an account. The first account is always allowed and becomes
 	// the super administrator.
 	AllowRegistration bool `config:"allow_registration"`
+}
+
+// EffectiveIngestJWTSecret returns IngestJWTSecret if configured, else falls back to JWTSecret.
+func (auth AuthConfig) EffectiveIngestJWTSecret() string {
+	if auth.IngestJWTSecret != "" {
+		return auth.IngestJWTSecret
+	}
+	return auth.JWTSecret
 }
 
 type TLSConfig struct {

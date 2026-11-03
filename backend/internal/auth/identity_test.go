@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"encoding/base64"
 	"errors"
 	"slices"
 	"strings"
@@ -50,6 +51,17 @@ func TestTemporaryPasswordsAreValidAndDistinct(t *testing.T) {
 	second, _ := NewTemporaryPassword()
 	if first == second || ValidatePassword(first) != nil {
 		t.Fatalf("temporary passwords %q and %q must be distinct and acceptable", first, second)
+	}
+}
+
+func TestRandomTokenHasRequestedEntropyAndIsURLSafe(t *testing.T) {
+	token, tokenError := RandomToken(32)
+	if tokenError != nil {
+		t.Fatal(tokenError)
+	}
+	decoded, decodeError := base64.RawURLEncoding.DecodeString(token)
+	if decodeError != nil || len(decoded) != 32 {
+		t.Fatalf("token %q must be 32 bytes of unpadded URL-safe base64", token)
 	}
 }
 

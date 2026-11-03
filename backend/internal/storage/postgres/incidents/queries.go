@@ -97,7 +97,7 @@ func (store *IncidentStore) ListIncidentStatusChanges(ctx context.Context, proje
 	for _, row := range rows {
 		changes = append(changes, incident.StatusChange{
 			ID: row.ID, PreviousStatus: row.PreviousStatus, Status: row.Status,
-			ActorUserID: derefString(row.ActorUserID), ChangedAt: row.ChangedAt,
+			ActorUserID: pgvalue.StringOrEmpty(row.ActorUserID), ChangedAt: row.ChangedAt,
 		})
 	}
 	return changes, nil
@@ -110,11 +110,4 @@ func incidentRecord(row sqlcstore.GetIncidentRow) incident.Incident {
 		HTTPStatus: pgvalue.IntPointer(row.HTTPStatus), Severity: row.Severity, Status: row.Status,
 		FirstSeenAt: row.FirstSeenAt, LastSeenAt: row.LastSeenAt, OccurrenceCount: row.OccurrenceCount,
 	}
-}
-
-func derefString(value *string) string {
-	if value == nil {
-		return ""
-	}
-	return *value
 }

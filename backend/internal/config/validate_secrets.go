@@ -24,6 +24,9 @@ func validateProductionSecrets(configuration Config) error {
 	if hasSampleSecretMarker(configuration.Auth.JWTSecret) {
 		return errors.New("auth.jwt_secret is a sample value from the repository; generate a random secret for production")
 	}
+	if configuration.Auth.IngestJWTSecret != "" && hasSampleSecretMarker(configuration.Auth.IngestJWTSecret) {
+		return errors.New("auth.ingest_jwt_secret is a sample value from the repository; generate a random secret for production")
+	}
 	if hasSampleSecretMarker(configuration.HTTP.MetricsToken) {
 		return errors.New("http.metrics_token is a sample value from the repository; generate a random token for production")
 	}

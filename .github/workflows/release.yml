@@ -41,12 +41,13 @@ jobs:
           fi
           tag="${GITHUB_REF_NAME#v}"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "build_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
 
       - name: Build release binaries
         run: |
           tag="${{ steps.version.outputs.tag }}"
           commit="${{ github.sha }}"
-          build_time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          build_time="${{ steps.version.outputs.build_time }}"
           mkdir -p dist
           for target in linux/amd64 linux/arm64; do
             suffix="${target//\//-}"
@@ -114,7 +115,7 @@ jobs:
           build-args: |
             VERSION=${{ steps.version.outputs.tag }}
             COMMIT=${{ github.sha }}
-            BUILD_TIME=${{ github.run_id }}
+            BUILD_TIME=${{ steps.version.outputs.build_time }}
 
       - name: Sign immutable image digest
         uses: sigstore/cosign-installer@1aa8e0f2454b781fbf0fbf306a4c9533a0c57409 # v3.7.0
