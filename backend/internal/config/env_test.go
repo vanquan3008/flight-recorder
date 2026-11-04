@@ -9,9 +9,17 @@ import (
 
 func TestEnvironmentFileDoesNotMutateProcessAndCanReload(t *testing.T) {
 	clearConfigEnvironment(t)
-	t.Chdir(t.TempDir())
+	root := t.TempDir()
+	backend := filepath.Join(root, "backend")
+	if err := os.Mkdir(backend, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(backend, "go.mod"), []byte("module test\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(root)
 	for _, databaseURL := range []string{"postgres://first", "postgres://second"} {
-		if err := os.WriteFile(".env", []byte("TRACEPILOT_DATABASE_URL="+databaseURL+"\nTRACEPILOT_HTTP_ADDRESS=:9200\n"), 0o600); err != nil {
+		if err := os.WriteFile(filepath.Join(backend, ".env"), []byte("TRACEPILOT_DATABASE_URL="+databaseURL+"\nTRACEPILOT_HTTP_ADDRESS=:9200\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		t.Setenv("TRACEPILOT_HTTP_ADDRESS", ":9300")
@@ -28,21 +36,27 @@ func TestEnvironmentFileDoesNotMutateProcessAndCanReload(t *testing.T) {
 	}
 }
 
-func TestNativeBackendCommandReadsRepositoryRootEnvironment(t *testing.T) {
+func TestBackendEnvironmentFileWinsFromRepositoryAndModuleDirectories(t *testing.T) {
 	clearConfigEnvironment(t)
 	root := t.TempDir()
 	backend := filepath.Join(root, "backend")
 	if err := os.Mkdir(backend, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(backend, "go.mod"), []byte("module test\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(root, ".env"), []byte("TRACEPILOT_DATABASE_URL=postgres://root-file\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(backend, ".env"), []byte("TRACEPILOT_DATABASE_URL=postgres://backend-file\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	for _, directory := range []string{root, backend} {
 		t.Chdir(directory)
 		configuration, err := Load()
-		if err != nil || configuration.Database.URL != "postgres://root-file" {
-			t.Fatalf("load root .env from %s: configuration=%+v error=%v", directory, configuration, err)
+		if err != nil || configuration.Database.URL != "postgres://backend-file" {
+			t.Fatalf("load backend/.env from %s: database URL=%q error=%v", directory, configuration.Database.URL, err)
 		}
 	}
 }
@@ -52,6 +66,9 @@ func TestInvalidLocalEnvironmentFileDoesNotFallBackOrExposeContents(t *testing.T
 	root := t.TempDir()
 	backend := filepath.Join(root, "backend")
 	if err := os.Mkdir(backend, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(backend, "go.mod"), []byte("module test\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(root, ".env"), []byte("TRACEPILOT_DATABASE_URL=postgres://fallback\n"), 0o600); err != nil {
