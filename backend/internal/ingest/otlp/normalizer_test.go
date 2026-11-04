@@ -274,6 +274,9 @@ func TestNormalizeSpanIdentityIncludesEnvironment(t *testing.T) {
 	if first.ID != retry.ID {
 		t.Fatalf("retry changed span event ID: %q != %q", first.ID, retry.ID)
 	}
+	if first.EnvironmentID != staging.EnvironmentID {
+		t.Fatalf("normalized span environment ID = %q, want %q", first.EnvironmentID, staging.EnvironmentID)
+	}
 	other, otherError := newNormalizer(testIngestionConfig()).span(resource, "", nil, "", span)
 	if otherError != nil {
 		t.Fatal(otherError)

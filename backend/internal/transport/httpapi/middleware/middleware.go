@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/vanquan3008/tracepilot/internal/observability/logging"
 	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/render"
 )
 
@@ -51,7 +52,7 @@ func AccessLog(logger *slog.Logger) func(http.Handler) http.Handler {
 			statusWriter := &responseStatusWriter{ResponseWriter: responseWriter, statusCode: http.StatusOK}
 			nextHandler.ServeHTTP(statusWriter, request)
 			if logger != nil {
-				logger.Info("http request",
+				logger.InfoContext(request.Context(), "http request",
 					"request_id", request.Header.Get(RequestIDHeader),
 					"method", request.Method,
 					"path", request.URL.Path,
@@ -103,7 +104,7 @@ func BodyLimit(maxBodyBytes int64) func(http.Handler) http.Handler {
 	}
 }
 
-// RequestID ensures every request has a validated X-Request-ID header.
+// RequestID ensures every request has a validated X-Request-ID and W3C trace context.
 func RequestID() func(http.Handler) http.Handler {
 	return func(nextHandler http.Handler) http.Handler {
 		return http.HandlerFunc(func(responseWriter http.ResponseWriter, request *http.Request) {
@@ -113,7 +114,23 @@ func RequestID() func(http.Handler) http.Handler {
 			}
 			request.Header.Set(RequestIDHeader, requestID)
 			responseWriter.Header().Set(RequestIDHeader, requestID)
-			nextHandler.ServeHTTP(responseWriter, request)
+
+			tc, hasTrace := logging.ParseTraceparent(request.Header.Get("traceparent"))
+			if !hasTrace {
+				tc = logging.TraceContext{
+					TraceID:    logging.NewTraceID(),
+					SpanID:     logging.NewSpanID(),
+					TraceFlags: "01",
+				}
+			}
+			tc.RequestID = requestID
+
+			traceparentVal := logging.FormatTraceparent(tc)
+			request.Header.Set("traceparent", traceparentVal)
+			responseWriter.Header().Set("traceparent", traceparentVal)
+
+			ctx := logging.WithTraceContext(request.Context(), tc)
+			nextHandler.ServeHTTP(responseWriter, request.WithContext(ctx))
 		})
 	}
 }
@@ -153,7 +170,8 @@ func CORS(allowedOrigins map[string]struct{}, allowedMethods string) func(http.H
 			}
 
 			responseWriter.Header().Set("Access-Control-Allow-Origin", origin)
-			responseWriter.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Request-ID, X-TracePilot-Refresh, X-Project-ID, X-Environment")
+			responseWriter.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Request-ID, X-TracePilot-Refresh, X-Project-ID, X-Environment, traceparent")
+			responseWriter.Header().Set("Access-Control-Expose-Headers", "X-Request-ID, traceparent")
 			responseWriter.Header().Set("Access-Control-Allow-Credentials", "true")
 			responseWriter.Header().Set("Access-Control-Allow-Methods", allowedMethods)
 			responseWriter.Header().Set("Access-Control-Max-Age", CORSMaxAgeSeconds)
@@ -188,7 +206,7 @@ func PanicRecovery(logger *slog.Logger) func(http.Handler) http.Handler {
 			defer func() {
 				if recoveredValue := recover(); recoveredValue != nil {
 					if logger != nil {
-						logger.Error("http panic", "request_id", request.Header.Get(RequestIDHeader), "error", recoveredValue)
+						logger.ErrorContext(request.Context(), "http panic", "request_id", request.Header.Get(RequestIDHeader), "error", recoveredValue)
 					}
 					render.WriteAPIError(responseWriter, http.StatusInternalServerError, "INTERNAL_ERROR", "internal server error")
 				}

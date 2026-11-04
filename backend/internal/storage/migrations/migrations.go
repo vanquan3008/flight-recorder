@@ -89,8 +89,6 @@ func open(databaseURL, migrationsPath string) (*migrate.Migrate, error) {
 		return nil, errors.New("resolve migrations path")
 	}
 	normalizedPath := filepath.ToSlash(absolutePath)
-	// Use URL opaque form so Windows drive letters are not interpreted as a
-	// POSIX `/D:/...` path by golang-migrate's file source driver.
 	sourceURL := (&url.URL{Scheme: "file", Opaque: normalizedPath}).String()
 
 	parsedDatabaseURL, parseError := url.Parse(databaseURL)

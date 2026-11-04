@@ -1,6 +1,3 @@
-// Package detection coordinates the baseline detectors and incident
-// persistence. Detectors and storage are consumer-owned interfaces so the
-// workflow is testable without a database.
 package detection
 
 import (

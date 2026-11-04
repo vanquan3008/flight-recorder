@@ -151,4 +151,3 @@ func (registry *Registry) DecGateActive(gate string) {
 	}
 	registry.gateActiveSlots.WithLabelValues(gate).Dec()
 }
-

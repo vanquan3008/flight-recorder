@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"time"
@@ -48,6 +49,10 @@ func decodeJSONBody(request *http.Request, value any) error {
 
 func (server *Server) writeInternalError(responseWriter http.ResponseWriter, operation string, cause error) {
 	render.WriteInternalError(responseWriter, server.logger, operation, cause)
+}
+
+func (server *Server) writeInternalErrorContext(ctx context.Context, responseWriter http.ResponseWriter, operation string, cause error) {
+	render.WriteInternalErrorContext(ctx, responseWriter, server.logger, operation, cause)
 }
 
 func writeInternalErrorWithLogger(responseWriter http.ResponseWriter, logger *slog.Logger, operation string, cause error) {

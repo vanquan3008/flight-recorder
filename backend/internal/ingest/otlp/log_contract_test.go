@@ -21,6 +21,9 @@ func TestLogIDsIncludeEnvironment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if firstLog.EnvironmentID != testIngestionConfig().EnvironmentID {
+		t.Fatalf("log environment ID = %q", firstLog.EnvironmentID)
+	}
 	secondLog, err := second.logRecord(resource, "", nil, "", record)
 	if err != nil {
 		t.Fatal(err)

@@ -40,8 +40,18 @@ func WriteInvalidQuery(w http.ResponseWriter, cause error) {
 
 // WriteInternalError logs the underlying cause and answers with a generic 500 or 504.
 func WriteInternalError(w http.ResponseWriter, logger *slog.Logger, operation string, cause error) {
+	WriteInternalErrorContext(context.Background(), w, logger, operation, cause)
+}
+
+// WriteInternalErrorContext logs the underlying cause with context and answers with a generic 500 or 504.
+func WriteInternalErrorContext(ctx context.Context, w http.ResponseWriter, logger *slog.Logger, operation string, cause error) {
 	if logger != nil {
-		logger.Error(operation, "error", cause)
+		reqID := w.Header().Get(RequestIDHeader)
+		if reqID != "" {
+			logger.ErrorContext(ctx, operation, "request_id", reqID, "error", cause)
+		} else {
+			logger.ErrorContext(ctx, operation, "error", cause)
+		}
 	}
 	if errors.Is(cause, context.DeadlineExceeded) {
 		WriteAPIError(w, http.StatusGatewayTimeout, "QUERY_TIMEOUT", "the query took too long; narrow the time range or filters and retry")
