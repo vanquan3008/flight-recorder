@@ -32,9 +32,9 @@ if (-not (Test-Path backend/.env)) { Copy-Item backend/.env.example backend/.env
 # 2. Tạo schema trong database
 go -C backend run ./cmd/tracepilot migrate up
 
-# 3. (Tùy chọn) nạp dữ liệu mẫu và tài khoản admin dev: admin@tracepilot.local / admin-password-123
-#    (chỉ trên database dùng để thử; đổi hoặc xóa tài khoản này trước khi dùng thật)
-psql $env:TRACEPILOT_DATABASE_URL -f backend/db/seed.sql
+# 3. (Tùy chọn) tạo project mặc định và tài khoản admin development: admin@tracepilot.local / admin-password-123
+#    (chỉ dùng ở development; seed bị từ chối khi cấu hình production)
+go -C backend run ./cmd/tracepilot seed
 
 # 4. Chạy server
 go -C backend run ./cmd/tracepilot serve
@@ -42,7 +42,17 @@ go -C backend run ./cmd/tracepilot serve
 
 Backend chỉ phục vụ API; giao diện là ứng dụng riêng ở thư mục `frontend` (xem mục Giao diện bên dưới).
 
-Chạy bằng container (không cần cài Go):
+Chạy bằng container hoặc Docker Compose:
+
+```powershell
+# Chạy toàn bộ stack (Migration, Backend và Web Console) đọc trực tiếp từ .env
+docker compose up -d
+
+# (Tùy chọn) Bật kèm cả PostgreSQL nội bộ nếu máy chưa có DB:
+# docker compose --profile local-db up -d
+```
+
+Hoặc chạy từng container riêng lẻ:
 
 ```powershell
 docker build -t tracepilot ./backend
@@ -63,7 +73,7 @@ npm --prefix frontend run dev
 
 Mở [http://localhost:5173](http://localhost:5173). Vite tự chuyển các yêu cầu `/api` và `/health` về backend cổng `:8080`, nên không cần cấu hình thêm.
 
-Phải có tài khoản mới vào được console. Chọn **Register** để đăng ký bằng email và mật khẩu (tối thiểu 12 ký tự). Nếu đã nạp `seed.sql`, đăng nhập luôn bằng `admin@tracepilot.local` / `admin-password-123` (super admin, owner của project mặc định). Không nạp seed thì **tài khoản đầu tiên** của một bản cài đặt tự thành super admin và là owner của project mặc định; từ đó đăng nhập ở tab **Sign in**.
+Phải có tài khoản mới vào được console. Khởi tạo tài khoản super admin ban đầu bằng lệnh `tracepilot seed` (chỉ tạo tài khoản super admin development và project mặc định; không nạp telemetry mẫu): đăng nhập bằng `admin@tracepilot.local` / `admin-password-123` (super admin, owner của project mặc định). Các tài khoản khác đăng ký ở tab **Register** (khi `TRACEPILOT_AUTH_ALLOW_REGISTRATION=true`), sau đó super admin sẽ cấp quyền sử dụng: cấp cờ super admin (Settings → Accounts) hoặc phân quyền trong project (Settings → Members).
 
 > [!TIP]
 > Sau khi vào console, tạo project cho sản phẩm của bạn (hoặc dùng project mặc định), rồi vào **Settings → Ingest tokens** để tạo token cho ứng dụng gửi dữ liệu.
@@ -74,7 +84,7 @@ Có ba loại người dùng:
 
 | Vai trò | Là ai | Làm được |
 | :--- | :--- | :--- |
-| **Super admin** | Tài khoản đầu tiên, hoặc tài khoản được super admin khác cấp cờ | Quản lý tài khoản (khóa, đặt lại mật khẩu), mở mọi project với quyền owner |
+| **Super admin** | Tài khoản khởi tạo từ seed (`admin@tracepilot.local`), hoặc tài khoản được super admin cấp cờ trong Accounts | Quản lý tài khoản (cấp/hủy admin, khóa, đặt lại mật khẩu), mở mọi project với quyền owner |
 | **Owner** | Người tạo project để nhận log của sản phẩm mình | Quản lý project: thành viên, ingest token, environment, webhook, replay, audit |
 | **User** | Người được owner thêm vào project | Xem trace, log, incident, topology của project và đổi trạng thái incident |
 
@@ -83,7 +93,7 @@ Có ba loại người dùng:
 - **Gửi telemetry vào một project:** owner tạo **ingest token** (Settings → Ingest tokens) — một JWT chỉ ghi được vào project đó, thu hồi được, hết hạn sau 1 năm mặc định. Dùng cho OTLP:
   `OTEL_EXPORTER_OTLP_HEADERS=authorization=Bearer%20<token>`. Chọn environment bằng header `X-Environment` (OTLP gRPC: metadata `x-environment`); không gửi thì dữ liệu vào environment đầu tiên.
 - **Không còn API key.** Không có cách đọc dữ liệu bằng khóa tĩnh; công cụ ngoài đăng nhập lấy access token và gửi `X-Project-ID` (ID hoặc slug) cùng `X-Environment` tùy chọn.
-- Đặt `TRACEPILOT_AUTH_ALLOW_REGISTRATION=false` để đóng đăng ký (tài khoản đầu tiên luôn được phép); khi đó super admin tạo tài khoản và đưa mật khẩu tạm một lần. Chưa có SSO, MFA hay đặt lại mật khẩu qua email.
+- Đặt `TRACEPILOT_AUTH_ALLOW_REGISTRATION=false` để đóng hoàn toàn tính năng đăng ký; khi đó super admin tạo tài khoản trong Settings → Accounts và đưa mật khẩu tạm một lần. Chưa có SSO, MFA hay đặt lại mật khẩu qua email.
 - Project mặc định (`TRACEPILOT_INGESTION_PROJECT_*`) vẫn được tạo khi khởi động. Chưa có thao tác xóa project hay environment.
 
 ---
@@ -178,15 +188,15 @@ Chỉ có **một biến bắt buộc** khi chạy thử là `TRACEPILOT_DATABAS
 | `TRACEPILOT_DATABASE_URL` | *(bắt buộc)* | Chuỗi kết nối PostgreSQL của dịch vụ ngoài, ví dụ `postgres://tracepilot:secret@db.internal:5432/tracepilot?sslmode=require`. |
 | `TRACEPILOT_AUTH_JWT_SECRET` | *(trống)* | Khóa ký JWT (phiên đăng nhập và ingest token), tối thiểu 32 ký tự. Bắt buộc khi `PRODUCTION=true`, và không được chứa dấu hiệu khóa mẫu. Để trống thì sinh ngẫu nhiên mỗi lần chạy (đăng nhập và token cũ mất hiệu lực khi khởi động lại, các replica không nhận token của nhau). Đổi khóa là thu hồi mọi phiên và token. |
 | `TRACEPILOT_AUTH_INGEST_JWT_SECRET` | *(trống)* | Khóa ký JWT riêng cho ingest token OTLP (tối thiểu 32 ký tự). Để trống sẽ tự động dùng chung với `TRACEPILOT_AUTH_JWT_SECRET`. Tách riêng giúp xoay khóa đăng nhập của con người mà không làm gián đoạn ingestion của máy móc. |
-| `TRACEPILOT_AUTH_ALLOW_REGISTRATION` | `true` | Cho phép đăng ký tài khoản. Tài khoản đầu tiên luôn được phép. |
-| `TRACEPILOT_PRODUCTION` | `false` | Bật chế độ chạy thật: bắt buộc TLS, `sslmode` an toàn và từ chối secret mẫu. |
+| `TRACEPILOT_AUTH_ALLOW_REGISTRATION` | `true` | Cho phép đăng ký tài khoản thông thường. Super admin development được khởi tạo qua seed. |
+| `TRACEPILOT_PRODUCTION` | `false` | Bật production: yêu cầu JWT secret, PostgreSQL TLS an toàn và từ chối secret mẫu; TLS của listener tùy chọn. |
 | `TRACEPILOT_LOG_LEVEL` | `info` | `debug`, `info`, `warn` hoặc `error`. |
 | `TRACEPILOT_SHUTDOWN_TIMEOUT` | `15s` | Thời gian tối đa để flush queue khi tắt. |
 | `TRACEPILOT_HTTP_ADDRESS` | `:8080` | Địa chỉ API quản trị, health và metrics. |
 | `TRACEPILOT_HTTP_METRICS_TOKEN` | *(trống)* | Token cho Prometheus đọc `/metrics` khi `PRODUCTION=true`, tối thiểu 32 ký tự, gửi bằng `Authorization: Bearer`. Để trống thì chỉ super admin đã đăng nhập đọc được. |
 | `TRACEPILOT_HTTP_ALLOWED_ORIGINS` | *(trống)* | Origin của console được gọi API từ trình duyệt (chỉ cần khi console khác origin). |
 | `TRACEPILOT_HTTP_TRUSTED_PROXIES` | *(trống)* | CIDR hoặc IP của reverse proxy; để trống thì bỏ qua `X-Forwarded-For`. |
-| `TRACEPILOT_TLS_CERTIFICATE_FILE`, `TRACEPILOT_TLS_PRIVATE_KEY_FILE` | *(trống)* | Cặp file TLS, phải đặt cùng nhau; bắt buộc ở production. |
+| `TRACEPILOT_TLS_CERTIFICATE_FILE`, `TRACEPILOT_TLS_PRIVATE_KEY_FILE` | *(trống)* | Cặp file TLS cho management/OTLP; tùy chọn, nhưng phải đặt cả hai nếu bật. |
 | `TRACEPILOT_RETENTION_MAX_AGE` | `168h` | Thời gian lưu trace, log, metric. `0s` là giữ mãi (áp dụng cho cả bốn biến retention). |
 | `TRACEPILOT_RETENTION_INCIDENT_MAX_AGE` | `2160h` | Incident đã đóng. |
 | `TRACEPILOT_RETENTION_AUDIT_MAX_AGE` | `4320h` | Lịch sử thay đổi truy cập (tài khoản, project, thành viên, ingest token). |
@@ -214,7 +224,7 @@ Chỉ có **một biến bắt buộc** khi chạy thử là `TRACEPILOT_DATABAS
 | Biến | Mặc định | Ý nghĩa |
 | :--- | :--- | :--- |
 | `TRACEPILOT_INGESTION_GRPC_ADDRESS` / `HTTP_ADDRESS` | `:4317` / `:4318` | Địa chỉ OTLP gRPC và HTTP. Cùng với `TRACEPILOT_HTTP_ADDRESS`, ba địa chỉ phải khác nhau. |
-| `TRACEPILOT_INGESTION_PROJECT_ID` / `PROJECT_SLUG` / `PROJECT_NAME` | `01900000-0000-7000-8000-000000000001` / `default` / `Default Project` | Project mặc định, được tạo khi khởi động; tài khoản đầu tiên là owner của nó. **Không đổi sau khi đã có dữ liệu**, vì dữ liệu cũ gắn với ID cũ. `seed.sql` dùng đúng cặp ID mặc định. Project khác tạo trong console. |
+| `TRACEPILOT_INGESTION_PROJECT_ID` / `PROJECT_SLUG` / `PROJECT_NAME` | `01900000-0000-7000-8000-000000000001` / `default` / `Default Project` | Project mặc định, được tạo khi khởi động; tài khoản super admin seed là owner của nó. **Không đổi sau khi đã có dữ liệu**, vì dữ liệu cũ gắn với ID cũ. Lệnh `tracepilot seed` dùng ID và tên trong cấu hình hiện tại. Project khác tạo trong console. |
 | `TRACEPILOT_INGESTION_ENVIRONMENT_ID` / `ENVIRONMENT_NAME` | `01900000-0000-7000-8000-000000000002` / `development` | Environment mặc định của project mặc định, cùng lưu ý trên. |
 | `TRACEPILOT_INGESTION_MAX_REQUEST_BYTES` | `4194304` | Kích thước request OTLP tối đa (4 MiB). |
 | `TRACEPILOT_INGESTION_MAX_RECORDS_PER_REQUEST` | `10000` | Số span/log/metric tối đa mỗi request. |
@@ -290,7 +300,7 @@ Test cần PostgreSQL tự bỏ qua trừ khi đặt `TRACEPILOT_INTEGRATION_TES
 
 **Postman.** Import `docs/tracepilot.postman_collection.json` (biến `baseUrl`, `otlpUrl` nằm trong file) và chạy thư mục 1 đến 6, hoặc `npx newman run docs/tracepilot.postman_collection.json`. Nó đăng ký tài khoản và project, tạo ingest token, gửi trace/log/metric, xác nhận không credential nào được lưu, và kiểm tra 401/403/413/429, vai trò thành viên, phiên đăng nhập cùng việc token bị thu hồi dừng ngay. Request "Bad token, repeat 65x" chặn cả địa chỉ gọi trong một phút, nên chạy riêng.
 
-**Browser.** Với DB đã migrate và seed cùng server đang chạy: `npm --prefix frontend exec playwright -- install chromium`, đặt `TRACEPILOT_E2E_BASE_URL` (và tùy chọn `TRACEPILOT_E2E_EMAIL` / `TRACEPILOT_E2E_PASSWORD`, mặc định là tài khoản admin của `seed.sql`), rồi `npm --prefix frontend run test:e2e`.
+**Browser.** Với DB đã migrate, tài khoản development được seed và server đang chạy: `npm --prefix frontend exec playwright -- install chromium`, đặt `TRACEPILOT_E2E_BASE_URL` (và tùy chọn `TRACEPILOT_E2E_EMAIL` / `TRACEPILOT_E2E_PASSWORD`, mặc định là tài khoản admin do `tracepilot seed` tạo), rồi `npm --prefix frontend run test:e2e`.
 
 ---
 
@@ -302,7 +312,7 @@ Thảo luận thay đổi lớn trong issue trước; sửa nhỏ có thể gử
 
 Không mở issue công khai cho nghi vấn lỗ hổng liên quan đến lộ credential, truy cập chéo project, SSRF của replay, lạm dụng webhook hay đọc file tùy ý. Dùng tính năng báo cáo lỗ hổng riêng tư của repository, kèm phiên bản hoặc commit, bước tái hiện bằng dữ liệu tổng hợp và tác động quan sát được. Chủ repo cần công bố một đầu mối bảo mật được theo dõi trước bản phát hành đầu tiên. Hiện chỉ bản gắn tag mới nhất và `main` được vá.
 
-Triển khai production phải: bật xác thực, TLS cho management/OTLP và PostgreSQL `verify-full`, thay JWT secret mẫu; đặt `TRACEPILOT_AUTH_JWT_SECRET` ngẫu nhiên và giữ trong secret manager, mỗi ứng dụng một ingest token riêng, cấp cho người dùng vai trò user trừ khi họ cần quản lý project, cân nhắc đóng đăng ký, phục vụ console qua HTTPS (cookie refresh `Secure` bắt buộc khi `PRODUCTION=true`); để replay tắt trừ khi đã duyệt allowlist; chỉ dùng webhook HTTPS với encryption key trong secret manager; không ghi token, secret webhook hay telemetry thô vào log. TracePilot chưa được duyệt cho telemetry production cho đến khi chủ repo chấp nhận các tiêu chí do chủ repo chốt (tải, SLO, sao lưu/phục hồi, TLS).
+Triển khai production phải: bật xác thực và PostgreSQL `verify-full`; nếu management/OTLP đi qua mạng không tin cậy, bật TLS tại listener hoặc kết thúc TLS ở reverse proxy; thay JWT secret mẫu; đặt `TRACEPILOT_AUTH_JWT_SECRET` ngẫu nhiên và giữ trong secret manager, mỗi ứng dụng một ingest token riêng, cấp cho người dùng vai trò user trừ khi họ cần quản lý project, cân nhắc đóng đăng ký, phục vụ console qua HTTPS (cookie refresh `Secure` bắt buộc khi `PRODUCTION=true`); để replay tắt trừ khi đã duyệt allowlist; chỉ dùng webhook HTTPS với encryption key trong secret manager; không ghi token, secret webhook hay telemetry thô vào log. TracePilot chưa được duyệt cho telemetry production cho đến khi chủ repo chấp nhận các tiêu chí do chủ repo chốt (tải, SLO, sao lưu/phục hồi, TLS).
 
 ---
 

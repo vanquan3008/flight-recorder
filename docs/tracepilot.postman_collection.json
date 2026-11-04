@@ -202,7 +202,7 @@
     },
     {
       "name": "2. Account, project and ingest token",
-      "description": "Registers (or signs in) and makes a project for this run. Everything after this folder works in that project, so a run never touches other people's data.\n\nThe first account on an empty installation becomes the super administrator. On an installation that has accounts, set accountEmail/accountPassword to yours, or leave them: a new account is registered when registration is open.",
+      "description": "Registers (or signs in) and makes a project for this run. Everything after this folder works in that project, so a run never touches other people's data.\n\nA development-only super administrator is seeded via `tracepilot seed`; it does not load demo telemetry. On an installation, set accountEmail/accountPassword to yours or use the seeded admin, or leave them: a new account is registered when registration is open.",
       "item": [
         {
           "name": "Auth status",
@@ -1227,6 +1227,51 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('status is 200', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Live stream: SSE connection",
+          "description": "Keeps an authenticated SSE connection open. The server admits at most 256 concurrent streams and returns 503 STREAM_LIMIT when full.",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "X-Project-ID",
+                "value": "{{projectId}}"
+              },
+              {
+                "key": "Accept",
+                "value": "text/event-stream"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/live/stream",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "live",
+                "stream"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('content-type is event-stream', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('text/event-stream'); });"
                 ]
               }
             }

@@ -37,8 +37,7 @@ events và pipeline metrics drain lần lượt trong `shutdown_timeout` (15s). 
 
 ## 3. Đăng ký, đăng nhập, refresh [3]
 
-- **Đăng ký:** tài khoản đầu tiên luôn được phép, thành **super admin** và owner của project mặc
-  định. Các tài khoản sau chỉ đăng ký được khi `ALLOW_REGISTRATION=true`. Mật khẩu 12–256 ký tự.
+- **Đăng ký:** super admin development được tạo qua seed (`tracepilot seed` với `admin@tracepilot.local` / `admin-password-123`). Các tài khoản khác đăng ký qua form/API khi `ALLOW_REGISTRATION=true` và khởi tạo ở quyền tài khoản thông thường. Sau đó super admin sẽ cấp quyền sử dụng: cấp cờ super admin (`platform_admin`) trong Settings → Accounts hoặc thêm vào project trong Settings → Members. Mật khẩu 12–256 ký tự. Khi `ALLOW_REGISTRATION=false`, đăng ký tự do bị đóng hoàn toàn.
 - **Đăng nhập:** giới hạn theo IP và 10 lần/email/cửa sổ. Email lạ hay sai mật khẩu đều tốn cùng
   thời gian và cùng một thông báo. Thành công → server tạo phiên refresh, đặt cookie
   `tp_refresh` (`HttpOnly`, `SameSite=Strict`, path `/api/v1/auth`) và trả **access token** (JWT HS256,
@@ -125,7 +124,18 @@ chạy theo chu kỳ, mỗi nhóm một `max_age` (`0s` = giữ mãi): telemetry
 đóng 90 ngày (kéo theo evidence, occurrence, lịch sử), audit 180 ngày, webhook delivery 30 ngày. Incident đang
 mở và delivery đang xử lý không bao giờ bị xóa.
 
-## 11. Giới hạn đã biết
+## 11. Telemetry streaming thời gian thực (SSE) và tối ưu Waterfall
+
+- **Live Streaming qua SSE:** Tuyến `GET /api/v1/live/stream` (scope `read`) mở kênh Server-Sent Events (SSE)
+  truyền trực tiếp log mới và sự cố phát sinh ngay sau khi transaction batch commit. Stream chạy qua bộ nhớ
+  `StreamHub` độc lập, không chiếm slot truy vấn bounded concurrency (`admitQuery`), có giới hạn 256 kết nối đồng thời
+  và bỏ write deadline riêng cho stream để không bị ngắt sau 30 giây.
+  Console cung cấp chế độ **Live Tail** trên trang Logs để theo dõi dòng log trực tiếp theo thời gian thực.
+- **Tối ưu hóa Trace Waterfall:** Cây span được ảo hóa hiển thị (`useVirtualList` zero-dependency); với các trace
+  phức tạp có hàng nghìn span, trình duyệt chỉ render các phần tử trong khung cuộn (viewport) kèm vùng đệm, giữ
+  cho DOM nhẹ và mượt mà mà không làm đứt đoạn trục thời gian.
+
+## 12. Giới hạn đã biết
 
 - Rate limit tính theo từng tiến trình; nhiều replica thì đặt thêm ở reverse proxy.
 - Ngân sách byte của queue là ước lượng, không phải giới hạn RSS (gRPC giải mã trước khi vào hàng đợi).

@@ -34,7 +34,7 @@
   <nav>
     <a href="#d1">1 Tổng quan</a><a href="#d2">2 Khởi động / tắt</a><a href="#d3">3 Đăng nhập</a>
     <a href="#d4">4 Request API</a><a href="#d5">5 Ingest OTLP</a><a href="#d6">6 Incident</a>
-    <a href="#d7">7 Detection &amp; RCA</a><a href="#d8">8 Ingest token</a><a href="#d9">9 Webhook</a><a href="#d10">10 Retention</a>
+    <a href="#d7">7 Detection &amp; RCA</a><a href="#d8">8 Ingest token</a><a href="#d9">9 Webhook</a><a href="#d10">10 Retention</a><a href="#d11">11 Streaming</a>
   </nav>
 </header>
 <main>
@@ -307,6 +307,33 @@ flowchart TD
   end
   Ret --> N["Lỗi một nhóm không dừng nhóm khác"]
   K["Không bao giờ xóa:<br/>incident OPEN / INVESTIGATING,<br/>delivery đang xử lý"] -.-> Ret
+  </pre></div>
+</section>
+
+<section id="d11">
+  <h2>11. Telemetry streaming thời gian thực (SSE)</h2>
+  <p>Stream log mới và cảnh báo sự cố trực tiếp tới console qua Server-Sent Events, tối đa 256 kết nối đồng thời và không chiếm concurrency slot.</p>
+  <div class="diagram"><pre class="mermaid">
+sequenceDiagram
+  autonumber
+  actor User as Console (Live Tail)
+  participant API as HTTP API (:8080)
+  participant Hub as StreamHub (In-Memory)
+  participant Pipe as Ingestion Pipeline
+  participant DB as PostgreSQL
+
+  User->>API: GET /api/v1/live/stream (Bearer token)
+  API->>API: Xác thực scope read & resolve env
+  API->>Hub: Đăng ký subscriber (project, env)
+  Hub-->>API: Từ chối nếu đã đủ 256 subscriber
+  API-->>User: 200 OK (text/event-stream, event: connected)
+  loop Ingest & Commit
+    Pipe->>DB: Commit batch telemetry
+    DB-->>Pipe: Transaction committed
+    Pipe->>Hub: BroadcastEvents(batch)
+    Hub->>API: Non-blocking dispatch qua channel
+    API-->>User: data: {"type":"log", "payload":{...}}\n\n
+  end
   </pre></div>
 </section>
 </main>
