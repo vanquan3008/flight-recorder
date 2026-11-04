@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -48,9 +47,9 @@ func runResilientComponent(ctx context.Context, logger *slog.Logger, name string
 			return nil
 		}
 		if err == nil {
-			logger.Warn("auxiliary background worker exited unexpectedly; restarting", "worker", name)
+			logger.WarnContext(ctx, "auxiliary background worker exited unexpectedly; restarting", "worker", name)
 		} else {
-			logger.Error("auxiliary background worker failed; restarting with backoff", "worker", name, "error", err)
+			logger.ErrorContext(ctx, "auxiliary background worker failed; restarting with backoff", "worker", name, "error", err)
 		}
 		select {
 		case <-ctx.Done():
@@ -71,12 +70,12 @@ func runComponent(ctx context.Context, name string, run func(context.Context) er
 		if ctx.Err() != nil && (errors.Is(err, context.Canceled) || errors.Is(err, http.ErrServerClosed)) {
 			return nil
 		}
-		return fmt.Errorf("%s: %w", name, err)
+		return errors.New(name + ": " + err.Error())
 	}
 	if ctx.Err() != nil {
 		return nil
 	}
-	return fmt.Errorf("%s stopped unexpectedly", name)
+	return errors.New(name + " stopped unexpectedly")
 }
 
 // ensureJWTSecret makes sure there is a signing secret. Tokens are signed with one secret shared by

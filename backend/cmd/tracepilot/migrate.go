@@ -2,7 +2,7 @@ package main
 
 import (
 	"flag"
-	"fmt"
+	"log/slog"
 	"os"
 	"strconv"
 
@@ -38,7 +38,7 @@ func runMigrations(arguments []string) int {
 		}
 		parsedSteps, parseError := strconv.Atoi(operationArguments[1])
 		if parseError != nil || parsedSteps <= 0 {
-			fmt.Fprintln(os.Stderr, "migration down steps must be a positive integer")
+			slog.Error("migration down steps must be a positive integer")
 			return 2
 		}
 		steps = parsedSteps
@@ -49,19 +49,19 @@ func runMigrations(arguments []string) int {
 
 	configuration, loadError := config.Load()
 	if loadError != nil {
-		fmt.Fprintf(os.Stderr, "invalid configuration: %v\n", loadError)
+		slog.Error("invalid configuration", "error", loadError)
 		return 2
 	}
 
 	result, migrationError := migrations.Run(configuration.Database.URL, configuration.Database.MigrationsPath, operation, steps)
 	if migrationError != nil {
-		fmt.Fprintf(os.Stderr, "migration failed: %v\n", migrationError)
+		slog.Error("migration failed", "error", migrationError)
 		return 1
 	}
-	fmt.Println(result)
+	slog.Info("migration completed", "result", result)
 	return 0
 }
 
 func migrationUsage() {
-	fmt.Fprintln(os.Stderr, "usage: tracepilot migrate <up|down STEPS|version>")
+	slog.Error("invalid migration arguments", "usage", "tracepilot migrate <up|down STEPS|version>")
 }

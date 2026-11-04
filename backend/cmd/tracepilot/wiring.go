@@ -50,23 +50,28 @@ func buildReplaySubsystem(ctx context.Context, cfg config.Config, database *post
 	}
 	policy, policyError := replay.NewPolicy(cfg.Replay.AllowedHosts, cfg.Replay.AllowPrivate)
 	if policyError != nil {
-		logger.Error("replay policy initialization failed", "error", policyError)
+		logger.ErrorContext(ctx, "replay policy initialization failed", "error", policyError)
 		return nil, policyError
 	}
 	executor, executorError := replay.NewExecutor(policy, cfg.Replay.Timeout, cfg.Replay.MaxResponseBytes, cfg.Replay.MaxConcurrent)
 	if executorError != nil {
-		logger.Error("replay executor initialization failed", "error", executorError)
+		logger.ErrorContext(ctx, "replay executor initialization failed", "error", executorError)
 		return nil, executorError
 	}
 	cleanupCtx, cancelCleanup := context.WithTimeout(ctx, 5*time.Second)
 	if _, cleanupError := database.FailStaleReplayExecutions(cleanupCtx, cfg.Replay.Timeout); cleanupError != nil {
-		logger.Warn("stale replay execution cleanup failed", "error", cleanupError)
+		logger.WarnContext(ctx, "stale replay execution cleanup failed", "error", cleanupError)
 	}
 	cancelCleanup()
 	return replay.NewService(database, executor), nil
 }
 
-func buildOTLPReceiver(cfg config.Config, pipe *pipeline.Pipeline, metricsPipe *pipeline.MetricsPipeline, selfMetrics *metrics.Registry, tokenSource auth.IngestTokenSource, catalog *scopeCatalog) *ingestotlp.Receiver {
+func buildOTLPReceiver(
+	cfg config.Config,
+	pipe *pipeline.Pipeline,
+	metricsPipe *pipeline.MetricsPipeline,
+	selfMetrics *metrics.Registry,
+	tokenSource auth.IngestTokenSource, catalog *scopeCatalog) *ingestotlp.Receiver {
 	// Telemetry senders present an ingest token: a JWT for one project that its owner can revoke.
 	secret := []byte(cfg.Auth.EffectiveIngestJWTSecret())
 	authenticateOTLP := func(ctx context.Context, raw string) (auth.Principal, error) {

@@ -29,7 +29,7 @@ func runPartitionMaintenance(ctx context.Context, logger *slog.Logger, store par
 			return nil
 		case <-ticker.C:
 			if err := ensureTelemetryPartitions(ctx, store); err != nil {
-				logger.Error("partition maintenance failed", "error", err)
+				logger.ErrorContext(ctx, "partition maintenance failed", "error", err)
 			}
 		}
 	}
