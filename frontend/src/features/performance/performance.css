@@ -1,61 +1,88 @@
-/* Traffic and performance: one panel, sections divided by hairlines instead of nested cards. */
+/* Traffic and performance: modern Bento layout with glass polish. */
 .performance-note { margin: 12px 16px 10px; color: var(--muted); font-size: 12px; line-height: 1.5; }
 .performance-filters { padding: 0 16px 12px; margin: 0; align-items: end; }
 .performance-filters label { display: grid; gap: 5px; color: var(--muted); font-size: 12px; }
 
-/* KPI strip: six figures edge to edge, each with a sparkline. */
-.panel.performance-dashboard .performance-stats { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); margin: 0; border: 0; border-top: 1px solid var(--glass-divider); border-bottom: 1px solid var(--glass-divider); border-radius: 0; background: transparent; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; }
-.panel.performance-dashboard .performance-stats .stat-card { padding: 12px 16px; border: 0; border-right: 1px solid var(--glass-divider); border-radius: 0; }
+/* KPI strip: six figures edge to edge, each with an interactive sparkline. */
+.panel.performance-dashboard .performance-stats { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); margin: 0; border: 0; border-top: 1px solid var(--glass-divider); border-bottom: 1px solid var(--glass-divider); border-radius: 0; background: color-mix(in srgb, var(--surface) 25%, transparent); box-shadow: none; backdrop-filter: none; }
+.panel.performance-dashboard .performance-stats .stat-card { padding: 14px 18px; border: 0; border-right: 1px solid var(--glass-divider); border-radius: 0; transition: background .15s ease; }
+.panel.performance-dashboard .performance-stats .stat-card:hover { background: var(--glass-hover); }
 .panel.performance-dashboard .performance-stats .stat-card:last-child { border-right: 0; }
-.stat-main { display: flex; align-items: flex-end; justify-content: space-between; gap: 8px; }
-.stat-main .stat-value { min-width: 0; font-size: 22px; font-weight: 650; line-height: 1.15; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
-.sparkline { flex-shrink: 0; width: 56px; height: 24px; margin-bottom: 2px; overflow: visible; }
+.stat-card .stat-label { font-size: 11px; font-weight: 650; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
+.stat-main { display: flex; align-items: flex-end; justify-content: space-between; gap: 8px; margin: 3px 0 2px; }
+.stat-main .stat-value { min-width: 0; font-size: 23px; font-weight: 700; line-height: 1.15; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.sparkline { flex-shrink: 0; width: 60px; height: 26px; margin-bottom: 2px; overflow: visible; filter: drop-shadow(0 0 6px var(--accent-glow)); }
 
-/* Trends: two charts side by side, no inner frame. */
-.performance-trends { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0; margin: 0; }
-.panel .performance-trend { min-width: 0; margin: 0; padding: 14px 16px 12px; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
-.panel .performance-trend + .performance-trend { border-left: 1px solid var(--glass-divider); }
-.performance-trend figcaption { display: flex; flex-wrap: wrap; gap: 9px; align-items: center; justify-content: space-between; font-size: 12px; font-weight: 650; }
-.performance-legend { display: flex; gap: 14px; color: var(--muted); font-size: 11px; font-weight: 500; }
+/* Trends: Bento grid with soft borders and crisp timeline metrics. */
+.performance-trends { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 12px; }
+.panel .performance-trend { min-width: 0; margin: 0; padding: 16px 20px 14px; border: 1px solid var(--glass-divider); border-radius: 14px; background: color-mix(in srgb, var(--surface) 35%, transparent); box-shadow: 0 4px 20px rgba(0, 0, 0, .06); }
+.performance-trend figcaption { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-start; justify-content: space-between; font-size: 13px; font-weight: 650; }
+.performance-title-group { display: flex; flex-direction: column; gap: 3px; }
+.performance-title-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.performance-hud-chips { display: inline-flex; align-items: center; gap: 6px; }
+.hud-chip { display: inline-flex; align-items: center; gap: 4px; padding: 1.5px 7px; border-radius: 999px; border: 1px solid var(--glass-divider); background: var(--glass-field); font-size: 10px; line-height: 1.3; }
+.hud-chip-label { color: var(--muted); font-weight: 700; letter-spacing: .06em; font-size: 9.5px; }
+.hud-chip-value { color: var(--text); font-family: var(--font-mono); font-weight: 700; }
+.hud-chip-ok { border-color: rgba(16, 185, 129, 0.28); background: rgba(16, 185, 129, 0.08); color: #059669; }
+:is(.dark) .hud-chip-ok { color: #34d399; }
+.hud-chip-warn { border-color: rgba(244, 63, 94, 0.32); background: rgba(244, 63, 94, 0.1); color: #e11d48; }
+:is(.dark) .hud-chip-warn { color: #fb7185; }
+.hud-dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; box-shadow: 0 0 6px currentColor; }
+
+@keyframes radar-pulse {
+  0% { transform: scale(0.85); opacity: 0.8; }
+  50% { transform: scale(1.6); opacity: 0.15; }
+  100% { transform: scale(0.85); opacity: 0.8; }
+}
+.chart-radar-ping {
+  transform-origin: center;
+  transform-box: fill-box;
+  animation: radar-pulse 2.2s ease-in-out infinite;
+}
+
+.performance-chart-date { color: var(--faint); font-size: 11px; font-weight: 400; font-family: var(--font-mono); }
+.performance-legend { display: flex; gap: 14px; color: var(--muted); font-size: 11.5px; font-weight: 500; }
 .performance-legend > span { display: inline-flex; gap: 6px; align-items: center; }
-.performance-legend i { width: 8px; height: 8px; border-radius: 50%; }
-.performance-trend svg { display: block; width: 100%; height: auto; margin-top: 10px; overflow: visible; }
-.performance-trend svg text { fill: var(--faint); font-size: 11px; }
+.performance-legend i { width: 8px; height: 8px; border-radius: 50%; box-shadow: 0 0 6px currentColor; }
+.performance-trend svg { display: block; width: 100%; height: auto; margin-top: 10px; overflow: visible; cursor: crosshair; }
+.performance-trend svg text { fill: var(--faint); font-size: 11px; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.performance-trend .chart-x-axis text { fill: var(--muted); font-weight: 500; }
 .performance-trend svg line[stroke-dasharray] { stroke: var(--glass-divider); }
-.performance-chart-window { margin: 6px 0 0; color: var(--faint); font-size: 10.5px; }
+.chart-interactive-hover { transition: opacity .12s ease; }
 
 /* Insights: services ranked by errors, and how followable the telemetry is. */
 .performance-insights { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); border-top: 1px solid var(--glass-divider); }
 .performance-insights.single { grid-template-columns: minmax(0, 1fr); }
-.performance-insights > section { min-width: 0; padding: 14px 16px 16px; }
+.performance-insights > section { min-width: 0; padding: 16px 20px 18px; }
 .performance-insights > section + section { border-left: 1px solid var(--glass-divider); }
-.performance-insights h3, .performance-breakdown h3 { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; justify-content: space-between; margin: 0 0 12px; font-size: 12px; font-weight: 650; }
+.performance-insights h3, .performance-breakdown h3 { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; justify-content: space-between; margin: 0 0 14px; font-size: 12.5px; font-weight: 650; }
 .performance-insights h3 span, .performance-breakdown h3 span { color: var(--faint); font-size: 11px; font-weight: 500; }
 
-.service-bars { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
-.service-bars li { display: grid; grid-template-columns: minmax(80px, 130px) minmax(60px, 1fr) minmax(150px, auto); gap: 12px; align-items: center; font-size: 12.5px; font-weight: 600; }
-.service-bars li > a { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.bar-track { height: 8px; overflow: hidden; border-radius: 999px; background: var(--glass-sunken); }
-.bar-fill { height: 100%; border-radius: inherit; background: linear-gradient(90deg, color-mix(in srgb, var(--danger) 55%, transparent), var(--danger)); }
+.service-bars { display: grid; gap: 11px; margin: 0; padding: 0; list-style: none; }
+.service-bars li { display: grid; grid-template-columns: minmax(80px, 130px) minmax(60px, 1fr) minmax(150px, auto); gap: 14px; align-items: center; font-size: 12.5px; font-weight: 600; }
+.service-bars li > a { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+.service-bars li > a:hover { color: var(--accent); }
+.bar-track { height: 9px; overflow: hidden; border-radius: 999px; background: var(--glass-sunken); }
+.bar-fill { height: 100%; border-radius: inherit; background: linear-gradient(90deg, #ec4899, #f43f5e); box-shadow: 0 0 10px rgba(244, 63, 94, 0.4); }
 .bar-meta { display: grid; color: var(--muted); font-size: 11.5px; font-weight: 500; text-align: right; white-space: nowrap; }
 .bar-meta strong { color: var(--text); font-weight: 650; }
-.bar-meta small { color: var(--faint); font-size: 10.5px; }
+.bar-meta small { color: var(--faint); font-size: 10.5px; font-family: var(--font-mono); }
 .insight-note { margin: 12px 0 0; color: var(--faint); font-size: 11.5px; }
 
-.quality { display: flex; gap: 20px; align-items: center; }
+.quality { display: flex; gap: 24px; align-items: center; }
 .donut { flex-shrink: 0; width: 116px; height: 116px; }
 .donut-track { stroke: var(--glass-sunken); }
-.donut-fill { stroke: var(--accent); filter: drop-shadow(0 0 6px var(--accent-glow)); }
-.donut-value { fill: var(--text); font-size: 18px; font-weight: 650; }
-.donut-caption { fill: var(--faint); font-size: 7.5px; letter-spacing: .06em; text-transform: uppercase; }
+.donut-fill { stroke: var(--accent); filter: drop-shadow(0 0 8px var(--accent-glow)); }
+.donut-value { fill: var(--text); font-size: 18px; font-weight: 700; }
+.donut-caption { fill: var(--faint); font-size: 8px; letter-spacing: .06em; text-transform: uppercase; font-weight: 600; }
 .quality-rows { display: grid; flex: 1; gap: 14px; min-width: 0; margin: 0; }
 .quality-rows dt { color: var(--faint); font-size: 10.5px; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; }
 .quality-rows dd { margin: 2px 0 0; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
-.mini-track { height: 5px; margin-top: 6px; overflow: hidden; border-radius: 999px; background: var(--glass-sunken); }
-.mini-fill { height: 100%; border-radius: inherit; background: var(--accent); }
+.mini-track { height: 6px; margin-top: 6px; overflow: hidden; border-radius: 999px; background: var(--glass-sunken); }
+.mini-fill { height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--accent), var(--cyan)); box-shadow: 0 0 8px var(--accent-glow); }
 
 .performance-breakdown { border-top: 1px solid var(--glass-divider); }
-.performance-breakdown h3 { margin: 0; padding: 14px 16px 8px; }
+.performance-breakdown h3 { margin: 0; padding: 16px 20px 8px; }
 
 /* Loading: skeleton in the shape of the dashboard; when the window changes, the previous figures stay, dimmed. */
 .performance-skeleton { pointer-events: none; animation: loading-in .25s ease .15s both; }
@@ -73,8 +100,9 @@
   .panel.performance-dashboard .performance-stats .stat-card:nth-child(n+4) { border-top: 1px solid var(--glass-divider); }
 }
 @media (max-width: 1000px) {
-  .performance-trends, .performance-insights { grid-template-columns: minmax(0, 1fr); }
-  .panel .performance-trend + .performance-trend, .performance-insights > section + section { border-left: 0; border-top: 1px solid var(--glass-divider); }
+  .performance-trends { grid-template-columns: minmax(0, 1fr); margin: 8px; }
+  .performance-insights { grid-template-columns: minmax(0, 1fr); }
+  .performance-insights > section + section { border-left: 0; border-top: 1px solid var(--glass-divider); }
 }
 @media (max-width: 620px) {
   .panel.performance-dashboard .performance-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }

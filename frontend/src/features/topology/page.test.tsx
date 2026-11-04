@@ -10,11 +10,13 @@ const topology = {
 };
 const logs = [{ event_id: "e1", occurred_at: "2026-10-01T00:00:01Z", service_name: "payment", severity_text: "ERROR", body: { message: "card declined" } }];
 
-afterEach(() => { cleanup(); sessionStorage.clear(); window.location.hash = ""; vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); sessionStorage.clear(); window.history.pushState(null, "", "/"); window.location.hash = ""; vi.unstubAllGlobals(); });
 
 function open(hash = "#/topology") {
   localStorage.setItem("tracepilot-signed-in", "1");
-  window.location.hash = hash;
+  const path = hash.startsWith("#") ? hash.slice(1) : hash;
+  window.history.pushState(null, "", path);
+  window.location.hash = "";
   const fetch = vi.fn().mockImplementation((input: string) => {
     const pathname = new URL(input, "http://localhost").pathname;
     return Promise.resolve(respond(pathname === "/api/v1/topology" ? topology : pathname === "/api/v1/logs" ? { data: logs } : { data: [] }));
@@ -53,11 +55,11 @@ it("switches between the list and the graph and can always go back", async () =>
   await screen.findByRole("button", { name: /^checkout service/i });
   expect(document.querySelector(".service-list")).not.toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Graph" }));
-  await waitFor(() => expect(window.location.hash).toContain("view=graph"));
+  await waitFor(() => expect(window.location.search).toContain("view=graph"));
   expect(screen.getByRole("region", { name: "Service topology graph" })).toBeTruthy();
   expect(document.querySelector(".service-list")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "List" }));
-  await waitFor(() => expect(window.location.hash).not.toContain("view="));
+  await waitFor(() => expect(window.location.search).not.toContain("view="));
   expect(await screen.findByRole("button", { name: /^checkout service/i })).toBeTruthy();
   expect(document.querySelector(".service-list")).not.toBeNull();
 });

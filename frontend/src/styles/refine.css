@@ -73,7 +73,7 @@
 .page-header p { font-size: 13px; font-weight: 400; color: var(--muted); }
 
 /* Panels: flat, hairline border. */
-.panel { margin-bottom: 14px; border-radius: 18px; }
+.panel { margin-bottom: 14px; border-radius: 24px; border-bottom-left-radius: 24px; border-bottom-right-radius: 24px; overflow: hidden; }
 .panel-head { min-height: 40px; padding: 6px 16px; }
 .panel-head h2 { font-size: 13px; font-weight: 650; letter-spacing: 0; }
 .panel-head > span { color: var(--muted); font-size: 11.5px; font-weight: 500; }
@@ -147,35 +147,48 @@ select option { background: var(--surface-solid); color: var(--text); }
 .onboarding-done a { color: var(--accent); text-decoration: none; }
 .onboarding-done a:hover { text-decoration: underline; }
 
-/* Overview: the status hero is the one focal point; everything else is quieter and below it. */
+/* Overview: compact hierarchy fit screen with internal scroll */
+.overview-page { display: flex; flex-direction: column; flex: 1 1 0%; min-height: 0; }
+.overview-page .page-header { margin-bottom: 10px; }
+.overview-page .page-header h1 { font-size: 22px; margin-bottom: 2px; }
+.overview-page .page-header p { font-size: 12.5px; }
+.overview-page .onboarding-done { margin-bottom: 10px; }
+
 .page-header .toolbar { margin: 0; }
-.status-hero { --tone: var(--faint); display: grid; grid-template-columns: minmax(280px, 5fr) minmax(0, 7fr); margin-bottom: 14px; overflow: hidden; border: 1px solid color-mix(in srgb, var(--tone) 28%, var(--glass-edge)); border-radius: 22px; background: radial-gradient(70% 140% at 0% 0%, color-mix(in srgb, var(--tone) 24%, transparent), transparent 62%), var(--glass); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); box-shadow: inset 0 1px 0 var(--glass-hi), var(--glass-shadow); }
+.status-hero { --tone: var(--faint); display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(320px, 1fr); margin-bottom: 16px; overflow: hidden; border: 1px solid color-mix(in srgb, var(--tone) 32%, var(--glass-edge)); border-radius: 20px; background: radial-gradient(75% 150% at 0% 0%, color-mix(in srgb, var(--tone) 20%, transparent), transparent 65%), var(--glass); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); box-shadow: inset 0 1px 0 var(--glass-hi), var(--glass-shadow); }
 .status-hero.tone-danger { --tone: var(--danger); }
 .status-hero.tone-warning { --tone: var(--warning); }
 .status-hero.tone-ok { --tone: var(--svc-1); }
-.status-copy { display: flex; flex-direction: column; justify-content: center; gap: 8px; min-width: 0; padding: 26px 28px; }
-.status-eyebrow { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 10.5px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; }
-.status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--tone); box-shadow: 0 0 0 4px color-mix(in srgb, var(--tone) 22%, transparent), 0 0 14px var(--tone); }
-.status-hero h2 { margin: 0; font-size: 28px; font-weight: 700; line-height: 1.15; letter-spacing: -.025em; }
-.status-copy > p { margin: 0; color: var(--muted); font-size: 13.5px; }
-.status-incidents { display: grid; gap: 8px; margin: 10px 0 0; padding: 0; list-style: none; }
-.status-incidents li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 8px 12px; border: 1px solid var(--glass-divider); border-radius: 12px; background: var(--glass-nested); font-size: 12.5px; }
+.status-copy { display: flex; flex-direction: column; justify-content: center; gap: 8px; min-width: 0; padding: 20px 24px; }
+.status-eyebrow { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+.status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--tone); box-shadow: 0 0 0 3px color-mix(in srgb, var(--tone) 25%, transparent), 0 0 12px var(--tone); }
+.status-hero h2 { margin: 0; font-size: 22px; font-weight: 750; line-height: 1.25; letter-spacing: -.02em; }
+.status-copy > p { margin: 0; color: var(--muted); font-size: 12.5px; font-weight: 500; }
+.status-incidents { display: grid; gap: 7px; margin: 8px 0 0; padding: 0; list-style: none; }
+.status-incidents li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 7px 12px; border: 1px solid var(--glass-divider); border-radius: 11px; background: var(--glass-nested); font-size: 12px; transition: background .15s ease, border-color .15s ease; }
+.status-incidents li:hover { background: var(--glass-hover); border-color: var(--glass-edge); }
 .status-incident-text { display: grid; min-width: 0; }
-.status-incident-title { overflow: hidden; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
-.status-incident-text small { color: var(--faint); font-size: 11px; }
+.status-incident-title { overflow: hidden; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.status-incident-text small { color: var(--faint); font-size: 11px; font-weight: 500; }
 .status-incidents li.status-more { display: block; padding: 0 4px; border: 0; background: none; }
-.status-incidents li.status-more a { color: var(--accent); font-size: 12px; font-weight: 650; text-decoration: none; }
-.status-cta { align-self: flex-start; margin-top: 10px; padding: 8px 16px; border-radius: 10px; background: var(--btn-bg); color: var(--btn-text); font-size: 12.5px; font-weight: 650; text-decoration: none; box-shadow: 0 4px 14px var(--accent-glow); }
-.status-chart { min-width: 0; padding: 12px 18px 6px; border-left: 1px solid var(--glass-divider); }
+.status-incidents li.status-more a { color: var(--accent); font-size: 11.5px; font-weight: 650; text-decoration: none; }
+.status-cta { align-self: flex-start; margin-top: 8px; padding: 7px 16px; border-radius: 9px; background: var(--btn-bg); color: var(--btn-text); font-size: 12.5px; font-weight: 650; text-decoration: none; box-shadow: 0 4px 14px var(--accent-glow); }
+
+.status-investigate-pill { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--glass-field-edge); background: var(--glass-field); color: var(--accent); font-size: 11px; font-weight: 650; text-decoration: none; white-space: nowrap; transition: all .15s ease; }
+.status-investigate-pill:hover { border-color: var(--accent); background: var(--glass-field-focus); color: var(--accent); transform: translateY(-0.5px); box-shadow: 0 2px 6px var(--accent-glow); }
+
+.status-chart { min-width: 0; padding: 14px 18px 10px; border-left: 1px solid var(--glass-divider); display: flex; flex-direction: column; justify-content: space-between; background: color-mix(in srgb, var(--surface) 22%, transparent); }
 .status-chart .performance-trend { padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
-.status-chart .empty { padding: 48px 0; text-align: center; }
-@media (max-width: 1000px) {
+.status-chart .performance-trend figcaption { margin-bottom: 6px; }
+.status-chart .performance-trend svg { width: 100%; height: auto; margin-top: 4px; }
+.status-chart .empty { padding: 36px 0; text-align: center; }
+@media (max-width: 1040px) {
   .status-hero { grid-template-columns: minmax(0, 1fr); }
   .status-chart { border-left: 0; border-top: 1px solid var(--glass-divider); }
 }
 
-.status-chart-link { display: block; padding: 4px 0 8px; color: var(--accent); font-size: 12px; font-weight: 650; text-align: right; text-decoration: none; }
-.status-chart-link:hover { text-decoration: underline; }
+.status-chart-link { display: inline-flex; align-items: center; align-self: flex-end; gap: 4px; padding: 2px 2px 4px; color: var(--accent); font-size: 11.5px; font-weight: 650; text-decoration: none; transition: opacity .15s ease; }
+.status-chart-link:hover { text-decoration: underline; opacity: .85; }
 
 /* The content scrollbar sits on the window edge instead of floating 16px inside it. */
 @media (min-width: 901px) {

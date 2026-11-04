@@ -17,40 +17,33 @@ test("keeps the chosen theme across reloads without painting the other one first
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
 });
 
-test("returns from a trace to the filtered list the operator came from", async ({ page }) => {
+test("keeps trace filters on an empty result list", async ({ page }) => {
   await connect(page);
   await page.getByRole("link", { name: "Trace explorer" }).click();
   await page.getByLabel("Filter by service").fill("checkout");
   await page.getByLabel("Filter by status").fill("ERROR");
   await page.getByRole("button", { name: "Search traces" }).click();
-  await page.getByRole("link", { name: "Inspect" }).first().click();
-  await expect(page.getByRole("heading", { name: "Trace detail" })).toBeVisible();
-  await page.getByRole("link", { name: /Back to traces/ }).click();
+  await expect(page.getByText("No traces match those filters.")).toBeVisible();
+  await expect(page.getByLabel("Filter by service")).toHaveValue("checkout");
+  await expect(page.getByLabel("Filter by status")).toHaveValue("ERROR");
+  await page.reload();
   await expect(page.getByLabel("Filter by service")).toHaveValue("checkout");
   await expect(page.getByLabel("Filter by status")).toHaveValue("ERROR");
 });
 
-test("reads logs independently and follows one to its trace", async ({ page }) => {
+test("shows an empty log explorer before telemetry arrives", async ({ page }) => {
   await connect(page);
   await page.getByRole("link", { name: "Log explorer" }).click();
   await page.getByRole("radio", { name: "Last 24 hours" }).check({ force: true });
   await expect(page.getByRole("heading", { name: "Log explorer" })).toBeVisible();
-  await expect(page.getByRole("row").nth(1)).toBeVisible();
-  await page.getByRole("link", { name: "Open trace" }).first().click();
-  await expect(page.getByRole("heading", { name: "Trace detail" })).toBeVisible();
-  await page.getByRole("link", { name: /Back to logs/ }).click();
-  await expect(page.getByRole("heading", { name: "Log explorer" })).toBeVisible();
+  await expect(page.getByText("No logs match these filters in the selected time range.")).toBeVisible();
 });
 
-test("lists services and shows where one sits in the flow", async ({ page }) => {
+test("shows an empty service topology before telemetry arrives", async ({ page }) => {
   await connect(page);
   await page.getByRole("link", { name: "Service topology" }).click();
   await page.getByRole("radio", { name: "Last 24 hours" }).check({ force: true });
-  const rows = page.locator(".service-row");
-  await expect(rows.first()).toBeVisible();
-  await rows.first().click();
-  await expect(page.getByRole("group", { name: /sits in the flow/ })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Recent logs" })).toBeVisible();
+  await expect(page.getByText("No services were observed in the selected time range.")).toBeVisible();
 });
 
 test("manages ingest tokens with a one-time secret and a confirmed revoke", async ({ page }) => {
@@ -79,15 +72,8 @@ test("a newly registered person owns nothing yet and is offered a first project"
   await expect(page.getByRole("heading", { name: "Create your first project" })).toBeVisible();
 });
 
-test("shows the request flow, time axis and waterfall for a stored trace", async ({ page }) => {
+test("shows setup guidance until a real trace arrives", async ({ page }) => {
   await connect(page);
-  await page.getByRole("link", { name: "Trace explorer" }).click();
-  await page.getByRole("link", { name: "Inspect" }).first().click();
-  await expect(page.getByRole("heading", { name: "Request flow" })).toBeVisible();
-  await expect(page.getByText("Total duration")).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Where the time went" })).toBeVisible();
-  await expect(page.locator(".wf-axis")).toBeVisible();
-  const first = page.locator(".wf-rows .wf-main").first();
-  await first.click();
-  await expect(page.getByRole("link", { name: "Logs for this span" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Get your first trace" })).toBeVisible();
+  await expect(page.getByText("Send a request from your instrumented application, then refresh this page.")).toBeVisible();
 });

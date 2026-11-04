@@ -10,11 +10,13 @@ const logs = [
   { event_id: "e2", occurred_at: "2026-10-01T00:00:00Z", service_name: "worker", severity_text: "INFO", body: long },
 ];
 
-afterEach(() => { cleanup(); sessionStorage.clear(); window.location.hash = ""; vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); sessionStorage.clear(); window.history.pushState(null, "", "/"); window.location.hash = ""; vi.unstubAllGlobals(); });
 
 function open(hash: string, status = 200) {
   localStorage.setItem("tracepilot-signed-in", "1");
-  window.location.hash = hash;
+  const path = hash.startsWith("#") ? hash.slice(1) : hash;
+  window.history.pushState(null, "", path);
+  window.location.hash = "";
   const fetch = vi.fn().mockImplementation((input: string) => new URL(input, "http://localhost").pathname === "/api/v1/logs"
     ? (status === 200 ? respond({ data: logs }) : respond({ error: { message: "log content search range must not exceed 24 hours" } }, status))
     : respond({ data: [] }));
@@ -32,7 +34,7 @@ it("reads logs on their own inside the selected time window and links correlated
   expect(url.searchParams.get("to")).toBe("2026-10-01T01:00:00.000Z");
   expect(url.searchParams.get("service")).toBe("checkout");
   expect(url.searchParams.get("severity")).toBe("ERROR");
-  expect(screen.getByRole("link", { name: "Open trace" }).getAttribute("href")).toBe(`#/traces/${traceID}`);
+  expect(screen.getByRole("link", { name: "Open trace" }).getAttribute("href")).toBe(`/traces/${traceID}`);
   expect(screen.getByText("Not correlated")).toBeTruthy();
 });
 
@@ -60,18 +62,26 @@ it("explains a rejected body search and lets the operator clear filters", async 
   expect(await screen.findByText(/must not exceed 24 hours/)).toBeTruthy();
   expect(screen.getByRole("note").textContent).toContain("24 hours or less");
   fireEvent.click(screen.getByRole("button", { name: /Clear filters/ }));
-  await waitFor(() => expect(window.location.hash).not.toContain("search="));
-  expect(window.location.hash).toContain("range=7d");
+  await waitFor(() => expect(window.location.search).not.toContain("search="));
+  expect(window.location.search).toContain("range=7d");
 });
 
 it("filters by severity from the quick chips and keeps the other filters", async () => {
   const fetch = open("#/logs?service=checkout");
   await screen.findByText(/card declined/);
   fireEvent.click(screen.getByRole("button", { name: "ERROR" }));
-  await waitFor(() => expect(window.location.hash).toContain("severity=ERROR"));
-  expect(window.location.hash).toContain("service=checkout");
+  await waitFor(() => expect(window.location.search).toContain("severity=ERROR"));
+  expect(window.location.search).toContain("service=checkout");
   expect(screen.getByRole("button", { name: "ERROR" }).getAttribute("aria-pressed")).toBe("true");
   await waitFor(() => expect(fetch.mock.calls.some(([path]) => String(path).includes("severity=ERROR"))).toBe(true));
   fireEvent.click(screen.getByRole("button", { name: "All" }));
-  await waitFor(() => expect(window.location.hash).not.toContain("severity="));
+  await waitFor(() => expect(window.location.search).not.toContain("severity="));
+});
+
+it("toggles live tail streaming mode", async () => {
+  open("#/logs");
+  const liveBtn = await screen.findByRole("button", { name: /Live tail/ });
+  expect(liveBtn.getAttribute("aria-pressed")).toBe("false");
+  fireEvent.click(liveBtn);
+  expect(liveBtn.getAttribute("aria-pressed")).toBe("true");
 });

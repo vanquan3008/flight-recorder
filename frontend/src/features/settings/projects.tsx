@@ -1,5 +1,6 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { type FormEvent, useState } from "react";
+import { FolderPlus, Info, Layers, Pencil, Plus, Server, ShieldCheck } from "lucide-react";
 import { useAuth } from "../../app/auth";
 import { canManageRole, type Project, type ProjectDetail, roleLabels } from "../../shared/session";
 import { api } from "../../shared/api";
@@ -17,6 +18,8 @@ export function CreateProjectForm({ onCreated }: { onCreated?: (project: Project
     onSuccess: async ({ project }) => {
       await session?.refresh();
       session?.switchProject(project.id);
+      setName("");
+      setSlug("");
       onCreated?.(project);
     },
   });
@@ -25,14 +28,40 @@ export function CreateProjectForm({ onCreated }: { onCreated?: (project: Project
     const values = new FormData(event.currentTarget);
     create.mutate({ name: name.trim(), slug: slug || slugFrom(name), environment: String(values.get("environment") || "").trim() });
   };
-  return <form className="settings-form project-form" onSubmit={submit}>
-    <h3 className="settings-form-title">New project</h3>
-    <label>Name<input value={name} onChange={(event) => setName(event.target.value)} required maxLength={100} placeholder="e.g. Checkout" /></label>
-    <label>Slug<input value={slug || slugFrom(name)} onChange={(event) => setSlug(event.target.value)} required maxLength={63} pattern="[a-z0-9][a-z0-9\-]*" placeholder="checkout" /></label>
-    <label>First environment<input name="environment" maxLength={63} placeholder="production" /></label>
-    <div className="settings-submit"><button type="submit" disabled={create.isPending}>{create.isPending ? "Creating…" : "Create project"}</button></div>
-    {create.error && <p className="form-error settings-wide" role="alert">{create.error.message}</p>}
-  </form>;
+  return (
+    <div className="border-b border-black/5 dark:border-white/10 bg-slate-500/[0.02] dark:bg-white/[0.015] p-5 sm:p-6">
+      <form className="settings-form project-form max-w-5xl" onSubmit={submit}>
+        <div className="col-span-full mb-1">
+          <div className="flex items-center gap-2">
+            <span className="p-1.5 rounded-lg bg-indigo-500/10 text-indigo-600 dark:text-indigo-400">
+              <FolderPlus size={16} />
+            </span>
+            <h3 className="settings-form-title !m-0 !text-[12px] !font-bold tracking-wider">New project</h3>
+          </div>
+          <p className="text-[12.5px] text-slate-500 dark:text-slate-400 mt-1 m-0">Create a dedicated space to collect traces, spans, and metrics for your team.</p>
+        </div>
+        <label>
+          Name
+          <input value={name} onChange={(event) => setName(event.target.value)} required maxLength={100} placeholder="e.g. Checkout" />
+        </label>
+        <label>
+          Slug
+          <input value={slug || slugFrom(name)} onChange={(event) => setSlug(event.target.value)} required maxLength={63} pattern="[a-z0-9][a-z0-9\-]*" placeholder="checkout" />
+        </label>
+        <label>
+          First environment
+          <input name="environment" maxLength={63} placeholder="production" />
+        </label>
+        <div className="settings-submit">
+          <button type="submit" disabled={create.isPending} className="inline-flex items-center justify-center gap-1.5 shadow-sm">
+            <Plus size={15} />
+            <span>{create.isPending ? "Creating…" : "Create project"}</span>
+          </button>
+        </div>
+        {create.error && <p className="form-error settings-wide" role="alert">{create.error.message}</p>}
+      </form>
+    </div>
+  );
 }
 
 export function ProjectsSection() {
@@ -70,33 +99,130 @@ export function ProjectsSection() {
     <Panel title="Your projects" meta={`${session.memberships.length} accessible`}>
       <CreateProjectForm />
       <DataTable headers={["Project", "Slug", "Your role", "Created", ""]} empty="You are not a member of any project yet."
-        rows={session.memberships.map(({ project, role }) => [
-          project.name, <code>{project.slug}</code>, session.user.platform_admin ? "Super administrator" : roleLabels[role], formatTime(project.created_at),
-          <span className="table-actions">
-            {project.id === current?.project.id ? <span className="muted-note">Current</span> : <button type="button" className="button-secondary compact" onClick={() => session.switchProject(project.id)}>Open</button>}
-            {!session.user.platform_admin && (leaving === project.id
-              ? <span className="inline-confirm"><button className="button-danger" disabled={leave.isPending} onClick={() => leave.mutate(project.id)}>Confirm leave</button><button className="button-secondary" onClick={() => setLeaving("")}>Cancel</button></span>
-              : <button type="button" className="button-danger compact" onClick={() => setLeaving(project.id)} aria-label={`Leave ${project.name}`}>Leave</button>)}
-          </span>,
-        ])} />
+        rows={session.memberships.map(({ project, role }) => {
+          const isCurrent = project.id === current?.project.id;
+          const initial = project.name.trim().charAt(0).toUpperCase() || "P";
+          return [
+            <div key={project.id} className="flex items-center gap-3 py-0.5">
+              <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-indigo-500 via-indigo-600 to-sky-500 text-white font-bold text-xs flex items-center justify-center shadow-xs flex-shrink-0 select-none">
+                {initial}
+              </div>
+              <div>
+                <span className="font-bold text-slate-900 dark:text-white leading-tight">{project.name}</span>
+              </div>
+            </div>,
+            <code key="slug" className="inline-flex items-center px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800/90 text-xs font-mono font-medium text-slate-700 dark:text-slate-300 border border-black/5 dark:border-white/10">
+              {project.slug}
+            </code>,
+            <div key="role" className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-700 dark:text-slate-300">
+              {session.user.platform_admin && <ShieldCheck size={14} className="text-indigo-500 dark:text-indigo-400" />}
+              <span>{session.user.platform_admin ? "Super administrator" : roleLabels[role]}</span>
+            </div>,
+            <span key="created" className="text-xs text-slate-500 dark:text-slate-400 font-medium">
+              {formatTime(project.created_at)}
+            </span>,
+            <span key="actions" className="table-actions">
+              {isCurrent ? (
+                <span className="current-tag inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border border-emerald-500/25 shadow-xs">
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                  </span>
+                  Current
+                </span>
+              ) : (
+                <button type="button" className="button-secondary compact !rounded-lg !text-xs !font-semibold !px-3.5 !py-1.5 shadow-xs" onClick={() => session.switchProject(project.id)}>
+                  Open
+                </button>
+              )}
+              {!session.user.platform_admin && (leaving === project.id
+                ? <span className="inline-confirm"><button className="button-danger" disabled={leave.isPending} onClick={() => leave.mutate(project.id)}>Confirm leave</button><button className="button-secondary" onClick={() => setLeaving("")}>Cancel</button></span>
+                : <button type="button" className="button-danger compact !rounded-lg !text-xs !font-semibold" onClick={() => setLeaving(project.id)} aria-label={`Leave ${project.name}`}>Leave</button>)}
+            </span>,
+          ];
+        })} />
       {leave.error && <p className="form-error" role="alert">{leave.error.message}</p>}
     </Panel>
     {current && <Panel title={`${current.project.name} — environments`} meta={detail.data ? `${detail.data.environments.length} environments` : undefined}>
-      {canManageRole(session.role) && <form className="settings-form hook-form" onSubmit={submitRename} key={current.project.name}>
-        <h3 className="settings-form-title">Rename project</h3>
-        <label>Name<input name="name" defaultValue={current.project.name} required maxLength={100} /></label>
-        <div className="settings-submit"><button type="submit" disabled={rename.isPending}>{rename.isPending ? "Saving…" : "Save name"}</button></div>
-        {rename.error && <p className="form-error settings-wide" role="alert">{rename.error.message}</p>}
-      </form>}
-      {canManageRole(session.role) && <form className="settings-form hook-form" onSubmit={submitEnvironment}>
-        <h3 className="settings-form-title">Add an environment</h3>
-        <label>Name<input name="environment" required maxLength={63} placeholder="e.g. staging" /></label>
-        <div className="settings-submit"><button type="submit" disabled={addEnvironment.isPending}>{addEnvironment.isPending ? "Adding…" : "Add environment"}</button></div>
-        <p className="settings-hint">Senders pick an environment with the <code>X-Environment</code> header (OTLP and API); without it, telemetry goes to the first one.</p>
-        {addEnvironment.error && <p className="form-error settings-wide" role="alert">{addEnvironment.error.message}</p>}
-      </form>}
+      {canManageRole(session.role) && (
+        <div className="p-5 sm:p-6 border-b border-black/5 dark:border-white/10 bg-slate-500/[0.015] dark:bg-white/[0.01]">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+            {/* Card 1: Rename project */}
+            <div className="rounded-2xl p-5 bg-white/70 dark:bg-slate-900/50 border border-black/5 dark:border-white/10 shadow-xs">
+              <div className="flex items-center gap-2 mb-1">
+                <span className="p-1.5 rounded-lg bg-slate-500/10 text-slate-700 dark:text-slate-300">
+                  <Pencil size={15} />
+                </span>
+                <h3 className="settings-form-title !m-0 !text-[12px] !font-bold">Rename project</h3>
+              </div>
+              <p className="text-[12px] text-slate-500 dark:text-slate-400 mb-4">Change the display name of this project across the console.</p>
+              <form className="settings-form single-field-form !p-0 !border-0 !gap-3" onSubmit={submitRename} key={current.project.name}>
+                <label className="w-full">
+                  Name
+                  <input name="name" defaultValue={current.project.name} required maxLength={100} className="w-full" />
+                </label>
+                <div className="settings-submit">
+                  <button type="submit" disabled={rename.isPending} className="!bg-slate-900 hover:!bg-slate-800 dark:!bg-slate-100 dark:!text-slate-900 dark:hover:!bg-white !text-white !font-bold !text-xs !px-4 !py-2.5 !rounded-xl transition-all shadow-xs">
+                    {rename.isPending ? "Saving…" : "Save name"}
+                  </button>
+                </div>
+                {rename.error && <p className="form-error settings-wide" role="alert">{rename.error.message}</p>}
+              </form>
+            </div>
+
+            {/* Card 2: Add an environment */}
+            <div className="rounded-2xl p-5 bg-white/70 dark:bg-slate-900/50 border border-black/5 dark:border-white/10 shadow-xs">
+              <div className="flex items-center gap-2 mb-1">
+                <span className="p-1.5 rounded-lg bg-indigo-500/10 text-indigo-600 dark:text-indigo-400">
+                  <Layers size={15} />
+                </span>
+                <h3 className="settings-form-title !m-0 !text-[12px] !font-bold">Add an environment</h3>
+              </div>
+              <p className="text-[12px] text-slate-500 dark:text-slate-400 mb-4">Create partitions like staging, production, or testing.</p>
+              <form className="settings-form single-field-form !p-0 !border-0 !gap-3" onSubmit={submitEnvironment}>
+                <label className="w-full">
+                  Name
+                  <input name="environment" required maxLength={63} placeholder="e.g. staging" className="w-full" />
+                </label>
+                <div className="settings-submit">
+                  <button type="submit" disabled={addEnvironment.isPending} className="inline-flex items-center gap-1.5 !text-xs !font-bold !px-4 !py-2.5 !rounded-xl shadow-xs">
+                    <Plus size={15} />
+                    <span>{addEnvironment.isPending ? "Adding…" : "Add environment"}</span>
+                  </button>
+                </div>
+                {addEnvironment.error && <p className="form-error settings-wide" role="alert">{addEnvironment.error.message}</p>}
+              </form>
+            </div>
+          </div>
+
+          {/* OTLP Hint callout */}
+          <div className="mt-4 rounded-xl p-3.5 bg-blue-500/5 dark:bg-blue-400/5 border border-blue-500/15 text-blue-900 dark:text-blue-200 text-xs flex items-start gap-2.5">
+            <Info size={16} className="text-blue-600 dark:text-blue-400 shrink-0 mt-0.5" />
+            <p className="settings-hint !m-0 !text-slate-600 dark:!text-slate-300 text-xs leading-relaxed">
+              Senders pick an environment with the <code className="px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-950 font-mono text-[11px] text-blue-800 dark:text-blue-300 font-semibold">X-Environment</code> header (OTLP and API); without it, telemetry goes to the first one.
+            </p>
+          </div>
+        </div>
+      )}
+
       {detail.isPending ? <Loading /> : detail.isError ? <ErrorState error={detail.error} retry={() => void detail.refetch()} />
-        : <DataTable headers={["Environment", "Created"]} rows={detail.data.environments.map((environment) => [environment.name, formatTime(environment.created_at)])} empty="No environments." />}
+        : <DataTable headers={["Environment", "Created"]}
+            rows={detail.data.environments.map((environment, index) => [
+              <div key={environment.name} className="flex items-center gap-2.5 py-0.5">
+                <span className="p-1 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400">
+                  <Server size={14} />
+                </span>
+                <span className="font-mono font-bold text-slate-900 dark:text-white text-xs">{environment.name}</span>
+                {index === 0 && (
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                    Default
+                  </span>
+                )}
+              </div>,
+              <span key="created" className="text-xs text-slate-500 dark:text-slate-400 font-medium">
+                {formatTime(environment.created_at)}
+              </span>,
+            ])} empty="No environments." />}
     </Panel>}
   </>;
 }

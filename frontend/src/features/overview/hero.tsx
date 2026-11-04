@@ -33,7 +33,7 @@ export function StatusHero({ status, incidents, performance, pending, filters }:
       {incidents.length > 0 ? <ul className="status-incidents">
         {incidents.slice(0, shownIncidents).map((incident) => <li key={incident.id}>
           <Badge value={incident.severity} /><span className="status-incident-text"><span className="status-incident-title">{incident.title}</span><small>{incident.primary_service}</small></span>
-          <DetailLink to={`/incidents/${incident.id}`}>Investigate</DetailLink>
+          <DetailLink to={`/incidents/${incident.id}`} className="status-investigate-pill">Investigate</DetailLink>
         </li>)}
         {incidents.length > shownIncidents && <li className="status-more"><Link to={`/incidents?${filters}`}>All {incidents.length} incidents →</Link></li>}
       </ul> : <Link className="status-cta" to={`/traces?${filters}`}>Explore traces →</Link>}

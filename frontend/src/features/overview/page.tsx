@@ -49,30 +49,32 @@ export function OverviewPage() {
   const showHero = hasTrace || status.tone !== "idle";
   // Four zeros and an empty list say nothing: until there is data, only the setup steps lead.
   const quiet = !hasTrace && cards.every((card) => !card.value);
-  return <>
-    <PageHeader title="Telemetry overview" action={<TimeWindowFilter range={window.range} select={window.select} />}>Start with a failed trace, inspect its spans, then follow the correlated logs.</PageHeader>
-    <Onboarding credential={credential} projectID={session?.project?.project.id ?? ""} canCreate={session?.role === "owner"} hasTrace={hasTrace} />
-    {showHero && <StatusHero status={status} incidents={actionable} performance={performance.data} pending={performance.isPending} filters={filters} />}
-    {!quiet && <div className="stat-grid grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">{cards.map((card) => {
-      const { Icon, color } = card;
-      const content = <>
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-[10.5px] font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300">{card.label}</span>
-          <span className={`p-1.5 rounded-lg ${color}`}><Icon size={15} /></span>
-        </div>
-        <strong className="block text-3xl font-black tracking-tight text-slate-950 dark:text-white my-1">{card.value}</strong>
-        <span className="text-xs text-slate-600 dark:text-slate-400 font-medium">{card.hint}</span>
-      </>;
-      const cardClasses = "stat-card flex flex-col justify-between p-5 rounded-2xl backdrop-blur-xl bg-white/85 dark:bg-slate-900/75 border border-slate-200/80 dark:border-white/10 shadow-[0_6px_24px_rgba(31,38,135,0.06)] hover:border-sky-400/60 hover:-translate-y-0.5 hover:shadow-lg transition-all no-underline text-inherit";
-      return card.path ? <Link className={cardClasses} to={card.path} key={card.label}>{content}</Link> : <div className={cardClasses} key={card.label}>{content}</div>;
-    })}</div>}
+  return <div className="overview-page">
+    <div className="shrink-0">
+      <PageHeader title="Telemetry overview" action={<TimeWindowFilter range={window.range} select={window.select} />}>Start with a failed trace, inspect its spans, then follow the correlated logs.</PageHeader>
+      <Onboarding credential={credential} projectID={session?.project?.project.id ?? ""} canCreate={session?.role === "owner"} hasTrace={hasTrace} />
+      {showHero && <StatusHero status={status} incidents={actionable} performance={performance.data} pending={performance.isPending} filters={filters} />}
+      {!quiet && <div className="stat-grid grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-3">{cards.map((card) => {
+        const { Icon, color } = card;
+        const content = <>
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300">{card.label}</span>
+            <span className={`p-1 rounded-md ${color}`}><Icon size={14} /></span>
+          </div>
+          <strong className="block text-2xl font-black tracking-tight text-slate-950 dark:text-white my-0.5">{card.value}</strong>
+          <span className="text-[11px] text-slate-600 dark:text-slate-400 font-medium truncate">{card.hint}</span>
+        </>;
+        const cardClasses = "stat-card flex flex-col justify-between p-3.5 rounded-xl backdrop-blur-xl bg-white/85 dark:bg-slate-900/75 border border-slate-200/80 dark:border-white/10 shadow-[0_4px_16px_rgba(31,38,135,0.05)] hover:border-sky-400/60 hover:-translate-y-0.5 hover:shadow-md transition-all no-underline text-inherit";
+        return card.path ? <Link className={cardClasses} to={card.path} key={card.label}>{content}</Link> : <div className={cardClasses} key={card.label}>{content}</div>;
+      })}</div>}
+    </div>
 
-    {!quiet && <Panel title="Recent traces" meta={<Link to={`/traces?${filters}`}>View all traces →</Link>}><DataTable
+    {!quiet && <Panel className="panel-fit" title="Recent traces" meta={<Link to={`/traces?${filters}`}>View all traces →</Link>}><DataTable
       headers={["Started", "Service", "Duration", "Spans", "Status", ""]}
       empty="No traces yet. Complete the setup steps above to send the first one."
-      rows={(traces.data?.data || []).slice(0, 6).map((trace) => [
+      rows={(traces.data?.data || []).slice(0, 10).map((trace) => [
         formatTime(trace.started_at), trace.root_service, formatDuration(trace.duration_nanos), trace.span_count, <Badge value={trace.error_count ? "ERROR" : "OK"} />, <DetailLink to={`/traces/${trace.trace_id}`}>Inspect</DetailLink>,
       ])}
     /></Panel>}
-  </>;
+  </div>;
 }
