@@ -30,10 +30,11 @@ func insertUser(ctx context.Context, queries *sqlcstore.Queries, params auth.Cre
 	return userFrom(row), nil
 }
 
-// RegisterUser creates an account the person chose themselves. The first account on an installation
-// becomes the super administrator and owner of firstProjectID (the default project), so a fresh
-// install needs no setup step. Later ones are ordinary accounts, and only when open is true.
-func (store *IdentityStore) RegisterUser(ctx context.Context, firstProjectID string, params auth.CreateUserParams, open bool) (auth.User, error) {
+// RegisterUser creates an ordinary account when registration is open.
+func (store *IdentityStore) RegisterUser(ctx context.Context, _ string, params auth.CreateUserParams, open bool) (auth.User, error) {
+	if !open {
+		return auth.User{}, auth.ErrRegistrationClosed
+	}
 	params, validationError := auth.NormalizeCreateUserParams(params)
 	if validationError != nil {
 		return auth.User{}, validationError
@@ -41,25 +42,9 @@ func (store *IdentityStore) RegisterUser(ctx context.Context, firstProjectID str
 	params.PlatformAdmin, params.MustChangePassword = false, false
 	var user auth.User
 	registerError := store.inTransaction(ctx, func(queries *sqlcstore.Queries) error {
-		if lockError := queries.AcquireTransactionLock(ctx, setupLockKey); lockError != nil {
-			return lockError
-		}
-		exists, existsError := queries.UsersExist(ctx)
-		if existsError != nil {
-			return existsError
-		}
-		if exists && !open {
-			return auth.ErrRegistrationClosed
-		}
-		params.PlatformAdmin = !exists
 		created, insertError := insertUser(ctx, queries, params)
 		if insertError != nil {
 			return insertError
-		}
-		if !exists && firstProjectID != "" {
-			if memberError := queries.InsertProjectMember(ctx, sqlcstore.InsertProjectMemberParams{ProjectID: firstProjectID, UserID: created.ID, Role: auth.RoleOwner}); memberError != nil {
-				return fmt.Errorf("add first owner: %w", memberError)
-			}
 		}
 		user = created
 		return audit(ctx, queries, "", auth.Actor{UserID: created.ID}, "user.registered", "user", created.ID, map[string]any{"email": created.Email, "platform_admin": created.PlatformAdmin})

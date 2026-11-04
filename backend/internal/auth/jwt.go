@@ -44,6 +44,8 @@ type Claims struct {
 	ID        string
 	IssuedAt  time.Time
 	ExpiresAt time.Time
+	Issuer    string
+	Audience  string
 }
 
 type jwtPayload struct {
@@ -63,8 +65,16 @@ func SignJWT(secret []byte, claims Claims) (string, error) {
 	if len(secret) < MinJWTSecretBytes {
 		return "", errors.New("JWT secret is too short")
 	}
+	issuer := claims.Issuer
+	if issuer == "" {
+		issuer = jwtIssuer
+	}
+	audience := claims.Audience
+	if audience == "" {
+		audience = jwtAudience
+	}
 	body, marshalError := json.Marshal(jwtPayload{
-		Issuer: jwtIssuer, Audience: jwtAudience, Subject: claims.Subject, ID: claims.ID, Kind: claims.Kind,
+		Issuer: issuer, Audience: audience, Subject: claims.Subject, ID: claims.ID, Kind: claims.Kind,
 		IssuedAt: claims.IssuedAt.Unix(), ExpiresAt: claims.ExpiresAt.Unix(),
 	})
 	if marshalError != nil {
@@ -80,9 +90,19 @@ func sign(secret []byte, signingInput string) []byte {
 	return mac.Sum(nil)
 }
 
-// VerifyJWT checks the signature, issuer, audience, kind and expiry. The algorithm is fixed to
-// HS256 and read from nothing the token says, so a token cannot choose a weaker one.
+// VerifyJWT checks the signature, issuer, audience, kind and expiry using defaults.
 func VerifyJWT(secret []byte, token, wantKind string, now time.Time) (Claims, error) {
+	return VerifyJWTWithIssuerAudience(secret, token, wantKind, jwtIssuer, jwtAudience, now)
+}
+
+// VerifyJWTWithIssuerAudience checks the signature, custom issuer and audience, kind and expiry.
+func VerifyJWTWithIssuerAudience(secret []byte, token, wantKind, wantIssuer, wantAudience string, now time.Time) (Claims, error) {
+	if wantIssuer == "" {
+		wantIssuer = jwtIssuer
+	}
+	if wantAudience == "" {
+		wantAudience = jwtAudience
+	}
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 || parts[0] != jwtHeader {
 		return Claims{}, ErrInvalidToken
@@ -99,11 +119,12 @@ func VerifyJWT(secret []byte, token, wantKind string, now time.Time) (Claims, er
 	if unmarshalError := json.Unmarshal(body, &payload); unmarshalError != nil {
 		return Claims{}, ErrInvalidToken
 	}
-	if payload.Issuer != jwtIssuer || payload.Audience != jwtAudience || payload.Kind != wantKind || payload.Subject == "" || payload.ExpiresAt == 0 {
+	if payload.Issuer != wantIssuer || payload.Audience != wantAudience || payload.Kind != wantKind || payload.Subject == "" || payload.ExpiresAt == 0 {
 		return Claims{}, ErrInvalidToken
 	}
 	claims := Claims{
 		Kind: payload.Kind, Subject: payload.Subject, ID: payload.ID,
+		Issuer: payload.Issuer, Audience: payload.Audience,
 		IssuedAt: time.Unix(payload.IssuedAt, 0).UTC(), ExpiresAt: time.Unix(payload.ExpiresAt, 0).UTC(),
 	}
 	if !now.Before(claims.ExpiresAt.Add(clockSkew)) {

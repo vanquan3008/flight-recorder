@@ -30,7 +30,7 @@ func cookieNamed(recorder *httptest.ResponseRecorder, name string) *http.Cookie 
 	return nil
 }
 
-func TestRegistrationOpensTheFirstAccountAsSuperAdministrator(t *testing.T) {
+func TestRegistrationCreatesRegularAccountWhenOpen(t *testing.T) {
 	backend := newIdentityBackend("")
 	handler := identityServer(backend)
 	body := `{"email":"first@example.com","display_name":"First","password":"a-long-enough-passphrase"}`
@@ -44,8 +44,8 @@ func TestRegistrationOpensTheFirstAccountAsSuperAdministrator(t *testing.T) {
 			PlatformAdmin bool `json:"platform_admin"`
 		} `json:"user"`
 	}
-	if err := json.Unmarshal(response.Body.Bytes(), &view); err != nil || view.AccessToken == "" || !view.User.PlatformAdmin {
-		t.Fatalf("view = %+v (%v); the first account signs in as super administrator", view, err)
+	if err := json.Unmarshal(response.Body.Bytes(), &view); err != nil || view.AccessToken == "" || view.User.PlatformAdmin {
+		t.Fatalf("view = %+v (%v); newly registered account must not be super administrator", view, err)
 	}
 	refresh := cookieNamed(response, refreshCookieName)
 	if refresh == nil || !refresh.HttpOnly || refresh.SameSite != http.SameSiteStrictMode || refresh.Path != refreshPath || refresh.Value != "refresh-1" {
@@ -56,9 +56,9 @@ func TestRegistrationOpensTheFirstAccountAsSuperAdministrator(t *testing.T) {
 	}
 }
 
-func TestRegistrationCanBeClosedAfterTheFirstAccount(t *testing.T) {
+func TestRegistrationIsRefusedWhenClosed(t *testing.T) {
 	backend := newIdentityBackend("")
-	backend.hasUsers = true
+	backend.hasUsers = false
 	server := newTestServer(nil)
 	server.backend, server.allowRegistration = backend, false
 	router := http.NewServeMux()

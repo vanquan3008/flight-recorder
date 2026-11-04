@@ -68,15 +68,14 @@ func TestAccountsProjectsAndTokensIntegration(t *testing.T) {
 	server.RegisterAPIRoutes(router)
 
 	// Anyone can register; nobody sees a project until they make one or are let in.
-	hasUsers, _ := database.HasUsers(ctx)
 	alice := &client{t: t, handler: router}
 	status, body := alice.register(aliceEmail, "Alice", "a-long-enough-passphrase")
 	if status != http.StatusCreated || alice.access == "" || alice.refresh == "" {
 		t.Fatalf("register: %d %v", status, body)
 	}
 	aliceIsAdmin, _ := nested(body, "user", "platform_admin").(bool)
-	if aliceIsAdmin == hasUsers {
-		t.Fatalf("platform_admin = %t with existing accounts = %t; only the first account is a super administrator", aliceIsAdmin, hasUsers)
+	if aliceIsAdmin {
+		t.Fatalf("platform_admin = true; newly registered accounts must not be super administrator")
 	}
 	if status, _ = (&client{t: t, handler: router}).register(strings.ToUpper(aliceEmail), "Again", "a-long-enough-passphrase"); status != http.StatusConflict {
 		t.Fatalf("registering an address twice: status %d, want 409", status)

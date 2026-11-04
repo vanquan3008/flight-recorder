@@ -111,6 +111,25 @@ func TestProductionMetricsRequireDatabaseAuthentication(t *testing.T) {
 	}
 }
 
+func TestNewUsesConfiguredCachePolicies(t *testing.T) {
+	configuration := config.Config{
+		Cache: config.CacheConfig{
+			ScopeTTL:      2 * time.Minute,
+			ScopeLimit:    12,
+			IdentityTTL:   3 * time.Minute,
+			IdentityLimit: 24,
+		},
+	}
+	server := New(configuration, slog.New(slog.NewTextHandler(io.Discard, nil)), func(context.Context) error { return nil }, metrics.New("test", "test", "test"), nil, nil)
+
+	if server.environments.ttl != configuration.Cache.ScopeTTL || server.environments.limit != configuration.Cache.ScopeLimit {
+		t.Fatalf("scope cache policy = (%s, %d), want (%s, %d)", server.environments.ttl, server.environments.limit, configuration.Cache.ScopeTTL, configuration.Cache.ScopeLimit)
+	}
+	if server.identity.ttl != configuration.Cache.IdentityTTL || server.identity.limit != configuration.Cache.IdentityLimit {
+		t.Fatalf("identity cache policy = (%s, %d), want (%s, %d)", server.identity.ttl, server.identity.limit, configuration.Cache.IdentityTTL, configuration.Cache.IdentityLimit)
+	}
+}
+
 func TestManagementTLSConfigurationUsesModernMinimum(t *testing.T) {
 	server := New(config.Config{
 		HTTP:            config.HTTPConfig{ManagementMaxBodyBytes: 1024},

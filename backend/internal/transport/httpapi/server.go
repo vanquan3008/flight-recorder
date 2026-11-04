@@ -37,6 +37,12 @@ type Server struct {
 	metricsToken            string
 	allowRegistration       bool
 	production              bool
+	accessTokenTTL          time.Duration
+	refreshTokenTTL         time.Duration
+	cookieDomain            string
+	cookieSameSite          http.SameSite
+	issuer                  string
+	audience                string
 	environments            *environmentCache
 	identity                *identityCache
 	maxBodyBytes            int64
@@ -61,6 +67,7 @@ type Server struct {
 	certificateFile         string
 	privateKeyFile          string
 	webhooksEnabled         bool
+	streamHub               *StreamHub
 }
 
 func New(configuration config.Config, logger *slog.Logger, readinessCheck func(context.Context) error, metricRegistry *metrics.Registry, backend Backend, replayRunner ReplayRunner) *Server {
@@ -77,8 +84,14 @@ func New(configuration config.Config, logger *slog.Logger, readinessCheck func(c
 		metricsToken:            configuration.HTTP.MetricsToken,
 		allowRegistration:       configuration.Auth.AllowRegistration,
 		production:              configuration.Production,
-		environments:            newEnvironmentCache(),
-		identity:                newIdentityCache(),
+		accessTokenTTL:          configuration.Auth.AccessTokenTTL,
+		refreshTokenTTL:         configuration.Auth.RefreshTokenTTL,
+		cookieDomain:            configuration.Auth.CookieDomain,
+		cookieSameSite:          configuration.Auth.CookieSameSiteMode(),
+		issuer:                  configuration.Auth.EffectiveIssuer(),
+		audience:                configuration.Auth.EffectiveAudience(),
+		environments:            newEnvironmentCache(configuration.Cache.EffectiveScopeTTL(), configuration.Cache.EffectiveScopeLimit()),
+		identity:                newIdentityCache(configuration.Cache.EffectiveIdentityTTL(), configuration.Cache.EffectiveIdentityLimit()),
 		maxBodyBytes:            configuration.HTTP.ManagementMaxBodyBytes,
 		shutdownTimeout:         configuration.ShutdownTimeout,
 		backend:                 backend,
@@ -156,6 +169,11 @@ func (server *Server) WithTokenInvalidator(invalidator TokenInvalidator) *Server
 	return server
 }
 
+func (server *Server) WithStreamHub(hub *StreamHub) *Server {
+	server.streamHub = hub
+	return server
+}
+
 // Handler returns the underlying http.Handler.
 func (server *Server) Handler() http.Handler {
 	return server.httpServer.Handler
@@ -196,6 +214,9 @@ func (server *Server) Run(applicationContext context.Context) error {
 		return serveError
 	case <-applicationContext.Done():
 		server.ready.Store(false)
+		if server.streamHub != nil {
+			server.streamHub.Close()
+		}
 		shutdownContext, cancelShutdown := context.WithTimeout(context.Background(), server.shutdownTimeout)
 		defer cancelShutdown()
 		if shutdownError := server.httpServer.Shutdown(shutdownContext); shutdownError != nil {
