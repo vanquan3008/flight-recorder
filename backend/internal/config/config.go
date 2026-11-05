@@ -10,6 +10,7 @@ type Config struct {
 	App             AppConfig           `config:"app"`
 	HTTP            HTTPConfig          `config:"http"`
 	Database        DatabaseConfig      `config:"database"`
+	ClickHouse      ClickHouseConfig    `config:"clickhouse"`
 	Auth            AuthConfig          `config:"auth"`
 	Cache           CacheConfig         `config:"cache"`
 	Storage         StorageConfig       `config:"storage"`

@@ -6,6 +6,8 @@ package sqlc
 
 import (
 	"time"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type AuditEvent struct {
@@ -342,6 +344,31 @@ type Span struct {
 	DroppedAttributesCount int32
 	DroppedEventsCount     int32
 	DroppedLinksCount      int32
+}
+
+type SpanMinuteRollup struct {
+	ProjectID         string
+	EnvironmentID     string
+	BucketStart       time.Time
+	ServiceName       string
+	SpanKind          int32
+	Endpoint          string
+	EntityType        string
+	EntityName        string
+	Calls             int64
+	Errors            int64
+	DurationSum       pgtype.Numeric
+	TraceIDs          []string
+	RequestStartedAt  []time.Time
+	RequestDurationNs []int64
+	RequestFailed     []bool
+}
+
+type SpanRollupBucket struct {
+	ProjectID     string
+	EnvironmentID string
+	BucketStart   time.Time
+	Dirty         bool
 }
 
 type SpansDefault struct {

@@ -648,6 +648,7 @@
         {
           "name": "Logs: error linked to the trace",
           "request": {
+            "description": "With TRACEPILOT_CLICKHOUSE_URL configured, raw logs persist to ClickHouse weekly UTC partitions. ACK waits for ClickHouse flush and the PostgreSQL incident/outbox transaction; transient failures return 503 for exporter retry. The existing verify folder reads logs through the same API. For an existing database, stop ingestion, migrate clickhouse up, then migrate clickhouse backfill before restarting with ClickHouse enabled.",
             "method": "POST",
             "header": [
               {

@@ -2,20 +2,21 @@
 
 TracePilot là nền tảng quan sát và giám sát hiệu năng ứng dụng (APM & Observability) tự lưu trữ (self-hosted) dành cho các nhóm kỹ thuật. TracePilot tiếp nhận dữ liệu chuẩn OpenTelemetry (OTLP) gồm traces, application logs và metrics; tự động liên kết tương quan giữa sự cố (incidents) và sơ đồ quan hệ phụ thuộc dịch vụ (service topology), đồng thời xếp hạng giả thuyết nguyên nhân gốc rễ (Root Cause Analysis - RCA) với bằng chứng trực quan.
 
-**Trạng thái hiện tại: Beta.** Luồng hoạt động ở [FLOW.md](docs/FLOW.md), sơ đồ ở [diagrams.html](docs/diagrams.html). Dữ liệu traces, logs và OTLP metrics cam kết chỉ phản hồi ACK khi transaction PostgreSQL đã commit thành công.
+**Trạng thái hiện tại: Beta.** Luồng hoạt động ở [FLOW.md](docs/FLOW.md), sơ đồ ở [diagrams.html](docs/diagrams.html). ACK chỉ trả sau khi kho dữ liệu liên quan xác nhận ghi thành công: PostgreSQL cho quản trị, trace/metric và incident; ClickHouse cho raw log khi được cấu hình.
 
 ---
 
 ## 🌟 Điểm nổi bật
 
 - **Tương thích toàn diện OpenTelemetry (OTLP):** Hỗ trợ đầy đủ giao thức gRPC (`:4317`) và HTTP/JSON (`:4318`) cho `/v1/traces`, `/v1/logs`, `/v1/metrics`.
-- **Kiến trúc gọn:** Một backend Go (API và nhận OTLP) lưu thẳng vào PostgreSQL riêng, cùng một frontend React tách riêng. Không cần thêm middleware phức tạp.
+- **Kiến trúc gọn:** Một backend Go (API và nhận OTLP), PostgreSQL quản trị/incident/trace/metric, ClickHouse tùy chọn cho raw log, cùng một frontend React riêng. Tái sử dụng pipeline và API hiện có.
 - **Giao diện Web Console hiện đại:** Xây dựng với React và Tailwind CSS, hỗ trợ giao diện Sáng/Tối (Dark/Light mode), thanh điều hướng Capsule Dock nổi, bố cục Bento Card trực quan.
 - **Trace Explorer & Waterfall:** Xem chi tiết luồng thực thi yêu cầu, phân tích cây span, phát hiện điểm nghẽn độ trễ và lỗi phân tán.
 - **Log Correlation:** Tìm kiếm log độc lập theo khung thời gian hoặc truy vết chéo ngay lập tức với trace/span tương ứng.
 - **Bản đồ cấu trúc dịch vụ (Topology Graph):** Trực quan hóa tương tác giữa các service nội bộ và hạ tầng bên thứ ba.
 - **Phát hiện sự cố & Đề xuất RCA:** Tự động phát hiện lỗi bất thường qua baseline tín hiệu, gom nhóm sự cố và đưa ra giả thuyết nguyên nhân gốc rễ kèm bằng chứng định lượng.
-- **Bảo vệ hệ thống & An toàn tài nguyên:** Pipeline tiếp nhận có giới hạn bộ nhớ (byte budget) và hàng đợi có chặn, tự động loại trừ dữ liệu nhạy cảm (redaction), hỗ trợ phân vùng (partition) bảng theo ngày.
+- **Bảo vệ hệ thống & An toàn tài nguyên:** Pipeline tiếp nhận có giới hạn bộ nhớ và hàng đợi, che dữ liệu nhạy cảm; PostgreSQL partition ngày, ClickHouse raw log partition tuần UTC bắt đầu thứ Hai.
+- **Tổng hợp nền theo phút:** Dashboard performance và detection service/dependency dùng `span_minute_rollups`, được cập nhật trong worker hiện có. Phần chưa tổng hợp và dữ liệu đến muộn dùng span gốc; p95/p99 vẫn tính từ latency từng request, giữ nguyên API và ranh giới project/environment.
 
 ---
 
@@ -42,17 +43,66 @@ go -C backend run ./cmd/tracepilot serve
 
 Backend chỉ phục vụ API; giao diện là ứng dụng riêng ở thư mục `frontend` (xem mục Giao diện bên dưới).
 
-Chạy bằng container hoặc Docker Compose:
+### Raw log trên ClickHouse, PostgreSQL quản trị
+
+Điền `TRACEPILOT_CLICKHOUSE_*` trong **backend/.env** để dùng ClickHouse sẵn có.
+URL trống tiếp tục dùng PostgreSQL như trước; URL có giá trị chuyển cả ghi và đọc log
+sang ClickHouse. Traces/metrics, tài khoản, project, token, incident và webhook vẫn ở PostgreSQL.
+Không tự chuyển về PostgreSQL khi ClickHouse lỗi: ingest trả lỗi tạm để exporter retry.
+
+Khi chuyển một hệ thống đã có log: dừng ingest và chờ pipeline drain, sao lưu/cố định
+cấu hình; sau đó chạy lần lượt bằng tài khoản được quyền tạo database/table:
 
 ```powershell
-# Chạy toàn bộ stack (Migration, Backend và Web Console) đọc trực tiếp từ .env
-docker compose up -d
-
-# (Tùy chọn) Bật kèm cả PostgreSQL nội bộ nếu máy chưa có DB:
-# docker compose --profile local-db up -d
+go -C backend run ./cmd/tracepilot migrate up
+go -C backend run ./cmd/tracepilot migrate clickhouse up
+go -C backend run ./cmd/tracepilot migrate clickhouse backfill
+go -C backend run ./cmd/tracepilot serve
 ```
 
-Hoặc chạy từng container riêng lẻ:
+`backfill` phân trang log PostgreSQL theo từng project/environment, giữ nguyên ID và
+có thể chạy lại sau khi bị ngắt. Chờ backfill thành công trước khi mở ingest/console.
+Log PostgreSQL cũ không bị lệnh backfill xóa; retention PostgreSQL vẫn áp dụng.
+Các bản backend cùng phục vụ phải dùng chung cấu hình kho log và thời hạn lưu.
+Quay lại URL trống chỉ xem dữ liệu PostgreSQL còn giữ, không tự đồng bộ log mới từ ClickHouse.
+
+`tracepilot_logs` dùng `ReplacingMergeTree`, partition `toStartOfWeek(occurred_at, 1, 'UTC')`.
+Ghi batch nén gzip; `async_insert=1, wait_for_async_insert=1` để gộp part phía server
+và chỉ xác nhận sau khi flush. Đọc `FINAL` khử trùng theo ID và khóa scope/service/time
+kể cả exporter retry với cách chia batch khác. Khóa ORDER BY dùng timestamp cắt xuống
+millisecond + ID để backfill microsecond từ PG vẫn khử trùng với retry OTLP nanosecond;
+cột timestamp và cursor vẫn giữ nanosecond. Bộ lọc có tham số kiểu rõ ràng,
+cursor giữ độ chính xác nanosecond; có index bloom trace/event và ngram cho nội dung log.
+Log thường không ghi PostgreSQL; log gây incident chỉ giữ envelope lỗi gọn và vẫn dùng
+transaction incident/evidence/outbox cũ. Không có transaction xuyên hai database;
+ACK chờ tất cả bước cần thiết và retry có thể lặp lại bước đã thành công.
+
+TTL lấy `TRACEPILOT_RETENTION_MAX_AGE` (mặc định 168h, `0s` giữ mãi), độc lập với partition tuần.
+TTL xóa cả part khi mọi dòng trong part hết hạn; API ẩn log hết hạn ngay bằng điều kiện thời gian.
+Dữ liệu vật lý có thể lưu thêm gần một tuần cộng độ trễ merge. Đổi thời hạn cần chạy lại
+`migrate clickhouse up`; server kiểm tra schema/TTL và từ chối cấu hình lệch, không tự chạy DDL/migration.
+Tài khoản runtime cần SELECT/INSERT vào bảng và đọc metadata `system.tables`;
+tài khoản migration dùng riêng khi vận hành và không để quyền DDL cho runtime.
+
+Khởi đầu giữ batch 256, 2 worker và 8 kết nối ClickHouse (4 API query, còn chỗ cho ingest/readiness).
+Khi tăng số query/worker, tăng connection budget tương ứng để query dài không chiếm hết kết nối ingest.
+Khi đo tải, tăng batch lên
+1.000–4.000 trước rồi mới tăng worker theo CPU/I/O; giữ queue byte budget, timeout
+và giới hạn truy vấn. Theo dõi queue, thời gian persist/retry của TracePilot cùng
+`system.parts`, `system.merges`, `system.asynchronous_insert_log`, query latency và disk
+trên ClickHouse. Đây là điểm bắt đầu đo tải, không phải cam kết log/giây.
+Nếu cần HA, quản trị viên cấp trước bảng `ReplicatedReplacingMergeTree`/ClickHouse Cloud
+cùng cột, partition và ORDER BY; patch này không tự tạo shard, replica hay Keeper.
+
+Test tích hợp ClickHouse trên **instance có thể bỏ đi** (tạo/xóa database `tracepilot_test_*`):
+
+```powershell
+$env:TRACEPILOT_CLICKHOUSE_INTEGRATION_TEST='1'
+$env:TRACEPILOT_CLICKHOUSE_TEST_URL='http://127.0.0.1:18123'
+go -C backend test ./internal/storage/clickhouse -count=1
+```
+
+Chạy bằng container, PostgreSQL và ClickHouse là dịch vụ ngoài (repo không có Compose):
 
 ```powershell
 docker build -t tracepilot ./backend
@@ -139,11 +189,13 @@ Header bảo mật của trang (CSP, `X-Frame-Options`) do nơi phục vụ giao
 flowchart LR
     App["Ứng dụng / OTel SDK"] -->|"OTLP gRPC / HTTP"| Ingest["Bộ thu OTLP (Auth & Sanitize)"]
     Ingest -->|"Batch có kiểm soát bộ nhớ"| Pipeline["Ingest Pipeline & Queue"]
-    Pipeline -->|"Transaction"| DB[("PostgreSQL 17\nPartitioned Tables")]
-    DB -->|"Commit ACK"| App
+    Pipeline -->|"Trace/metric, incident + outbox"| DB[("PostgreSQL\nPartition ngày")]
+    Pipeline -->|"Raw log khi cấu hình URL"| CH[("ClickHouse\nPartition tuần UTC")]
+    Pipeline -->|"ACK sau CH flush và PG commit cần thiết"| App
     Detector["Background Detector"] -.->|"Phân tích bất thường"| DB
     Console["React Web Console (ứng dụng riêng)"] <-->|"REST API (:8080)"| HTTPAPI["HTTP API Layer"]
     HTTPAPI <--> DB
+    HTTPAPI -->|"Log explorer, correlation"| CH
 ```
 
 Mã nguồn được tổ chức chặt chẽ theo các ranh giới kiến trúc độc lập (mỗi file tuân thủ giới hạn $\le 300$ dòng):
@@ -156,7 +208,7 @@ Mã nguồn được tổ chức chặt chẽ theo các ranh giới kiến trúc
 │       ├── application/         # Các use case nghiệp vụ (incident, retention, webhook...)
 │       ├── domain/              # Model và quy tắc nghiệp vụ thuần túy
 │       ├── ingest/              # Bộ chuyển đổi OTLP gRPC/HTTP và pipeline điều tiết
-│       ├── storage/             # Tương tác PostgreSQL, migration, phân vùng
+│       ├── storage/             # PostgreSQL, ClickHouse, migration, phân vùng
 │       ├── transport/httpapi/   # REST API handler, middleware, rate-limit, OpenAPI
 ├── frontend/
 │   └── src/
@@ -251,6 +303,14 @@ Chỉ có **một biến bắt buộc** khi chạy thử là `TRACEPILOT_DATABAS
 | `TRACEPILOT_MIGRATIONS_PATH` | `./db/migrations` | Thư mục migration (image đặt sẵn `/db/migrations`). |
 | `TRACEPILOT_DATABASE_STATEMENT_TIMEOUT` / `LOCK_TIMEOUT` / `IDLE_IN_TRANSACTION_TIMEOUT` | `30s` / `10s` / `30s` | Giới hạn phía PostgreSQL; `0` giữ mặc định của server. |
 
+**ClickHouse (raw log tùy chọn)**
+
+| Biến | Mặc định | Ý nghĩa |
+| :--- | :--- | :--- |
+| `TRACEPILOT_CLICKHOUSE_URL` | *(trống)* | HTTP(S) origin; trống giữ log PostgreSQL. Production yêu cầu HTTPS. |
+| `TRACEPILOT_CLICKHOUSE_DATABASE` / `USERNAME` / `PASSWORD` | `tracepilot` / `default` / *(trống)* | Database và tài khoản; không đặt credentials trong URL. |
+| `TRACEPILOT_CLICKHOUSE_REQUEST_TIMEOUT` / `MAX_CONNECTIONS` | `10s` / `8` | Deadline HTTP và giới hạn kết nối mỗi backend; ingest còn chịu `INGESTION_BATCH_TIMEOUT`. |
+
 **Retention, replay và webhook (phần còn lại)**
 
 | Biến | Mặc định | Ý nghĩa |
@@ -279,7 +339,7 @@ Ngoài ra image còn đọc các biến của lệnh `healthcheck` từ môi tr�
 
 ## 🧑‍💻 Phát triển
 
-**Cấu hình.** Backend chỉ có `backend/.env` (mẫu `backend/.env.example`); không tạo file riêng cho dev/prod. Go đọc `.env` ở thư mục chạy (`backend/` khi dùng `go -C backend`) rồi `../.env` (tương thích file cũ ở root); chỉ có một luồng cấu hình: giá trị mặc định, rồi file `.env`, rồi biến môi trường tiến trình (cao nhất). Mọi trường cấu hình ánh xạ sang `TRACEPILOT_<MỤC>_<TRƯỜNG>`. Migration chạy chủ động (`tracepilot migrate up`), server không tự sửa schema khi khởi động.
+**Cấu hình.** Backend chỉ có `backend/.env` (mẫu `backend/.env.example`); không tạo file riêng cho dev/prod. Go chỉ đọc `backend/.env`, dù chạy từ root repo hay từ thư mục backend; chỉ có một luồng cấu hình: giá trị mặc định, rồi file `.env`, rồi biến môi trường tiến trình (cao nhất). Mọi trường cấu hình ánh xạ sang `TRACEPILOT_<MỤC>_<TRƯỜNG>`. Migration chạy chủ động (`tracepilot migrate up`), server không tự sửa schema khi khởi động.
 
 **Kiểm tra.** Chạy trước khi tích hợp:
 
@@ -292,9 +352,16 @@ npm --prefix frontend run test
 npm --prefix frontend run build  # build ra frontend/dist
 ```
 
-Test cần PostgreSQL tự bỏ qua trừ khi đặt `TRACEPILOT_INTEGRATION_TEST=1` và `TRACEPILOT_DATABASE_URL` trỏ tới **một database dùng một lần**. Thay đổi SQL hoặc migration phải chạy `migrate up`, `migrate down 1`, `migrate up` trên database sạch (hiện có `000001_init` và `000002_identity`). Không chạy migrate down trên database thật; rollback image chỉ an toàn khi schema tương thích. Unit test không phải chứng nhận production.
+Test cần PostgreSQL tự bỏ qua trừ khi đặt `TRACEPILOT_INTEGRATION_TEST=1` và `TRACEPILOT_DATABASE_URL` trỏ tới **một database dùng một lần**. Thay đổi SQL hoặc migration phải chạy `migrate up`, `migrate down 1`, `migrate up` trên database sạch (hiện có `000001_init`, `000002_identity`, `000003_span_rollups`). Migration 3 lập danh sách phút của spans hiện có; worker backfill tối đa 64 phút/scope mỗi lượt, query đọc dữ liệu gốc trong lúc chờ. Không chạy migrate down trên database thật; rollback image chỉ an toàn khi schema tương thích. Unit test không phải chứng nhận production.
 
-**SQL (SQL-first).** Schema là `backend/db/migrations` (golang-migrate); truy vấn viết trong `backend/db/queries/<chức năng>.sql` (`@tên`, `sqlc.narg(tên)`), `sqlc` kiểm với schema rồi sinh hàm Go có kiểu qua pgx. `make sqlc-check` chạy sinh lại, so sánh với bản đã commit và `sqlc vet` (luật trong `sqlc.yaml`: `UPDATE`/`DELETE` phải có `WHERE`). Không truyền chuỗi SQL vào `Exec/Query` trong Go: architecture test báo lỗi, trừ các ngoại lệ có lý do trong `storage_sql_test.go` (DDL partition cần tên bảng, savepoint, dọn partition mặc định). Bảng của golang-migrate (`schema_migrations`) khai báo riêng cho sqlc ở `db/external/`. Tham số phải đặt tên rõ (`@tên::kiểu`): đừng để tham số nằm trong biểu thức như `@a::timestamptz - interval '1 hour'`, vì sqlc sẽ tự đặt một tham số phụ mà Go không gán; test `TestSqlcParametersAreNamed` bắt lỗi này. Không sửa code sinh ra bằng tay.
+Đo đường đọc gốc và rollup trên cùng 20.000 spans bằng các hàm store hiện có (database dùng một lần đã migrate):
+
+```powershell
+$env:TRACEPILOT_INTEGRATION_TEST="1"
+go -C backend test -run '^$' -bench SpanRollup -benchtime=1s -benchmem ./internal/storage/postgres
+```
+
+**PostgreSQL (SQL-first).** Schema là `backend/db/migrations` (golang-migrate); truy vấn viết trong `backend/db/queries/<chức năng>.sql` (`@tên`, `sqlc.narg(tên)`), `sqlc` kiểm với schema rồi sinh hàm Go có kiểu qua pgx. `make sqlc-check` chạy sinh lại, so sánh với bản đã commit và `sqlc vet` (luật trong `sqlc.yaml`: `UPDATE`/`DELETE` phải có `WHERE`). Không truyền chuỗi SQL vào `Exec/Query` trong Go: architecture test báo lỗi, trừ các ngoại lệ có lý do trong `storage_sql_test.go` (DDL partition cần tên bảng, savepoint, dọn partition mặc định). Bảng của golang-migrate (`schema_migrations`) khai báo riêng cho sqlc ở `db/external/`. Tham số phải đặt tên rõ (`@tên::kiểu`): đừng để tham số nằm trong biểu thức như `@a::timestamptz - interval '1 hour'`, vì sqlc sẽ tự đặt một tham số phụ mà Go không gán; test `TestSqlcParametersAreNamed` bắt lỗi này. Không sửa code sinh ra bằng tay. ClickHouse dùng schema nhúng tại `internal/storage/clickhouse/schema.sql` và HTTP với tham số có kiểu; không đi qua sqlc PostgreSQL.
 
 **Giao diện.** Font Inter và JetBrains Mono được tự host qua `@fontsource-variable` (`frontend/src/styles/fonts.css`, chỉ subset latin, latin-ext, vietnamese); không dùng CDN vì CSP chỉ cho `'self'`. Kiểu glass: token `--glass*` và `--mesh` ở `base.css`, quy tắc ở `glass.css`; chỉ bề mặt cấp cao nhất làm mờ nền, và tự chuyển sang nền đặc khi thiếu `backdrop-filter` hoặc người dùng bật giảm độ trong suốt.
 

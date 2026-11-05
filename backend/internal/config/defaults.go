@@ -126,11 +126,12 @@ func defaultConfig() Config {
 	}
 
 	return Config{
-		App:      appDefaults,
-		HTTP:     httpDefaults,
-		Database: databaseDefaults,
-		Auth:     authDefaults,
-		Cache:    cacheDefaults,
+		App:        appDefaults,
+		HTTP:       httpDefaults,
+		Database:   databaseDefaults,
+		ClickHouse: ClickHouseConfig{Database: "tracepilot", Username: "default", RequestTimeout: 10 * time.Second, MaxConnections: 8},
+		Auth:       authDefaults,
+		Cache:      cacheDefaults,
 		Storage: StorageConfig{
 			Retention: retentionDefaults,
 		},

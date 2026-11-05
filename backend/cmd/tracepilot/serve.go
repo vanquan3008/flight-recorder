@@ -73,6 +73,12 @@ func runServer(arguments []string) int {
 		return 1
 	}
 	defer database.Close()
+	backend, err := buildStorageBackend(appCtx, cfg, database)
+	if err != nil {
+		logger.Error("log storage initialization failed", "error", err)
+		return 1
+	}
+	defer backend.closeLogs()
 
 	if err := ensureTelemetryPartitions(appCtx, database); err != nil {
 		logger.Error("telemetry partition initialization failed", "error", err)
@@ -115,7 +121,7 @@ func runServer(arguments []string) int {
 	// request; the configured project keeps working without a lookup.
 	scopes := newScopeCatalog(cfg.Ingestion, database)
 
-	ingestionPipeline := buildIngestionPipeline(cfg, database, scopes, selfMetrics)
+	ingestionPipeline := buildIngestionPipeline(cfg, backend, scopes, selfMetrics)
 	metricsPipeline := buildMetricsPipeline(cfg, database, scopes, selfMetrics)
 
 	// ---------------------------------------------------------
@@ -141,9 +147,9 @@ func runServer(arguments []string) int {
 	managementServer := httpapi.New(
 		cfg,
 		logger,
-		buildReadinessCheck(database, ingestionPipeline, metricsPipeline, otlpServer),
+		buildReadinessCheck(backend, ingestionPipeline, metricsPipeline, otlpServer),
 		selfMetrics,
-		database,
+		backend,
 		replayService,
 	).WithTokenInvalidator(tokenCache).WithStreamHub(streamHub)
 

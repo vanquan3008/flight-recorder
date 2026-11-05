@@ -441,31 +441,53 @@ func (q *Queries) ListTraces(ctx context.Context, arg ListTracesParams) ([]ListT
 }
 
 const requestPerformance = `-- name: RequestPerformance :many
-WITH inbound AS (
-    SELECT service_name, started_at,
-        CASE
-            WHEN NULLIF(span_attributes->>'http.route', '') IS NOT NULL THEN
-                concat_ws(' ', COALESCE(NULLIF(span_attributes->>'http.request.method', ''),
-                    NULLIF(span_attributes->>'http.method', '')), span_attributes->>'http.route')
-            WHEN NULLIF(span_attributes->>'rpc.method', '') IS NOT NULL THEN
-                concat_ws('/', NULLIF(span_attributes->>'rpc.service', ''), span_attributes->>'rpc.method')
-            ELSE COALESCE(NULLIF(span_name, ''), '(unnamed)')
-        END AS endpoint,
-        extract(epoch FROM ended_at - started_at) * 1000000000 AS duration_ns,
-        (status_code = 'ERROR' OR COALESCE(NULLIF(span_attributes->>'http.response.status_code', ''),
-            span_attributes->>'http.status_code', '') ~ '^5[0-9]{2}$') AS failed
-    FROM spans
-    WHERE project_id = $2
-      AND environment_id = $3
-      AND span_kind = 2
-      AND started_at >= $4::timestamptz
-      AND started_at < $5::timestamptz
-      AND ($6::text IS NULL OR service_name = $6)
+WITH clean_minutes AS MATERIALIZED (
+    SELECT b.bucket_start FROM span_rollup_buckets b
+    WHERE b.project_id = $2 AND b.environment_id = $3 AND NOT b.dirty
+      AND b.bucket_start >= date_bin('1 minute', $4::timestamptz, TIMESTAMPTZ '2000-01-01 00:00:00+00')
+      AND b.bucket_start < $5::timestamptz
+), raw_windows AS MATERIALIZED (
+    SELECT covered.previous_end AS starts_at, covered.bucket_start AS ends_at
+    FROM (
+        SELECT bucket_start, lag(bucket_start + interval '1 minute', 1, $4::timestamptz)
+            OVER (ORDER BY bucket_start) AS previous_end
+        FROM clean_minutes
+    ) covered
+    WHERE covered.previous_end < covered.bucket_start
+    UNION ALL
+    SELECT COALESCE(max(bucket_start + interval '1 minute'), $4::timestamptz), $5::timestamptz
+    FROM clean_minutes
+    HAVING COALESCE(max(bucket_start + interval '1 minute'), $4::timestamptz) < $5::timestamptz
+), inbound AS (
+    SELECT spans.service_name, spans.started_at, span_request_endpoint(spans.span_attributes, spans.span_name) AS endpoint,
+        extract(epoch FROM spans.ended_at - spans.started_at) * 1000000000 AS duration_ns,
+        span_request_failed(spans.status_code, spans.span_attributes) AS failed
+    FROM raw_windows minute
+    CROSS JOIN LATERAL (
+        SELECT s.event_id, s.project_id, s.environment_id, s.trace_id, s.span_id, s.parent_span_id, s.trace_state, s.span_name, s.span_kind, s.started_at, s.ended_at, s.status_code, s.status_message, s.flags, s.service_name, s.service_version, s.resource_schema_url, s.resource_attributes, s.scope_name, s.scope_version, s.scope_schema_url, s.scope_attributes, s.span_attributes, s.span_events, s.span_links, s.dropped_attributes_count, s.dropped_events_count, s.dropped_links_count FROM spans s
+        WHERE s.project_id = $2 AND s.environment_id = $3 AND s.span_kind = 2
+          AND s.started_at >= minute.starts_at AND s.started_at < minute.ends_at
+          AND ($6::text IS NULL OR s.service_name = $6)
+        OFFSET 0
+    ) spans
+    UNION ALL
+    SELECT r.service_name, sample.started_at, r.endpoint, sample.duration_ns, sample.failed
+    FROM span_minute_rollups r
+    JOIN span_rollup_buckets b USING (project_id, environment_id, bucket_start)
+    CROSS JOIN LATERAL ROWS FROM (unnest(r.request_started_at), unnest(r.request_duration_ns), unnest(r.request_failed))
+        AS sample(started_at, duration_ns, failed)
+    WHERE r.project_id = $2 AND r.environment_id = $3 AND NOT b.dirty
+      AND r.span_kind = 2
+      AND r.bucket_start >= date_bin('1 minute', $4::timestamptz, TIMESTAMPTZ '2000-01-01 00:00:00+00')
+      AND r.bucket_start < $5::timestamptz
+      AND sample.started_at >= $4::timestamptz AND sample.started_at < $5::timestamptz
+      AND ($6::text IS NULL OR r.service_name = $6)
+      AND ($7::text IS NULL OR r.endpoint = $7)
 ), observed AS (
     SELECT inbound.service_name, inbound.started_at, inbound.endpoint, inbound.duration_ns, inbound.failed,
-        floor(extract(epoch FROM inbound.started_at - $4::timestamptz) / $7::integer)::integer AS bucket
+        floor(extract(epoch FROM inbound.started_at - $4::timestamptz) / $8::integer)::integer AS bucket
     FROM inbound
-    WHERE $8::text IS NULL OR inbound.endpoint = $8
+    WHERE $7::text IS NULL OR inbound.endpoint = $7
 ), grouped AS (
     SELECT
         CASE WHEN grouping(bucket) = 0 THEN 'bucket'
@@ -502,8 +524,8 @@ type RequestPerformanceParams struct {
 	FromTime      time.Time
 	ToTime        time.Time
 	Service       *string
-	BucketSeconds int32
 	Endpoint      *string
+	BucketSeconds int32
 }
 
 type RequestPerformanceRow struct {
@@ -520,6 +542,7 @@ type RequestPerformanceRow struct {
 
 // One statement keeps summary, percentiles and breakdowns on the same snapshot.
 // Endpoints use the route or RPC method when present, else the span name.
+// Raw minutes drive bounded lateral scans: clean minutes never scan spans.
 func (q *Queries) RequestPerformance(ctx context.Context, arg RequestPerformanceParams) ([]RequestPerformanceRow, error) {
 	rows, err := q.db.Query(ctx, requestPerformance,
 		arg.RowLimit,
@@ -528,8 +551,8 @@ func (q *Queries) RequestPerformance(ctx context.Context, arg RequestPerformance
 		arg.FromTime,
 		arg.ToTime,
 		arg.Service,
-		arg.BucketSeconds,
 		arg.Endpoint,
+		arg.BucketSeconds,
 	)
 	if err != nil {
 		return nil, err

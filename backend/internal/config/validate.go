@@ -29,6 +29,7 @@ func (configuration Config) Validate() error {
 	configuration.validateApp(&v)
 	configuration.validateHTTP(&v)
 	configuration.validateDatabase(&v)
+	configuration.validateClickHouse(&v)
 	configuration.validateAuth(&v)
 	configuration.validateCache(&v)
 	configuration.validateStorage(&v)

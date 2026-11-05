@@ -11,7 +11,7 @@ import (
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 )
 
-const CurrentVersion uint = 2
+const CurrentVersion uint = 3
 
 func EnsureCurrent(databaseURL, migrationsPath string) (runError error) {
 	migrationRunner, openError := open(databaseURL, migrationsPath)

@@ -11,6 +11,9 @@ import (
 )
 
 func runMigrations(arguments []string) int {
+	if len(arguments) > 0 && arguments[0] == "clickhouse" {
+		return runClickHouseMigrations(arguments[1:])
+	}
 	flags := flag.NewFlagSet("migrate", flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
 	if parseError := flags.Parse(arguments); parseError != nil {
@@ -63,5 +66,5 @@ func runMigrations(arguments []string) int {
 }
 
 func migrationUsage() {
-	slog.Error("invalid migration arguments", "usage", "tracepilot migrate <up|down STEPS|version>")
+	slog.Error("invalid migration arguments", "usage", "tracepilot migrate <up|down STEPS|version|clickhouse up|clickhouse backfill>")
 }

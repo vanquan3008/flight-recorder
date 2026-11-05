@@ -9,6 +9,7 @@ import (
 	"github.com/vanquan3008/tracepilot/internal/application/replay"
 	"github.com/vanquan3008/tracepilot/internal/auth"
 	"github.com/vanquan3008/tracepilot/internal/config"
+	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
 	ingestotlp "github.com/vanquan3008/tracepilot/internal/ingest/otlp"
 	"github.com/vanquan3008/tracepilot/internal/ingest/pipeline"
 	"github.com/vanquan3008/tracepilot/internal/observability/metrics"
@@ -28,7 +29,11 @@ func buildMetricsPipeline(cfg config.Config, database *postgres.Database, catalo
 	)
 }
 
-func buildIngestionPipeline(cfg config.Config, database *postgres.Database, catalog *scopeCatalog, selfMetrics *metrics.Registry) *pipeline.Pipeline {
+type eventStore interface {
+	StoreEvents(context.Context, config.IngestionConfig, []telemetry.Event) error
+}
+
+func buildIngestionPipeline(cfg config.Config, database eventStore, catalog *scopeCatalog, selfMetrics *metrics.Registry) *pipeline.Pipeline {
 	return pipeline.New(
 		pipeline.Config{
 			QueueSize:      cfg.Ingestion.QueueSize,

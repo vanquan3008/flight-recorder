@@ -185,7 +185,12 @@ func (store *PartitionStore) dropExpiredPartitions(ctx context.Context, tables [
 
 func (store *PartitionStore) countRows(ctx context.Context, relation string) (int64, error) {
 	var count int64
-	if countError := store.pool.QueryRow(ctx, "SELECT count(*) FROM "+identifier(relation)).Scan(&count); countError != nil {
+	// A nested transaction is a savepoint: an optional count timing out must
+	// not abort the enclosing retention transaction and prevent the drop.
+	countError := pgx.BeginFunc(ctx, store.pool, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, "SELECT count(*) FROM "+identifier(relation)).Scan(&count)
+	})
+	if countError != nil {
 		return 0, fmt.Errorf("count %s: %w", relation, countError)
 	}
 	return count, nil
