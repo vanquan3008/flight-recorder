@@ -10,6 +10,12 @@ import (
 )
 
 var configEnvironment = []string{
+	"TRACEPILOT_CLICKHOUSE_URL",
+	"TRACEPILOT_CLICKHOUSE_DATABASE",
+	"TRACEPILOT_CLICKHOUSE_USERNAME",
+	"TRACEPILOT_CLICKHOUSE_PASSWORD",
+	"TRACEPILOT_CLICKHOUSE_REQUEST_TIMEOUT",
+	"TRACEPILOT_CLICKHOUSE_MAX_CONNECTIONS",
 	"TRACEPILOT_CONFIG_FILE",
 	"TRACEPILOT_HTTP_ADDRESS",
 	"TRACEPILOT_HTTP_ALLOWED_ORIGINS",
@@ -57,7 +63,27 @@ var configEnvironment = []string{
 	"TRACEPILOT_DATABASE_READINESS_TIMEOUT",
 	"TRACEPILOT_MIGRATIONS_PATH",
 	"TRACEPILOT_AUTH_JWT_SECRET",
+	"TRACEPILOT_AUTH_INGEST_JWT_SECRET",
 	"TRACEPILOT_AUTH_ALLOW_REGISTRATION",
+	"TRACEPILOT_AUTH_ACCESS_TOKEN_TTL",
+	"TRACEPILOT_AUTH_REFRESH_TOKEN_TTL",
+	"TRACEPILOT_AUTH_COOKIE_DOMAIN",
+	"TRACEPILOT_AUTH_COOKIE_SAME_SITE",
+	"TRACEPILOT_AUTH_ISSUER",
+	"TRACEPILOT_AUTH_AUDIENCE",
+	"TRACEPILOT_CACHE_DRIVER",
+	"TRACEPILOT_CACHE_URL",
+	"TRACEPILOT_CACHE_ADDRESS",
+	"TRACEPILOT_CACHE_PASSWORD",
+	"TRACEPILOT_CACHE_DB",
+	"TRACEPILOT_CACHE_DEFAULT_TTL",
+	"TRACEPILOT_CACHE_DEFAULT_LIMIT",
+	"TRACEPILOT_CACHE_TOKEN_TTL",
+	"TRACEPILOT_CACHE_TOKEN_LIMIT",
+	"TRACEPILOT_CACHE_SCOPE_TTL",
+	"TRACEPILOT_CACHE_SCOPE_LIMIT",
+	"TRACEPILOT_CACHE_IDENTITY_TTL",
+	"TRACEPILOT_CACHE_IDENTITY_LIMIT",
 	"TRACEPILOT_PRODUCTION",
 	"TRACEPILOT_TLS_CERTIFICATE_FILE",
 	"TRACEPILOT_TLS_PRIVATE_KEY_FILE",
@@ -110,6 +136,28 @@ func TestLoadRateLimitEnvironmentOverrides(t *testing.T) {
 	}
 }
 
+func TestLoadCachePoliciesFromEnvironment(t *testing.T) {
+	clearConfigEnvironment(t)
+	t.Setenv("TRACEPILOT_DATABASE_URL", "postgres://environment")
+	t.Setenv("TRACEPILOT_CACHE_TOKEN_TTL", "45s")
+	t.Setenv("TRACEPILOT_CACHE_TOKEN_LIMIT", "512")
+	t.Setenv("TRACEPILOT_CACHE_SCOPE_TTL", "1m")
+	t.Setenv("TRACEPILOT_CACHE_SCOPE_LIMIT", "128")
+	t.Setenv("TRACEPILOT_CACHE_IDENTITY_TTL", "2m")
+	t.Setenv("TRACEPILOT_CACHE_IDENTITY_LIMIT", "2048")
+
+	configuration, loadError := Load()
+	if loadError != nil {
+		t.Fatal(loadError)
+	}
+	cache := configuration.Cache
+	if cache.TokenTTL != 45*time.Second || cache.TokenLimit != 512 ||
+		cache.ScopeTTL != time.Minute || cache.ScopeLimit != 128 ||
+		cache.IdentityTTL != 2*time.Minute || cache.IdentityLimit != 2048 {
+		t.Fatalf("cache environment overrides = %+v", cache)
+	}
+}
+
 func TestLoadRejectsInvalidConnectionBounds(t *testing.T) {
 	clearConfigEnvironment(t)
 	t.Setenv("TRACEPILOT_DATABASE_URL", "postgres://test")
@@ -127,21 +175,24 @@ func TestLoadRequiresDatabaseURL(t *testing.T) {
 	}
 }
 
-func TestLoadReadsRepositoryEnvironmentFile(t *testing.T) {
+func TestLoadReadsBackendEnvironmentFile(t *testing.T) {
 	clearConfigEnvironment(t)
 	repositoryDirectory := t.TempDir()
 	backendDirectory := filepath.Join(repositoryDirectory, "backend")
 	if makeDirectoryError := os.Mkdir(backendDirectory, 0o700); makeDirectoryError != nil {
 		t.Fatal(makeDirectoryError)
 	}
+	if writeError := os.WriteFile(filepath.Join(backendDirectory, "go.mod"), []byte("module test\n"), 0o600); writeError != nil {
+		t.Fatal(writeError)
+	}
 	contents := "TRACEPILOT_DATABASE_URL=postgres://repository\n" +
 		"TRACEPILOT_HTTP_READ_TIMEOUT=9s\n" +
 		"TRACEPILOT_HTTP_ALLOWED_ORIGINS=https://one.example, https://two.example\n" +
 		"TRACEPILOT_MIGRATIONS_PATH=/opt/tracepilot/migrations\n"
-	if writeError := os.WriteFile(filepath.Join(repositoryDirectory, ".env"), []byte(contents), 0o600); writeError != nil {
+	if writeError := os.WriteFile(filepath.Join(backendDirectory, ".env"), []byte(contents), 0o600); writeError != nil {
 		t.Fatal(writeError)
 	}
-	t.Chdir(backendDirectory)
+	t.Chdir(repositoryDirectory)
 
 	configuration, loadError := Load()
 	if loadError != nil {

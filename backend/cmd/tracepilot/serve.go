@@ -4,45 +4,48 @@ import (
 	"context"
 	"errors"
 	"flag"
-	"fmt"
-	"log/slog"
-	"os"
-	"os/signal"
-	"syscall"
-	"time"
-
 	"github.com/vanquan3008/tracepilot/internal/application/intelligence"
 	"github.com/vanquan3008/tracepilot/internal/application/notification"
 	"github.com/vanquan3008/tracepilot/internal/application/retention"
 	"github.com/vanquan3008/tracepilot/internal/auth"
 	"github.com/vanquan3008/tracepilot/internal/config"
 	ingestotlp "github.com/vanquan3008/tracepilot/internal/ingest/otlp"
+	"github.com/vanquan3008/tracepilot/internal/observability/logging"
 	"github.com/vanquan3008/tracepilot/internal/observability/metrics"
+	"github.com/vanquan3008/tracepilot/internal/storage/cache"
 	"github.com/vanquan3008/tracepilot/internal/storage/migrations"
 	"github.com/vanquan3008/tracepilot/internal/storage/postgres"
 	"github.com/vanquan3008/tracepilot/internal/transport/httpapi"
+	"log/slog"
+	"os"
+	"os/signal"
+	"syscall"
 )
 
 func runServer(arguments []string) int {
 	flags := flag.NewFlagSet("serve", flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
-
 	if err := flags.Parse(arguments); err != nil {
 		return 2
 	}
 
 	if flags.NArg() != 0 {
-		fmt.Fprintln(os.Stderr, "serve does not accept positional arguments")
+		slog.Error("serve does not accept positional arguments")
 		return 2
 	}
 
 	cfg, err := config.Load()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "invalid configuration: %v\n", err)
+		slog.Error("invalid configuration", "error", err)
 		return 2
 	}
 
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: cfg.LogLevel}))
+	logger := logging.NewLogger(os.Stdout, &logging.Options{
+		Level:          cfg.LogLevel,
+		ServiceName:    "tracepilot",
+		ServiceVersion: version,
+	})
+	slog.SetDefault(logger)
 
 	if err := ensureJWTSecret(&cfg, logger); err != nil {
 		logger.Error("JWT secret generation failed", "error", err)
@@ -70,6 +73,12 @@ func runServer(arguments []string) int {
 		return 1
 	}
 	defer database.Close()
+	backend, err := buildStorageBackend(appCtx, cfg, database)
+	if err != nil {
+		logger.Error("log storage initialization failed", "error", err)
+		return 1
+	}
+	defer backend.closeLogs()
 
 	if err := ensureTelemetryPartitions(appCtx, database); err != nil {
 		logger.Error("telemetry partition initialization failed", "error", err)
@@ -112,25 +121,37 @@ func runServer(arguments []string) int {
 	// request; the configured project keeps working without a lookup.
 	scopes := newScopeCatalog(cfg.Ingestion, database)
 
-	ingestionPipeline := buildIngestionPipeline(cfg, database, scopes, selfMetrics)
+	ingestionPipeline := buildIngestionPipeline(cfg, backend, scopes, selfMetrics)
 	metricsPipeline := buildMetricsPipeline(cfg, database, scopes, selfMetrics)
 
 	// ---------------------------------------------------------
-	// 5. Transport servers
+	// 5. Transport servers & Caching
 	// ---------------------------------------------------------
 
-	tokenCache := auth.NewCachedTokenSource(database, 30*time.Second).WithObserver(selfMetrics)
+	cacheStore, err := cache.New(cfg.Cache, logger)
+	if err != nil {
+		logger.Error("cache initialization failed", "error", err)
+		return 1
+	}
+	defer cacheStore.Close()
+
+	tokenCache := auth.NewCachedTokenSource(database, cfg.Cache.EffectiveTokenTTL(), cfg.Cache.EffectiveTokenLimit()).
+		WithByteCache(cacheStore).
+		WithObserver(selfMetrics)
 	otlpReceiver := buildOTLPReceiver(cfg, ingestionPipeline, metricsPipeline, selfMetrics, tokenCache, scopes)
 	otlpServer := ingestotlp.NewServer(cfg, otlpReceiver)
+
+	streamHub := httpapi.NewStreamHub()
+	ingestionPipeline.SetOnPersist(streamHub.BroadcastEvents)
 
 	managementServer := httpapi.New(
 		cfg,
 		logger,
-		buildReadinessCheck(database, ingestionPipeline, metricsPipeline, otlpServer),
+		buildReadinessCheck(backend, ingestionPipeline, metricsPipeline, otlpServer),
 		selfMetrics,
-		database,
+		backend,
 		replayService,
-	).WithTokenInvalidator(tokenCache)
+	).WithTokenInvalidator(tokenCache).WithStreamHub(streamHub)
 
 	// ---------------------------------------------------------
 	// 6. Runtime components

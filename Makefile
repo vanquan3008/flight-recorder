@@ -1,6 +1,6 @@
 SQLC_IMAGE := sqlc/sqlc:1.31.1
 
-.PHONY: build test test-race bench-pipeline bench-postgres vet staticcheck vulncheck fmt-check size-check sqlc-generate sqlc-vet sqlc-check web-install web-check web-test web-build web-dev web-ci ci run dev demo migrate migrate-version migration-roundtrip seed clean
+.PHONY: build test test-race bench-pipeline bench-postgres vet staticcheck vulncheck fmt-check size-check sqlc-generate sqlc-vet sqlc-check web-install web-check web-test web-build web-dev web-ci ci run dev migrate migrate-version migration-roundtrip seed clean
 
 FRONTEND_NPM := npm --prefix frontend
 
@@ -77,8 +77,6 @@ run:
 
 dev: migrate run
 
-demo: migrate seed run
-
 migrate:
 	go -C backend run ./cmd/tracepilot migrate up
 
@@ -91,7 +89,7 @@ migration-roundtrip:
 	go -C backend run ./cmd/tracepilot migrate up
 
 seed:
-	psql "$$TRACEPILOT_DATABASE_URL" -f backend/db/seed.sql
+	go -C backend run ./cmd/tracepilot seed
 
 clean:
 	go -C backend clean

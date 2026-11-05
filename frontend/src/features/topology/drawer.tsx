@@ -3,7 +3,8 @@ import { Link } from "react-router-dom";
 import type { UseQueryResult } from "@tanstack/react-query";
 import type { FlowLink } from "../../shared/charts";
 import type { LogRecord, Page, TopologyNode } from "../../shared/types";
-import { Badge, DetailLink, Empty, ErrorState, Loading, formatCount, formatDuration, formatTime, logBodyText } from "../../shared/ui";
+import { Badge, DetailLink, Empty, ErrorState, Loading, formatCount, formatDuration, formatTime } from "../../shared/ui";
+import { FormattedLogLine, normalizeSeverity } from "./log-formatter";
 
 const shownLogs = 8;
 
@@ -52,9 +53,10 @@ export function ServiceDrawer({ node, callers, callees, logs, logLink, onSelect,
         : logs.isPending ? <Loading />
         : logs.isError ? <ErrorState error={logs.error} retry={() => void logs.refetch()} />
         : logs.data.data.length ? <ul className="drawer-log-list">{logs.data.data.slice(0, shownLogs).map((log) => <li key={log.event_id}>
-          <time>{formatTime(log.occurred_at)}</time><Badge value={log.severity_text} />
-          <code>{logBodyText(log.body)}</code>
-          {log.trace_id && <DetailLink to={`/traces/${log.trace_id}`}>Trace</DetailLink>}
+          <time>{formatTime(log.occurred_at)}</time>
+          <Badge value={normalizeSeverity(log.severity_text)} />
+          {log.trace_id && <DetailLink to={`/traces/${log.trace_id}`} className="log-trace-pill">Trace ↗</DetailLink>}
+          <FormattedLogLine body={log.body} />
         </li>)}</ul> : <Empty>No logs from {node.name} in the selected time range.</Empty>}
     </section>
   </aside>;

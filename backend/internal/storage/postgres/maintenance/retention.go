@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // DeleteEventsBefore expires events, spans, and logs by dropping every daily
@@ -12,6 +14,22 @@ import (
 // their daily partition live in events_default and are deleted in batches. It
 // returns the number of events removed.
 func (store *PartitionStore) DeleteEventsBefore(ctx context.Context, before time.Time, batchSize int) (int64, error) {
+	var deleted int64
+	err := pgx.BeginFunc(ctx, store.pool, func(tx pgx.Tx) error {
+		transactionStore := &PartitionStore{pool: tx, queries: store.queries.WithTx(tx)}
+		var deleteError error
+		deleted, deleteError = transactionStore.deleteEventsBefore(ctx, before, batchSize)
+		return deleteError
+	})
+	if err != nil {
+		return 0, err
+	}
+	return deleted, nil
+}
+
+// Removing telemetry and its summaries together prevents a failed cleanup
+// from leaving clean summaries of spans that no longer exist.
+func (store *PartitionStore) deleteEventsBefore(ctx context.Context, before time.Time, batchSize int) (int64, error) {
 	dropped, dropError := store.dropExpiredPartitions(ctx, eventPartitionedTables, before, store.countRows)
 	if dropError != nil {
 		return dropped, fmt.Errorf("drop expired event partitions: %w", dropError)
@@ -25,6 +43,9 @@ func (store *PartitionStore) DeleteEventsBefore(ctx context.Context, before time
 		if _, tableError := store.deleteDefaultPartitionRows(ctx, table, before, batchSize); tableError != nil {
 			return dropped + deleted, tableError
 		}
+	}
+	if err := store.queries.DeleteSpanRollupBucketsBefore(ctx, before); err != nil {
+		return dropped + deleted, fmt.Errorf("delete expired span rollups: %w", err)
 	}
 	return dropped + deleted, nil
 }

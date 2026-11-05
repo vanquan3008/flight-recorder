@@ -33,7 +33,7 @@ func TestCachedTokenSourceHitsAndMisses(t *testing.T) {
 		},
 	}
 	now := time.Now()
-	cache := NewCachedTokenSource(mock, 10*time.Second)
+	cache := NewCachedTokenSource(mock, 10*time.Second, 4096)
 	cache.now = func() time.Time { return now }
 
 	ctx := context.Background()
@@ -73,7 +73,7 @@ func TestCachedTokenSourceInvalidate(t *testing.T) {
 		},
 	}
 	now := time.Now()
-	cache := NewCachedTokenSource(mock, time.Hour)
+	cache := NewCachedTokenSource(mock, time.Hour, 4096)
 	cache.now = func() time.Time { return now }
 
 	ctx := context.Background()
@@ -92,10 +92,30 @@ func TestCachedTokenSourceInvalidate(t *testing.T) {
 	}
 }
 
+func TestCachedTokenSourceHonorsEntryLimit(t *testing.T) {
+	mock := &mockTokenSource{
+		tokens: map[string]IngestToken{
+			"tok-1": {ID: "tok-1", ProjectID: "proj-1"},
+			"tok-2": {ID: "tok-2", ProjectID: "proj-2"},
+		},
+	}
+	cache := NewCachedTokenSource(mock, time.Hour, 1)
+	ctx := context.Background()
+
+	for _, tokenID := range []string{"tok-1", "tok-2", "tok-1"} {
+		if _, err := cache.GetIngestToken(ctx, tokenID); err != nil {
+			t.Fatalf("get token %q: %v", tokenID, err)
+		}
+	}
+	if calls := mock.calls.Load(); calls != 3 {
+		t.Fatalf("entry limit was not enforced; source calls = %d, want 3", calls)
+	}
+}
+
 func TestCachedTokenSourceDoesNotCacheTransientErrors(t *testing.T) {
 	transientErr := errors.New("database timeout")
 	mock := &mockTokenSource{err: transientErr}
-	cache := NewCachedTokenSource(mock, time.Hour)
+	cache := NewCachedTokenSource(mock, time.Hour, 4096)
 
 	ctx := context.Background()
 	_, err := cache.GetIngestToken(ctx, "tok-1")
@@ -132,7 +152,7 @@ func TestCachedTokenSourceObserver(t *testing.T) {
 		},
 	}
 	obs := &testCacheObserver{}
-	cache := NewCachedTokenSource(mock, time.Hour).WithObserver(obs)
+	cache := NewCachedTokenSource(mock, time.Hour, 4096).WithObserver(obs)
 
 	ctx := context.Background()
 	_, _ = cache.GetIngestToken(ctx, "tok-1") // miss
@@ -146,3 +166,58 @@ func TestCachedTokenSourceObserver(t *testing.T) {
 	}
 }
 
+type mockByteCache struct {
+	data map[string][]byte
+}
+
+func (m *mockByteCache) Get(_ context.Context, key string) ([]byte, bool, error) {
+	v, ok := m.data[key]
+	return v, ok, nil
+}
+
+func (m *mockByteCache) Set(_ context.Context, key string, value []byte, _ time.Duration) error {
+	m.data[key] = value
+	return nil
+}
+
+func (m *mockByteCache) Delete(_ context.Context, key string) error {
+	delete(m.data, key)
+	return nil
+}
+
+func TestCachedTokenSourceWithByteCache(t *testing.T) {
+	mock := &mockTokenSource{
+		tokens: map[string]IngestToken{
+			"tok-1": {ID: "tok-1", ProjectID: "proj-1"},
+		},
+	}
+	byteCache := &mockByteCache{data: make(map[string][]byte)}
+	cache := NewCachedTokenSource(mock, time.Hour, 4096).WithByteCache(byteCache)
+
+	ctx := context.Background()
+	// First lookup populates both in-memory and byteCache
+	tok, err := cache.GetIngestToken(ctx, "tok-1")
+	if err != nil || tok.ProjectID != "proj-1" {
+		t.Fatalf("unexpected token: %+v, %v", tok, err)
+	}
+	if len(byteCache.data) == 0 {
+		t.Fatalf("expected byteCache to be populated")
+	}
+
+	// Create a new in-memory cache instance sharing the same byteCache (simulating another replica)
+	replicaCache := NewCachedTokenSource(mock, time.Hour, 4096).WithByteCache(byteCache)
+	tokReplica, err := replicaCache.GetIngestToken(ctx, "tok-1")
+	if err != nil || tokReplica.ProjectID != "proj-1" {
+		t.Fatalf("unexpected replica token: %+v, %v", tokReplica, err)
+	}
+	// Source was only called once by the first instance!
+	if mock.calls.Load() != 1 {
+		t.Fatalf("expected 1 call to database source, got %d", mock.calls.Load())
+	}
+
+	// Invalidation removes from byteCache too
+	cache.Invalidate("tok-1")
+	if _, ok := byteCache.data["ingest_token:tok-1"]; ok {
+		t.Fatalf("expected key to be deleted from byteCache")
+	}
+}

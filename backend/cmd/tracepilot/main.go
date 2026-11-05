@@ -1,7 +1,7 @@
 package main
 
 import (
-	"fmt"
+	"log/slog"
 	"os"
 )
 
@@ -17,26 +17,23 @@ func main() {
 
 func run(args []string) int {
 	if len(args) == 0 {
-		usage()
+		slog.Error("missing sub-command", "usage", "tracepilot <serve|migrate|seed|healthcheck|version>")
 		return 2
 	}
-
 	switch args[0] {
 	case "serve":
 		return runServer(args[1:])
 	case "migrate":
 		return runMigrations(args[1:])
+	case "seed":
+		return runSeed(args[1:])
 	case "version":
-		fmt.Printf("TracePilot %s\ncommit: %s\nbuilt: %s\n", version, commit, buildTime)
+		slog.Info("TracePilot version", "version", version, "commit", commit, "built", buildTime)
 		return 0
 	case "healthcheck":
 		return healthcheck()
 	default:
-		usage()
+		slog.Error("unknown sub-command", "subcommand", args[0], "usage", "tracepilot <serve|migrate|seed|healthcheck|version>")
 		return 2
 	}
-}
-
-func usage() {
-	fmt.Fprintln(os.Stderr, "usage: tracepilot <serve|migrate|healthcheck|version>")
 }

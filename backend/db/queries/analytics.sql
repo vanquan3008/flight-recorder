@@ -94,50 +94,144 @@ SELECT
 
 -- Inbound (SERVER, kind 2) and consumer (kind 5) spans per service, split
 -- into the current window and the baseline before it.
+-- Only dirty/missing/boundary minutes drive raw scans; clean minutes use sums.
 -- name: DetectServiceSignals :many
-SELECT service_name, span_kind,
-       count(*) FILTER (WHERE started_at >= @current_start::timestamptz) AS current_calls,
-       count(*) FILTER (WHERE started_at < @current_start::timestamptz) AS baseline_calls,
-       count(*) FILTER (WHERE started_at >= @current_start::timestamptz AND status_code = 'ERROR') AS current_errors,
-       count(*) FILTER (WHERE started_at < @current_start::timestamptz AND status_code = 'ERROR') AS baseline_errors,
-       COALESCE(avg(extract(epoch FROM ended_at - started_at) * 1000000000)
-           FILTER (WHERE started_at >= @current_start::timestamptz), 0)::double precision AS current_latency_nanos,
-       COALESCE(avg(extract(epoch FROM ended_at - started_at) * 1000000000)
-           FILTER (WHERE started_at < @current_start::timestamptz), 0)::double precision AS baseline_latency_nanos,
-       COALESCE((array_agg(DISTINCT trace_id ORDER BY trace_id)
-           FILTER (WHERE started_at >= @current_start::timestamptz))[1:5], '{}')::text[] AS trace_ids
-FROM spans
-WHERE project_id = @project_id
-  AND environment_id = @environment_id
-  AND span_kind IN (2, 5)
-  AND started_at >= @baseline_start::timestamptz
-  AND started_at < @window_end::timestamptz
-GROUP BY service_name, span_kind;
+WITH clean_minutes AS MATERIALIZED (
+    SELECT b.bucket_start FROM span_rollup_buckets b
+    WHERE b.project_id = @project_id AND b.environment_id = @environment_id AND NOT b.dirty
+      AND b.bucket_start >= @baseline_start::timestamptz
+      AND b.bucket_start + interval '1 minute' <= @window_end::timestamptz
+      AND (b.bucket_start >= @current_start::timestamptz
+           OR b.bucket_start + interval '1 minute' <= @current_start::timestamptz)
+), raw_windows AS MATERIALIZED (
+    SELECT covered.previous_end AS starts_at, covered.bucket_start AS ends_at
+    FROM (
+        SELECT bucket_start, lag(bucket_start + interval '1 minute', 1, @baseline_start::timestamptz)
+            OVER (ORDER BY bucket_start) AS previous_end
+        FROM clean_minutes
+    ) covered
+    WHERE covered.previous_end < covered.bucket_start
+    UNION ALL
+    SELECT COALESCE(max(bucket_start + interval '1 minute'), @baseline_start::timestamptz), @window_end::timestamptz
+    FROM clean_minutes
+    HAVING COALESCE(max(bucket_start + interval '1 minute'), @baseline_start::timestamptz) < @window_end::timestamptz
+), stats AS MATERIALIZED (
+    SELECT r.bucket_start, r.service_name, r.span_kind, r.entity_type, r.entity_name,
+        r.calls, r.errors, r.duration_sum, r.trace_ids
+    FROM span_minute_rollups r
+    JOIN span_rollup_buckets b USING (project_id, environment_id, bucket_start)
+    WHERE r.project_id = @project_id AND r.environment_id = @environment_id AND NOT b.dirty
+      AND r.bucket_start >= @baseline_start::timestamptz
+      AND r.bucket_start + interval '1 minute' <= @window_end::timestamptz
+      AND (r.bucket_start >= @current_start::timestamptz
+           OR r.bucket_start + interval '1 minute' <= @current_start::timestamptz)
+      AND r.span_kind IN (2, 5)
+    UNION ALL
+    SELECT CASE WHEN s.started_at >= @current_start::timestamptz THEN greatest(@current_start::timestamptz,
+            date_bin('1 minute', s.started_at, TIMESTAMPTZ '2000-01-01 00:00:00+00'))
+        ELSE date_bin('1 minute', s.started_at, TIMESTAMPTZ '2000-01-01 00:00:00+00') END,
+        s.service_name, s.span_kind,
+        ''::text, ''::text,
+        count(*), count(*) FILTER (WHERE s.status_code = 'ERROR'),
+        sum(extract(epoch FROM s.ended_at - s.started_at) * 1000000000),
+        (array_agg(DISTINCT s.trace_id ORDER BY s.trace_id))[1:5]
+    FROM raw_windows minute
+    CROSS JOIN LATERAL (
+        SELECT s.* FROM spans s
+        WHERE s.project_id = @project_id AND s.environment_id = @environment_id
+          AND s.started_at >= minute.starts_at AND s.started_at < minute.ends_at
+          AND s.span_kind IN (2, 5)
+        OFFSET 0
+    ) s
+    GROUP BY 1, 2, 3, 4, 5
+), totals AS (
+    SELECT service_name, span_kind,
+        COALESCE(sum(calls) FILTER (WHERE bucket_start >= @current_start::timestamptz), 0)::bigint AS current_calls,
+        COALESCE(sum(calls) FILTER (WHERE bucket_start < @current_start::timestamptz), 0)::bigint AS baseline_calls,
+        COALESCE(sum(errors) FILTER (WHERE bucket_start >= @current_start::timestamptz), 0)::bigint AS current_errors,
+        COALESCE(sum(errors) FILTER (WHERE bucket_start < @current_start::timestamptz), 0)::bigint AS baseline_errors,
+        COALESCE(sum(duration_sum) FILTER (WHERE bucket_start >= @current_start::timestamptz)
+            / NULLIF(sum(calls) FILTER (WHERE bucket_start >= @current_start::timestamptz), 0), 0)::double precision AS current_latency_nanos,
+        COALESCE(sum(duration_sum) FILTER (WHERE bucket_start < @current_start::timestamptz)
+            / NULLIF(sum(calls) FILTER (WHERE bucket_start < @current_start::timestamptz), 0), 0)::double precision AS baseline_latency_nanos
+    FROM stats GROUP BY service_name, span_kind
+), samples AS (
+    SELECT service_name, span_kind, (array_agg(DISTINCT trace_id ORDER BY trace_id))[1:5]::text[] AS trace_ids
+    FROM stats CROSS JOIN LATERAL unnest(stats.trace_ids) AS sample(trace_id)
+    WHERE bucket_start >= @current_start::timestamptz
+    GROUP BY service_name, span_kind
+)
+SELECT totals.*, COALESCE(samples.trace_ids, '{}')::text[] AS trace_ids
+FROM totals LEFT JOIN samples USING (service_name, span_kind);
 
 -- name: DetectDependencySignals :many
-WITH candidates AS (
-    SELECT spans.service_name, spans.trace_id, spans.started_at, spans.ended_at,
-           span_dependency_type(spans.span_attributes) AS entity_type,
-           span_dependency_name(spans.span_attributes) AS entity_name
-    FROM spans
-    WHERE spans.project_id = @project_id
-      AND spans.environment_id = @environment_id
-      AND spans.started_at >= @baseline_start::timestamptz
-      AND spans.started_at < @window_end::timestamptz
-      AND span_is_dependency(spans.span_attributes, spans.span_kind)
+WITH clean_minutes AS MATERIALIZED (
+    SELECT b.bucket_start FROM span_rollup_buckets b
+    WHERE b.project_id = @project_id AND b.environment_id = @environment_id AND NOT b.dirty
+      AND b.bucket_start >= @baseline_start::timestamptz
+      AND b.bucket_start + interval '1 minute' <= @window_end::timestamptz
+      AND (b.bucket_start >= @current_start::timestamptz
+           OR b.bucket_start + interval '1 minute' <= @current_start::timestamptz)
+), raw_windows AS MATERIALIZED (
+    SELECT covered.previous_end AS starts_at, covered.bucket_start AS ends_at
+    FROM (
+        SELECT bucket_start, lag(bucket_start + interval '1 minute', 1, @baseline_start::timestamptz)
+            OVER (ORDER BY bucket_start) AS previous_end
+        FROM clean_minutes
+    ) covered
+    WHERE covered.previous_end < covered.bucket_start
+    UNION ALL
+    SELECT COALESCE(max(bucket_start + interval '1 minute'), @baseline_start::timestamptz), @window_end::timestamptz
+    FROM clean_minutes
+    HAVING COALESCE(max(bucket_start + interval '1 minute'), @baseline_start::timestamptz) < @window_end::timestamptz
+), stats AS MATERIALIZED (
+    SELECT r.bucket_start, r.service_name, r.span_kind, r.entity_type, r.entity_name,
+        r.calls, r.errors, r.duration_sum, r.trace_ids
+    FROM span_minute_rollups r
+    JOIN span_rollup_buckets b USING (project_id, environment_id, bucket_start)
+    WHERE r.project_id = @project_id AND r.environment_id = @environment_id AND NOT b.dirty
+      AND r.bucket_start >= @baseline_start::timestamptz
+      AND r.bucket_start + interval '1 minute' <= @window_end::timestamptz
+      AND (r.bucket_start >= @current_start::timestamptz
+           OR r.bucket_start + interval '1 minute' <= @current_start::timestamptz)
+      AND r.entity_name <> ''
+    UNION ALL
+    SELECT CASE WHEN s.started_at >= @current_start::timestamptz THEN greatest(@current_start::timestamptz,
+            date_bin('1 minute', s.started_at, TIMESTAMPTZ '2000-01-01 00:00:00+00'))
+        ELSE date_bin('1 minute', s.started_at, TIMESTAMPTZ '2000-01-01 00:00:00+00') END,
+        s.service_name, s.span_kind,
+        CASE WHEN span_is_dependency(s.span_attributes, s.span_kind) THEN span_dependency_type(s.span_attributes) ELSE '' END,
+        CASE WHEN span_is_dependency(s.span_attributes, s.span_kind) THEN COALESCE(span_dependency_name(s.span_attributes), '') ELSE '' END,
+        count(*), count(*) FILTER (WHERE s.status_code = 'ERROR'),
+        sum(extract(epoch FROM s.ended_at - s.started_at) * 1000000000),
+        (array_agg(DISTINCT s.trace_id ORDER BY s.trace_id))[1:5]
+    FROM raw_windows minute
+    CROSS JOIN LATERAL (
+        SELECT s.* FROM spans s
+        WHERE s.project_id = @project_id AND s.environment_id = @environment_id
+          AND s.started_at >= minute.starts_at AND s.started_at < minute.ends_at
+          AND span_is_dependency(s.span_attributes, s.span_kind) AND COALESCE(span_dependency_name(s.span_attributes), '') <> ''
+        OFFSET 0
+    ) s
+    GROUP BY 1, 2, 3, 4, 5
+), totals AS (
+    SELECT service_name, entity_type, entity_name,
+        COALESCE(sum(calls) FILTER (WHERE bucket_start >= @current_start::timestamptz), 0)::bigint AS current_calls,
+        COALESCE(sum(calls) FILTER (WHERE bucket_start < @current_start::timestamptz), 0)::bigint AS baseline_calls,
+        COALESCE(sum(duration_sum) FILTER (WHERE bucket_start >= @current_start::timestamptz)
+            / NULLIF(sum(calls) FILTER (WHERE bucket_start >= @current_start::timestamptz), 0), 0)::double precision AS current_latency_nanos,
+        COALESCE(sum(duration_sum) FILTER (WHERE bucket_start < @current_start::timestamptz)
+            / NULLIF(sum(calls) FILTER (WHERE bucket_start < @current_start::timestamptz), 0), 0)::double precision AS baseline_latency_nanos
+    FROM stats GROUP BY service_name, entity_type, entity_name
+), samples AS (
+    SELECT service_name, entity_type, entity_name,
+        (array_agg(DISTINCT trace_id ORDER BY trace_id))[1:5]::text[] AS trace_ids
+    FROM stats CROSS JOIN LATERAL unnest(stats.trace_ids) AS sample(trace_id)
+    WHERE bucket_start >= @current_start::timestamptz
+    GROUP BY service_name, entity_type, entity_name
 )
-SELECT candidates.service_name, candidates.entity_type::text AS entity_type, candidates.entity_name::text AS entity_name,
-       count(*) FILTER (WHERE candidates.started_at >= @current_start::timestamptz) AS current_calls,
-       count(*) FILTER (WHERE candidates.started_at < @current_start::timestamptz) AS baseline_calls,
-       COALESCE(avg(extract(epoch FROM candidates.ended_at - candidates.started_at) * 1000000000)
-           FILTER (WHERE candidates.started_at >= @current_start::timestamptz), 0)::double precision AS current_latency_nanos,
-       COALESCE(avg(extract(epoch FROM candidates.ended_at - candidates.started_at) * 1000000000)
-           FILTER (WHERE candidates.started_at < @current_start::timestamptz), 0)::double precision AS baseline_latency_nanos,
-       COALESCE((array_agg(DISTINCT candidates.trace_id ORDER BY candidates.trace_id)
-           FILTER (WHERE candidates.started_at >= @current_start::timestamptz))[1:5], '{}')::text[] AS trace_ids
-FROM candidates
-WHERE candidates.entity_name IS NOT NULL AND candidates.entity_name <> ''
-GROUP BY candidates.service_name, candidates.entity_type, candidates.entity_name;
+SELECT totals.*, COALESCE(samples.trace_ids, '{}')::text[] AS trace_ids
+FROM totals LEFT JOIN samples USING (service_name, entity_type, entity_name);
 
 -- Per metric series: counters become rates over their own intervals (handling
 -- resets via start time), histograms become sum/count means, gauges and

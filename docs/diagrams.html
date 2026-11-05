@@ -34,7 +34,7 @@
   <nav>
     <a href="#d1">1 Tổng quan</a><a href="#d2">2 Khởi động / tắt</a><a href="#d3">3 Đăng nhập</a>
     <a href="#d4">4 Request API</a><a href="#d5">5 Ingest OTLP</a><a href="#d6">6 Incident</a>
-    <a href="#d7">7 Detection &amp; RCA</a><a href="#d8">8 Ingest token</a><a href="#d9">9 Webhook</a><a href="#d10">10 Retention</a>
+    <a href="#d7">7 Detection &amp; RCA</a><a href="#d8">8 Ingest token</a><a href="#d9">9 Webhook</a><a href="#d10">10 Retention</a><a href="#d11">11 Streaming</a>
   </nav>
 </header>
 <main>
@@ -42,7 +42,7 @@
 
 <section id="d1">
   <h2>1. Tổng quan hệ thống</h2>
-  <p>Một ứng dụng Go phục vụ cả API lẫn OTLP; PostgreSQL và console là hai thành phần riêng.</p>
+  <p>Một ứng dụng Go phục vụ API và OTLP; PostgreSQL quản trị/trace/metric/incident, ClickHouse tùy chọn lưu raw log theo tuần UTC.</p>
   <div class="diagram"><pre class="mermaid">
 flowchart LR
   subgraph Client["Bên ngoài"]
@@ -62,12 +62,15 @@ flowchart LR
     Maint["Partition và retention"]
   end
   DB[("PostgreSQL<br/>bảng chia theo ngày")]
+  CH[("ClickHouse tùy chọn<br/>raw log theo tuần UTC")]
   App -->|"ingest token"| OTLP
   OTLP --> Pipe
-  Pipe -->|"1 transaction rồi ACK"| DB
+  Pipe -->|"trace/metric, envelope lỗi log<br/>incident và outbox cùng transaction"| DB
+  Pipe -->|"raw log batch nén<br/>ACK chờ flush và PG commit"| CH
   User --> UI
   UI -->|"access token"| API
   API <--> DB
+  API -->|"log explorer, correlation, đếm log"| CH
   Det <--> DB
   Out -->|"đọc outbox"| DB
   Out -->|"HMAC"| Hook
@@ -85,9 +88,9 @@ flowchart TD
   B --> C{"Có JWT secret?"}
   C -->|"không"| C1["Sinh khóa ngẫu nhiên và cảnh báo"]
   C -->|"có"| D
-  C1 --> D["Kiểm tra schema version 2, không dirty"]
+  C1 --> D["Kiểm tra schema version 3, không dirty"]
   D -->|"lệch hoặc dirty"| X1(["Thoát mã 1"])
-  D --> E["Mở pool, tạo partition,<br/>project và environment mặc định"]
+  D --> E["Mở PG, kiểm schema ClickHouse nếu bật,<br/>tạo partition PG và scope mặc định"]
   E -->|"lỗi"| X1
   E --> F["Dựng replay, metrics,<br/>2 pipeline, bộ thu OTLP, API"]
   F --> G["Chạy song song:<br/>API, OTLP (cốt lõi),<br/>detection, partition, webhook, retention (tự phục hồi)"]
@@ -172,7 +175,7 @@ flowchart TD
 
 <section id="d5">
   <h2>5. Ingest OTLP - ACK sau commit</h2>
-  <p>Ứng dụng chỉ nhận ACK khi dữ liệu đã nằm trong PostgreSQL. Lỗi tạm thời luôn có thể gửi lại.</p>
+  <p>ACK chờ ClickHouse flush và mọi transaction PostgreSQL cần thiết. URL ClickHouse trống dùng luồng PostgreSQL cũ; không có transaction xuyên hai kho.</p>
   <div class="diagram"><pre class="mermaid">
 flowchart TD
   S(["SDK gửi OTLP kèm ingest token"]) --> G{"Client đang bị chặn<br/>vì sai token quá nhiều?"}
@@ -192,11 +195,13 @@ flowchart TD
   RJ --> Q
   Q -->|"không"| R3
   Q --> B["Worker gom batch, nhóm theo scope"]
-  B --> TX["1 transaction:<br/>events, spans, logs, incident,<br/>evidence, outbox webhook"]
+  B --> CH["Nếu bật ClickHouse: raw log → batch gzip<br/>async_insert=1, wait_for_async_insert=1<br/>đọc FINAL khử trùng ID khi retry"]
+  CH -->|"lỗi tạm"| R3
+  CH --> TX["PostgreSQL transaction cũ cho trace<br/>và transaction envelope lỗi log + incident/outbox<br/>log thường không ghi PG; metrics pipeline riêng"]
   TX -->|"lỗi tạm"| R3
-  TX -->|"PostgreSQL từ chối nội dung"| SP["Chia đôi batch tới khi tách được event hỏng"]
-  SP --> TX
-  TX -->|"COMMIT"| ACK(["ACK. Có record bị từ chối thì kèm partial success"])
+  TX -->|"nội dung không thể lưu"| SP["Chia đôi batch tới khi tách được event hỏng"]
+  SP --> B
+  TX -->|"mọi bước thành công"| ACK(["ACK. Có record bị từ chối thì kèm partial success"])
   </pre></div>
 </section>
 
@@ -225,11 +230,14 @@ stateDiagram-v2
 
 <section id="d7">
   <h2>7. Phát hiện bất thường và RCA</h2>
-  <p>Detection chạy nền, tách khỏi đường ACK. RCA tính khi xem incident.</p>
+  <p>Worker cũ tổng hợp tối đa 64 phút dirty mỗi scope (deadline 5 giây), rồi detection chạy nền.
+    Query dùng summary clean và đọc span gốc cho phần chưa tổng hợp; dữ liệu đến muộn đánh dấu dirty lại.
+    Performance giữ timestamp và latency từng request để tính p95/p99 chính xác. RCA tính khi xem incident.</p>
   <div class="diagram"><pre class="mermaid">
 flowchart TD
   T(["Mỗi phút"]) --> S["Liệt kê mọi cặp project / environment"]
-  S --> W["Lấy tín hiệu cửa sổ 5 phút gần nhất<br/>và baseline 30 phút trước đó"]
+  S --> L["Khóa phút dirty bằng SKIP LOCKED<br/>đọc snapshot mới, thay summary rồi commit"]
+  L --> W["Lấy tín hiệu cửa sổ 5 phút và baseline 30 phút<br/>summary clean + span gốc còn lại"]
   W --> P{"Policy ở domain:<br/>latency cần 10 call ở cả hai cửa sổ,<br/>throughput cần baseline 30 call"}
   P -->|"không lệch"| N(["Bỏ qua"])
   P -->|"lệch"| I["Tạo hoặc cập nhật incident<br/>kèm evidence"]
@@ -293,7 +301,7 @@ flowchart TD
 
 <section id="d10">
   <h2>10. Partition và retention</h2>
-  <p>Bảo trì partition mỗi giờ; retention chạy theo chu kỳ, mỗi nhóm một max_age (0s là giữ mãi).</p>
+  <p>PG bảo trì partition mỗi giờ. ClickHouse tự chia tuần từ thứ Hai UTC, TTL riêng theo RETENTION_MAX_AGE (0s giữ mãi); API ẩn log hết hạn trước khi part được xóa vật lý.</p>
   <div class="diagram"><pre class="mermaid">
 flowchart TD
   subgraph Part["Bảo trì partition - mỗi giờ"]
@@ -301,12 +309,46 @@ flowchart TD
   end
   subgraph Ret["Retention - mỗi RETENTION_CHECK_INTERVAL"]
     R1["Telemetry quá 7 ngày:<br/>drop partition hết cả ngày,<br/>xóa theo batch ở default"]
+    R1 --> R5["Cùng transaction xóa bucket rollup<br/>lỗi thì rollback telemetry và summary"]
     R2["Incident RESOLVED / IGNORED<br/>yên quá 90 ngày<br/>kéo theo evidence, occurrence, lịch sử"]
     R3["Audit quá 180 ngày"]
     R4["Webhook delivery đã xong quá 30 ngày"]
   end
+  CH["ClickHouse TTL: xóa cả part khi hết hạn toàn bộ<br/>partition tuần; vật lý có thể lưu thêm gần 1 tuần<br/>đổi TTL bằng migrate clickhouse up"]
   Ret --> N["Lỗi một nhóm không dừng nhóm khác"]
   K["Không bao giờ xóa:<br/>incident OPEN / INVESTIGATING,<br/>delivery đang xử lý"] -.-> Ret
+  </pre></div>
+</section>
+
+<section id="d11">
+  <h2>11. Telemetry streaming thời gian thực (SSE)</h2>
+  <p>Stream log mới và cảnh báo sự cố trực tiếp tới console qua Server-Sent Events, tối đa 256 kết nối đồng thời và không chiếm concurrency slot.</p>
+  <div class="diagram"><pre class="mermaid">
+sequenceDiagram
+  autonumber
+  actor User as Console (Live Tail)
+  participant API as HTTP API (:8080)
+  participant Hub as StreamHub (In-Memory)
+  participant Pipe as Ingestion Pipeline
+  participant DB as PostgreSQL
+  participant CH as ClickHouse (nếu bật)
+
+  User->>API: GET /api/v1/live/stream (Bearer token)
+  API->>API: Xác thực scope read & resolve env
+  API->>Hub: Đăng ký subscriber (project, env)
+  Hub-->>API: Từ chối nếu đã đủ 256 subscriber
+  API-->>User: 200 OK (text/event-stream, event: connected)
+  loop Ingest & Persist
+    opt ClickHouse được cấu hình
+      Pipe->>CH: Ghi batch raw log, chờ flush
+      CH-->>Pipe: Xác nhận ghi
+    end
+    Pipe->>DB: Commit trace và envelope lỗi log + incident/outbox (nếu có)
+    DB-->>Pipe: Transaction cần thiết đã commit
+    Pipe->>Hub: BroadcastEvents(batch)
+    Hub->>API: Non-blocking dispatch qua channel
+    API-->>User: data: {"type":"log", "payload":{...}}\n\n
+  end
   </pre></div>
 </section>
 </main>

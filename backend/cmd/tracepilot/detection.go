@@ -74,11 +74,14 @@ func buildObservabilityDetectionFunc(scopes *scopeCatalog, database *postgres.Da
 						return
 					}
 					scopeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+					rollupCtx, cancelRollup := context.WithTimeout(scopeCtx, 5*time.Second)
+					rollupError := database.RefreshSpanRollups(rollupCtx, scope)
+					cancelRollup()
 					count, evaluateError := detectionServiceFor(database, scope).Run(scopeCtx, now)
 					cancel()
 					mu.Lock()
 					total += count
-					runError = errors.Join(runError, evaluateError)
+					runError = errors.Join(runError, rollupError, evaluateError)
 					mu.Unlock()
 				}
 			}()

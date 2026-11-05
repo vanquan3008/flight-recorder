@@ -16,9 +16,9 @@ func Run(ctx context.Context, logger *slog.Logger, evaluate func(context.Context
 	}
 	run := func() {
 		if count, err := evaluate(ctx); err != nil {
-			logger.Error("observability incident detection failed", "error", err)
+			logger.ErrorContext(ctx, "observability incident detection failed", "error", err)
 		} else if count > 0 {
-			logger.Info("observability incidents evaluated", "services", count)
+			logger.InfoContext(ctx, "observability incidents evaluated", "services", count)
 		}
 	}
 	run()

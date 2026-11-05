@@ -3,11 +3,12 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { App } from "../../app/app";
 import { emptyPerformance } from "../performance/test-data";
 
-afterEach(() => { cleanup(); sessionStorage.clear(); window.location.hash = ""; vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); sessionStorage.clear(); window.history.pushState(null, "", "/"); window.location.hash = ""; vi.unstubAllGlobals(); });
 
 it("uses one selected window and labels the complete metric count accurately", async () => {
   localStorage.setItem("tracepilot-signed-in", "1");
-  window.location.hash = "#/overview?range=1h&to=2026-10-01T01%3A00%3A00Z";
+  window.history.pushState(null, "", "/overview?range=1h&to=2026-10-01T01%3A00%3A00Z");
+  window.location.hash = "";
   const fetch = vi.fn().mockImplementation((input: string) => new Response(JSON.stringify(
     input.startsWith("/api/v1/telemetry/quality") ? { metric_points: 123 } : input.startsWith("/api/v1/performance") ? emptyPerformance : { data: [] },
   ), { status: 200 }));
@@ -26,5 +27,5 @@ it("uses one selected window and labels the complete metric count accurately", a
     expect(url.searchParams.get("to")).toBe("2026-10-01T01:00:00.000Z");
   }
   fireEvent.click(screen.getByLabelText("Last 24 hours"));
-  await waitFor(() => expect(window.location.hash).toContain("range=24h"));
+  await waitFor(() => expect(window.location.search).toContain("range=24h"));
 });

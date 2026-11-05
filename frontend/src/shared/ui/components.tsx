@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { AlertTriangle, Check, ChevronDown, Copy, KeyRound, LoaderCircle, RefreshCw, WifiOff } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { APIError } from "../api";
 
 // ── Layout ─────────────────────────────────────────────────────────────────────
@@ -19,7 +19,7 @@ export function PageHeader({ title, children, action }: { title: string; childre
 
 export function Panel({ title, meta, children, className = "" }: { title: string; meta?: ReactNode; children: ReactNode; className?: string }) {
   return (
-    <section className={`panel rounded-[28px] backdrop-blur-3xl bg-white/75 dark:bg-slate-900/60 border border-white/80 dark:border-white/12 shadow-[inset_0_1px_1px_rgba(255,255,255,0.8),0_12px_40px_rgba(0,0,0,0.06)] dark:shadow-[inset_0_1px_1px_rgba(255,255,255,0.15),0_16px_48px_rgba(0,0,0,0.45)] overflow-hidden mb-6 ${className}`}>
+    <section className={`panel rounded-[24px] rounded-b-[24px] backdrop-blur-3xl bg-white/75 dark:bg-slate-900/60 border border-white/80 dark:border-white/12 shadow-[inset_0_1px_1px_rgba(255,255,255,0.8),0_12px_40px_rgba(0,0,0,0.06)] dark:shadow-[inset_0_1px_1px_rgba(255,255,255,0.15),0_16px_48px_rgba(0,0,0,0.45)] overflow-hidden mb-6 ${className}`}>
       <header className="panel-head flex items-center justify-between min-h-[56px] px-6 py-3.5 border-b border-black/5 dark:border-white/10">
         <h2 className="text-[15px] font-bold text-slate-900 dark:text-white m-0 tracking-tight">{title}</h2>
         {meta && <span className="text-xs font-bold text-slate-600 dark:text-sky-300/80">{meta}</span>}
@@ -70,12 +70,74 @@ export function DataTable({ headers, rows, empty }: { headers: string[]; rows: T
   );
 }
 
-export function LoadMore({ hasMore, loading, onClick }: { hasMore: boolean; loading: boolean; onClick: () => void }) {
+export function LoadMore({
+  hasMore,
+  loading,
+  onClick,
+  autoLoad = true,
+}: {
+  hasMore: boolean;
+  loading: boolean;
+  onClick: () => void;
+  autoLoad?: boolean;
+}) {
+  const sentinelRef = useRef<HTMLDivElement>(null);
+
+  // Auto trigger when scrolled near viewport bottom
+  useEffect(() => {
+    if (!hasMore || loading || !autoLoad) return;
+    const el = sentinelRef.current;
+    if (!el || typeof IntersectionObserver === "undefined") return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        if (entry?.isIntersecting) {
+          onClick();
+        }
+      },
+      { rootMargin: "250px" }
+    );
+
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [hasMore, loading, autoLoad, onClick]);
+
+  // Also auto trigger when parent scroll container (e.g. .table-wrap) scrolls near bottom
+  useEffect(() => {
+    if (!hasMore || loading || !autoLoad) return;
+    const sentinel = sentinelRef.current;
+    if (!sentinel) return;
+    const scrollParent = sentinel.closest(".panel")?.querySelector(".table-wrap");
+    if (!scrollParent) return;
+
+    const onScroll = () => {
+      const remaining = scrollParent.scrollHeight - scrollParent.scrollTop - scrollParent.clientHeight;
+      if (remaining <= 200) {
+        onClick();
+      }
+    };
+
+    scrollParent.addEventListener("scroll", onScroll, { passive: true });
+    return () => scrollParent.removeEventListener("scroll", onScroll);
+  }, [hasMore, loading, autoLoad, onClick]);
+
   if (!hasMore) return null;
+
   return (
-    <div className="load-more">
-      <button disabled={loading} onClick={onClick}>
-        {loading ? "Loading…" : <><ChevronDown size={16} /> Load more</>}
+    <div className="load-more" ref={sentinelRef}>
+      <button disabled={loading} onClick={onClick} aria-label={loading ? "Loading…" : "Load more"}>
+        {loading ? (
+          <>
+            <LoaderCircle size={14} className="animate-spin" aria-hidden="true" />
+            <span>Loading…</span>
+          </>
+        ) : (
+          <>
+            <ChevronDown size={16} aria-hidden="true" />
+            <span>Load more</span>
+          </>
+        )}
       </button>
     </div>
   );

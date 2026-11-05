@@ -2,116 +2,41 @@ package config
 
 import (
 	"errors"
-	"fmt"
-	"net/url"
+	"log/slog"
 	"strings"
 )
 
+type validator struct {
+	errs []string
+}
+
+func (validator *validator) add(field, reason string) {
+	slog.Error("invalid configuration", "field", field, "reason", reason)
+	validator.errs = append(validator.errs, field+": "+reason)
+}
+
+func (validator *validator) err() error {
+	if len(validator.errs) == 0 {
+		return nil
+	}
+	return errors.New(strings.Join(validator.errs, "; "))
+}
+
+// Validate checks the configuration for semantic errors, invalid ranges and production prerequisites.
 func (configuration Config) Validate() error {
-	if err := configuration.validateHTTP(); err != nil {
-		return err
-	}
-	if err := configuration.validateIngestion(); err != nil {
-		return err
-	}
-	if err := configuration.validateNotifications(); err != nil {
-		return err
-	}
-	if err := configuration.validateDatabase(); err != nil {
-		return err
-	}
-	if err := configuration.validateRuntime(); err != nil {
-		return err
-	}
-	return nil
-}
+	var validator validator
 
-func (configuration Config) validateHTTP() error {
-	if strings.TrimSpace(configuration.HTTP.Address) == "" {
-		return errors.New("http.address must not be empty")
-	}
-	if configuration.HTTP.ReadHeaderTimeout <= 0 {
-		return errors.New("http.read_header_timeout must be positive")
-	}
-	if configuration.HTTP.ReadTimeout <= 0 {
-		return errors.New("http.read_timeout must be positive")
-	}
-	if configuration.HTTP.WriteTimeout <= 0 {
-		return errors.New("http.write_timeout must be positive")
-	}
-	if configuration.HTTP.IdleTimeout <= 0 {
-		return errors.New("http.idle_timeout must be positive")
-	}
-	if configuration.HTTP.MaxHeaderBytes <= 0 {
-		return errors.New("http.max_header_bytes must be positive")
-	}
-	if configuration.HTTP.ManagementMaxBodyBytes <= 0 {
-		return errors.New("http.management_max_body_bytes must be positive")
-	}
-	if configuration.HTTP.MaxConcurrentQueries <= 0 {
-		return errors.New("http.max_concurrent_queries must be positive")
-	}
-	if configuration.HTTP.RequestTimeout <= 0 || configuration.HTTP.RequestTimeout >= configuration.HTTP.WriteTimeout {
-		return errors.New("http.request_timeout must be positive and shorter than http.write_timeout")
-	}
-	if configuration.HTTP.RateLimitRequests <= 0 {
-		return errors.New("http.rate_limit_requests must be positive")
-	}
-	if configuration.HTTP.RateLimitAuthRequests <= 0 {
-		return errors.New("http.rate_limit_auth_requests must be positive")
-	}
-	if configuration.HTTP.RateLimitReplayRequests <= 0 {
-		return errors.New("http.rate_limit_replay_requests must be positive")
-	}
-	if configuration.HTTP.RateLimitWindow <= 0 {
-		return errors.New("http.rate_limit_window must be positive")
-	}
-	for _, proxy := range configuration.HTTP.TrustedProxies {
-		if _, err := ParseProxyPrefix(proxy); err != nil {
-			return fmt.Errorf("http.trusted_proxies contains invalid entry %q: use a CIDR such as 10.0.0.0/8 or a single address", proxy)
-		}
-	}
-	for _, origin := range configuration.HTTP.AllowedOrigins {
-		parsed, err := url.ParseRequestURI(origin)
-		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.User != nil || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
-			return fmt.Errorf("http.allowed_origins contains invalid origin %q", origin)
-		}
-	}
-	return nil
-}
+	configuration.validateApp(&validator)
+	configuration.validateHTTP(&validator)
+	configuration.validateDatabase(&validator)
+	configuration.validateClickHouse(&validator)
+	configuration.validateAuth(&validator)
+	configuration.validateCache(&validator)
+	configuration.validateStorage(&validator)
+	configuration.validateQueue(&validator)
+	configuration.validateObservability(&validator)
 
-func (configuration Config) validateDatabase() error {
-	if strings.TrimSpace(configuration.Database.URL) == "" {
-		return errors.New("database.url or TRACEPILOT_DATABASE_URL is required")
-	}
-	if configuration.Database.MaxConnections <= 0 || configuration.Database.MaxConnections > maxDatabaseConnections {
-		return fmt.Errorf("database.max_connections must be between 1 and %d", maxDatabaseConnections)
-	}
-	if configuration.Database.MinConnections < 0 {
-		return errors.New("database.min_connections must not be negative")
-	}
-	if configuration.Database.MinConnections > configuration.Database.MaxConnections {
-		return errors.New("database.min_connections must not exceed max_connections")
-	}
-	if int32(configuration.Ingestion.Workers+2) > configuration.Database.MaxConnections {
-		return errors.New("database.max_connections must reserve at least one connection per ingestion worker plus two")
-	}
-	if configuration.Database.MaxConnectionLifetime <= 0 {
-		return errors.New("database.max_connection_lifetime must be positive")
-	}
-	if configuration.Database.MaxConnectionIdleTime <= 0 {
-		return errors.New("database.max_connection_idle_time must be positive")
-	}
-	if configuration.Database.HealthCheckPeriod <= 0 {
-		return errors.New("database.health_check_period must be positive")
-	}
-	if configuration.Database.ReadinessTimeout <= 0 {
-		return errors.New("database.readiness_timeout must be positive")
-	}
-	if strings.TrimSpace(configuration.Database.MigrationsPath) == "" {
-		return errors.New("database.migrations_path must not be empty")
-	}
-	return configuration.validateDatabaseSessionLimits()
+	return validator.err()
 }
 
 func validUUID(value string) bool {

@@ -104,7 +104,7 @@ jobs:
         run: |
           npm --prefix frontend ci
           npm --prefix frontend exec playwright -- install --with-deps chromium
-          psql "$TRACEPILOT_DATABASE_URL" -f backend/db/seed.sql
+          go -C backend run ./cmd/tracepilot seed
           go -C backend run ./cmd/tracepilot serve > tracepilot-e2e.log 2>&1 &
           server_pid=$!
           npm --prefix frontend run build

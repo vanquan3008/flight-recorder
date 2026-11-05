@@ -78,6 +78,13 @@ func (pipeline *Pipeline) persist(ctx context.Context, batch []item) {
 		pipeline.persist(ctx, batch[middle:])
 		return
 	}
+	if storeError == nil && pipeline.onPersist != nil && len(batch) > 0 {
+		events := make([]telemetry.Event, len(batch))
+		for index := range batch {
+			events[index] = batch[index].event
+		}
+		pipeline.onPersist(events)
+	}
 	for _, queued := range batch {
 		pipeline.releaseBytes(queued.bytes)
 		queued.ack <- storeError

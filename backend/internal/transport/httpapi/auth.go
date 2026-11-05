@@ -38,7 +38,7 @@ func (server *Server) authenticateScope(responseWriter http.ResponseWriter, requ
 		writeAPIError(responseWriter, http.StatusUnauthorized, "UNAUTHORIZED", "authentication required")
 		return auth.Principal{}, false
 	}
-	claims, verifyError := auth.VerifyJWT(server.jwtSecret, raw, auth.TokenAccess, time.Now())
+	claims, verifyError := auth.VerifyJWTWithIssuerAudience(server.jwtSecret, raw, auth.TokenAccess, server.issuer, server.audience, time.Now())
 	if verifyError != nil {
 		responseWriter.Header().Set("WWW-Authenticate", `Bearer error="invalid_token"`)
 		// A distinct code lets the console refresh instead of sending the person back to sign in.
@@ -157,7 +157,10 @@ func (server *Server) principalFor(responseWriter http.ResponseWriter, request *
 
 var errEnvironmentNotFound = errors.New("environment not found")
 
-const environmentCacheTTL = 30 * time.Second
+const (
+	defaultScopeCacheTTL   = 30 * time.Second
+	defaultScopeCacheLimit = 1024
+)
 
 type cachedEnvironments struct {
 	environments []auth.Environment
@@ -168,17 +171,25 @@ type cachedEnvironments struct {
 type environmentCache struct {
 	mu      sync.Mutex
 	entries map[string]cachedEnvironments
+	ttl     time.Duration
+	limit   int
 }
 
-func newEnvironmentCache() *environmentCache {
-	return &environmentCache{entries: make(map[string]cachedEnvironments)}
+func newEnvironmentCache(ttl time.Duration, limit int) *environmentCache {
+	if ttl <= 0 {
+		ttl = defaultScopeCacheTTL
+	}
+	if limit <= 0 {
+		limit = defaultScopeCacheLimit
+	}
+	return &environmentCache{entries: make(map[string]cachedEnvironments), ttl: ttl, limit: limit}
 }
 
 func (cache *environmentCache) get(projectID string, now time.Time) ([]auth.Environment, bool) {
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
 	entry, ok := cache.entries[projectID]
-	return entry.environments, ok && now.Sub(entry.loadedAt) < environmentCacheTTL
+	return entry.environments, ok && now.Sub(entry.loadedAt) < cache.ttl
 }
 
 func (cache *environmentCache) forget(projectID string) {
@@ -190,7 +201,7 @@ func (cache *environmentCache) forget(projectID string) {
 func (cache *environmentCache) put(projectID string, environments []auth.Environment, now time.Time) {
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
-	if len(cache.entries) >= 1024 {
+	if len(cache.entries) >= cache.limit {
 		cache.entries = make(map[string]cachedEnvironments)
 	}
 	cache.entries[projectID] = cachedEnvironments{environments: environments, loadedAt: now}
@@ -227,8 +238,8 @@ func (server *Server) resolveEnvironment(ctx context.Context, projectID, referen
 }
 
 const (
-	identityCacheTTL   = 30 * time.Second
-	identityCacheLimit = 1024
+	defaultIdentityCacheTTL   = 30 * time.Second
+	defaultIdentityCacheLimit = 1024
 )
 
 type cachedUserEntry struct {
@@ -251,13 +262,23 @@ type identityCache struct {
 	users    map[string]cachedUserEntry
 	projects map[string]cachedProjectEntry
 	roles    map[string]cachedRoleEntry
+	ttl      time.Duration
+	limit    int
 }
 
-func newIdentityCache() *identityCache {
+func newIdentityCache(ttl time.Duration, limit int) *identityCache {
+	if ttl <= 0 {
+		ttl = defaultIdentityCacheTTL
+	}
+	if limit <= 0 {
+		limit = defaultIdentityCacheLimit
+	}
 	return &identityCache{
 		users:    make(map[string]cachedUserEntry),
 		projects: make(map[string]cachedProjectEntry),
 		roles:    make(map[string]cachedRoleEntry),
+		ttl:      ttl,
+		limit:    limit,
 	}
 }
 
@@ -265,13 +286,13 @@ func (cache *identityCache) getUser(id string, now time.Time) (auth.User, bool) 
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
 	entry, ok := cache.users[id]
-	return entry.user, ok && now.Sub(entry.loadedAt) < identityCacheTTL
+	return entry.user, ok && now.Sub(entry.loadedAt) < cache.ttl
 }
 
 func (cache *identityCache) putUser(id string, user auth.User, now time.Time) {
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
-	if len(cache.users) >= identityCacheLimit {
+	if len(cache.users) >= cache.limit {
 		cache.users = make(map[string]cachedUserEntry)
 	}
 	cache.users[id] = cachedUserEntry{user: user, loadedAt: now}
@@ -287,13 +308,13 @@ func (cache *identityCache) getProject(ref string, now time.Time) (auth.Project,
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
 	entry, ok := cache.projects[ref]
-	return entry.project, ok && now.Sub(entry.loadedAt) < identityCacheTTL
+	return entry.project, ok && now.Sub(entry.loadedAt) < cache.ttl
 }
 
 func (cache *identityCache) putProject(ref string, project auth.Project, now time.Time) {
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
-	if len(cache.projects) >= identityCacheLimit {
+	if len(cache.projects) >= cache.limit {
 		cache.projects = make(map[string]cachedProjectEntry)
 	}
 	entry := cachedProjectEntry{project: project, loadedAt: now}
@@ -317,13 +338,13 @@ func (cache *identityCache) getRole(projectID, userID string, now time.Time) (st
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
 	entry, ok := cache.roles[projectID+":"+userID]
-	return entry.role, ok && now.Sub(entry.loadedAt) < identityCacheTTL
+	return entry.role, ok && now.Sub(entry.loadedAt) < cache.ttl
 }
 
 func (cache *identityCache) putRole(projectID, userID, role string, now time.Time) {
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
-	if len(cache.roles) >= identityCacheLimit {
+	if len(cache.roles) >= cache.limit {
 		cache.roles = make(map[string]cachedRoleEntry)
 	}
 	cache.roles[projectID+":"+userID] = cachedRoleEntry{role: role, loadedAt: now}
@@ -334,4 +355,3 @@ func (cache *identityCache) forgetRole(projectID, userID string) {
 	defer cache.mu.Unlock()
 	delete(cache.roles, projectID+":"+userID)
 }
-

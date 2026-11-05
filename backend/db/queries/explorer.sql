@@ -78,27 +78,50 @@ WHERE project_id = @project_id AND environment_id = @environment_id AND event_id
 
 -- One statement keeps summary, percentiles and breakdowns on the same snapshot.
 -- Endpoints use the route or RPC method when present, else the span name.
+-- Raw minutes drive bounded lateral scans: clean minutes never scan spans.
 -- name: RequestPerformance :many
-WITH inbound AS (
-    SELECT service_name, started_at,
-        CASE
-            WHEN NULLIF(span_attributes->>'http.route', '') IS NOT NULL THEN
-                concat_ws(' ', COALESCE(NULLIF(span_attributes->>'http.request.method', ''),
-                    NULLIF(span_attributes->>'http.method', '')), span_attributes->>'http.route')
-            WHEN NULLIF(span_attributes->>'rpc.method', '') IS NOT NULL THEN
-                concat_ws('/', NULLIF(span_attributes->>'rpc.service', ''), span_attributes->>'rpc.method')
-            ELSE COALESCE(NULLIF(span_name, ''), '(unnamed)')
-        END AS endpoint,
-        extract(epoch FROM ended_at - started_at) * 1000000000 AS duration_ns,
-        (status_code = 'ERROR' OR COALESCE(NULLIF(span_attributes->>'http.response.status_code', ''),
-            span_attributes->>'http.status_code', '') ~ '^5[0-9]{2}$') AS failed
-    FROM spans
-    WHERE project_id = @project_id
-      AND environment_id = @environment_id
-      AND span_kind = 2
-      AND started_at >= @from_time::timestamptz
-      AND started_at < @to_time::timestamptz
-      AND (sqlc.narg(service)::text IS NULL OR service_name = sqlc.narg(service))
+WITH clean_minutes AS MATERIALIZED (
+    SELECT b.bucket_start FROM span_rollup_buckets b
+    WHERE b.project_id = @project_id AND b.environment_id = @environment_id AND NOT b.dirty
+      AND b.bucket_start >= date_bin('1 minute', @from_time::timestamptz, TIMESTAMPTZ '2000-01-01 00:00:00+00')
+      AND b.bucket_start < @to_time::timestamptz
+), raw_windows AS MATERIALIZED (
+    SELECT covered.previous_end AS starts_at, covered.bucket_start AS ends_at
+    FROM (
+        SELECT bucket_start, lag(bucket_start + interval '1 minute', 1, @from_time::timestamptz)
+            OVER (ORDER BY bucket_start) AS previous_end
+        FROM clean_minutes
+    ) covered
+    WHERE covered.previous_end < covered.bucket_start
+    UNION ALL
+    SELECT COALESCE(max(bucket_start + interval '1 minute'), @from_time::timestamptz), @to_time::timestamptz
+    FROM clean_minutes
+    HAVING COALESCE(max(bucket_start + interval '1 minute'), @from_time::timestamptz) < @to_time::timestamptz
+), inbound AS (
+    SELECT spans.service_name, spans.started_at, span_request_endpoint(spans.span_attributes, spans.span_name) AS endpoint,
+        extract(epoch FROM spans.ended_at - spans.started_at) * 1000000000 AS duration_ns,
+        span_request_failed(spans.status_code, spans.span_attributes) AS failed
+    FROM raw_windows minute
+    CROSS JOIN LATERAL (
+        SELECT s.* FROM spans s
+        WHERE s.project_id = @project_id AND s.environment_id = @environment_id AND s.span_kind = 2
+          AND s.started_at >= minute.starts_at AND s.started_at < minute.ends_at
+          AND (sqlc.narg(service)::text IS NULL OR s.service_name = sqlc.narg(service))
+        OFFSET 0
+    ) spans
+    UNION ALL
+    SELECT r.service_name, sample.started_at, r.endpoint, sample.duration_ns, sample.failed
+    FROM span_minute_rollups r
+    JOIN span_rollup_buckets b USING (project_id, environment_id, bucket_start)
+    CROSS JOIN LATERAL ROWS FROM (unnest(r.request_started_at), unnest(r.request_duration_ns), unnest(r.request_failed))
+        AS sample(started_at, duration_ns, failed)
+    WHERE r.project_id = @project_id AND r.environment_id = @environment_id AND NOT b.dirty
+      AND r.span_kind = 2
+      AND r.bucket_start >= date_bin('1 minute', @from_time::timestamptz, TIMESTAMPTZ '2000-01-01 00:00:00+00')
+      AND r.bucket_start < @to_time::timestamptz
+      AND sample.started_at >= @from_time::timestamptz AND sample.started_at < @to_time::timestamptz
+      AND (sqlc.narg(service)::text IS NULL OR r.service_name = sqlc.narg(service))
+      AND (sqlc.narg(endpoint)::text IS NULL OR r.endpoint = sqlc.narg(endpoint))
 ), observed AS (
     SELECT inbound.*,
         floor(extract(epoch FROM inbound.started_at - @from_time::timestamptz) / @bucket_seconds::integer)::integer AS bucket

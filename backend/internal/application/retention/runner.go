@@ -107,9 +107,9 @@ func pruneAll(ctx context.Context, logger *slog.Logger, store Store, selfMetrics
 		}
 		if pruneError != nil {
 			failed = true
-			logger.Error("retention cleanup failed", "group", current.name, "deleted", deleted, "error", pruneError)
+			logger.ErrorContext(ctx, "retention cleanup failed", "group", current.name, "deleted", deleted, "error", pruneError)
 		} else if deleted > 0 {
-			logger.Info("retention cleanup completed", "group", current.name, "deleted", deleted)
+			logger.InfoContext(ctx, "retention cleanup completed", "group", current.name, "deleted", deleted)
 		}
 	}
 	if policy.Telemetry > 0 {
@@ -124,7 +124,7 @@ func recordBacklog(ctx context.Context, logger *slog.Logger, store Store, selfMe
 	defer cancel()
 	backlog, backlogError := store.CountEventsBefore(backlogContext, time.Now().UTC().Add(-maxAge))
 	if backlogError != nil {
-		logger.Warn("retention backlog metric failed", "error", backlogError)
+		logger.WarnContext(ctx, "retention backlog metric failed", "error", backlogError)
 		return
 	}
 	selfMetrics.SetRetentionBacklog(backlog)

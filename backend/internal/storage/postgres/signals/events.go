@@ -56,11 +56,31 @@ func (store *SignalStore) storeEvents(ctx context.Context, ingestion config.Inge
 		if sendError := queue.Send(ctx, transaction); sendError != nil {
 			return fmt.Errorf("insert event batch: %w", sendError)
 		}
+		startedAt := make([]time.Time, 0, len(events))
+		for _, event := range events {
+			if event.Signal == telemetry.SignalTrace {
+				startedAt = append(startedAt, event.Timestamp)
+			}
+		}
+		if len(startedAt) > 0 {
+			if err := sqlcstore.New(transaction).MarkSpanRollupBuckets(ctx, sqlcstore.MarkSpanRollupBucketsParams{
+				ProjectID: ingestion.ProjectID, EnvironmentID: ingestion.EnvironmentID, StartedAts: startedAt,
+			}); err != nil {
+				return fmt.Errorf("schedule span rollups: %w", err)
+			}
+		}
 		return incidents.RecordOccurrences(ctx, transaction, ingestion, events)
 	})
 }
 
 func queueEvent(ctx context.Context, writes *sqlcstore.Queries, ingestion config.IngestionConfig, event telemetry.Event) error {
+	if err := queueEventEnvelope(ctx, writes, ingestion, event); err != nil {
+		return err
+	}
+	return queueSignalRecord(ctx, writes, ingestion, event)
+}
+
+func queueEventEnvelope(ctx context.Context, writes *sqlcstore.Queries, ingestion config.IngestionConfig, event telemetry.Event) error {
 	attributes, marshalError := json.Marshal(event.Attributes)
 	if marshalError != nil {
 		return fmt.Errorf("encode event attributes: %w", marshalError)
@@ -76,5 +96,5 @@ func queueEvent(ctx context.Context, writes *sqlcstore.Queries, ingestion config
 		ErrorType: pgvalue.OrNil(event.ErrorType), ErrorMessage: pgvalue.OrNil(event.ErrorMessage),
 		Attributes: attributes,
 	})
-	return queueSignalRecord(ctx, writes, ingestion, event)
+	return nil
 }

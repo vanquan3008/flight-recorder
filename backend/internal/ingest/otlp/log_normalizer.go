@@ -77,6 +77,7 @@ func (normalizer *normalizer) logRecord(resource *resourcepb.Resource, resourceS
 	}
 	event := telemetry.Event{
 		ProjectID:          normalizer.configuration.ProjectID,
+		EnvironmentID:      normalizer.configuration.EnvironmentID,
 		Environment:        normalizer.configuration.EnvironmentName,
 		ServiceName:        stringAttribute(attributes.values, "service.name"),
 		ServiceVersion:     stringAttribute(attributes.values, "service.version"),

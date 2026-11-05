@@ -30,13 +30,8 @@ var authRoutes = []apiRouteDefinition{
 	{path: "/api/v1/auth/password", method: http.MethodPost, scope: auth.ScopeSession, tags: []string{"auth"}, operationID: "changePassword", successStatus: http.StatusOK, requestBody: true, handler: (*Server).authChangePassword},
 }
 
-func (server *Server) authStatus(responseWriter http.ResponseWriter, request *http.Request, _ auth.Principal) {
-	hasUsers, checkError := server.backend.HasUsers(request.Context())
-	if server.writeIdentityError(responseWriter, "check accounts", checkError) {
-		return
-	}
-	// The first account is always allowed: it becomes the super administrator.
-	writeJSONValue(responseWriter, http.StatusOK, map[string]any{"registration_open": server.allowRegistration || !hasUsers, "first_account": !hasUsers})
+func (server *Server) authStatus(responseWriter http.ResponseWriter, _ *http.Request, _ auth.Principal) {
+	writeJSONValue(responseWriter, http.StatusOK, map[string]any{"registration_open": server.allowRegistration, "first_account": false})
 }
 
 // signInView finishes a sign-in: it opens a refresh session, sets its cookie and answers with the
@@ -58,7 +53,11 @@ func (server *Server) writeSession(responseWriter http.ResponseWriter, request *
 	if server.writeIdentityError(responseWriter, "list projects", listError) {
 		return
 	}
-	token, expires, tokenError := auth.IssueAccessToken(server.jwtSecret, user.ID, time.Now())
+	ttl := server.accessTokenTTL
+	if ttl <= 0 {
+		ttl = auth.AccessTokenTTL
+	}
+	token, expires, tokenError := auth.IssueAccessTokenWithOptions(server.jwtSecret, user.ID, time.Now(), ttl, server.issuer, server.audience)
 	if tokenError != nil {
 		server.writeInternalError(responseWriter, "sign access token", tokenError)
 		return
@@ -80,6 +79,9 @@ func refreshToken(request *http.Request) string {
 }
 
 func (server *Server) cookieSecure(request *http.Request) bool {
+	if server.cookieSameSite == http.SameSiteNoneMode {
+		return true
+	}
 	if server.production || request.TLS != nil || server.certificateFile != "" {
 		return true
 	}
@@ -87,22 +89,45 @@ func (server *Server) cookieSecure(request *http.Request) bool {
 }
 
 func (server *Server) setRefreshCookie(responseWriter http.ResponseWriter, request *http.Request, token string) {
+	maxAge := int(server.refreshTokenTTL.Seconds())
+	if maxAge <= 0 {
+		maxAge = int((30 * 24 * time.Hour).Seconds())
+	}
+	sameSite := server.cookieSameSite
+	if sameSite == 0 {
+		sameSite = http.SameSiteStrictMode
+	}
 	http.SetCookie(responseWriter, &http.Cookie{
-		Name: refreshCookieName, Value: token, Path: refreshPath, MaxAge: int((30 * 24 * time.Hour).Seconds()),
-		HttpOnly: true, Secure: server.cookieSecure(request), SameSite: http.SameSiteStrictMode,
+		Name:     refreshCookieName,
+		Value:    token,
+		Path:     refreshPath,
+		Domain:   server.cookieDomain,
+		MaxAge:   maxAge,
+		HttpOnly: true,
+		Secure:   server.cookieSecure(request),
+		SameSite: sameSite,
 	})
 }
 
 func (server *Server) clearRefreshCookie(responseWriter http.ResponseWriter, request *http.Request) {
+	sameSite := server.cookieSameSite
+	if sameSite == 0 {
+		sameSite = http.SameSiteStrictMode
+	}
 	http.SetCookie(responseWriter, &http.Cookie{
-		Name: refreshCookieName, Value: "", Path: refreshPath, MaxAge: -1,
-		HttpOnly: true, Secure: server.cookieSecure(request), SameSite: http.SameSiteStrictMode,
+		Name:     refreshCookieName,
+		Value:    "",
+		Path:     refreshPath,
+		Domain:   server.cookieDomain,
+		MaxAge:   -1,
+		HttpOnly: true,
+		Secure:   server.cookieSecure(request),
+		SameSite: sameSite,
 	})
 }
 
-// authRegister creates an account the person chooses themselves and signs them in. The first account on
-// an installation becomes the super administrator; the rest are ordinary accounts, and only while
-// registration is open.
+// authRegister creates an ordinary account when registration is open and signs the user in.
+// Platform administrators can promote ordinary accounts or grant them project access.
 func (server *Server) authRegister(responseWriter http.ResponseWriter, request *http.Request, _ auth.Principal) {
 	var payload struct {
 		Email       string `json:"email"`

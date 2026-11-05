@@ -6,11 +6,13 @@ const traceID = "0123456789abcdef0123456789abcdef";
 const incidentID = "01900000-0000-7000-8000-000000000001";
 const respond = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status });
 
-afterEach(() => { cleanup(); sessionStorage.clear(); window.location.hash = ""; vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); sessionStorage.clear(); window.history.pushState(null, "", "/"); window.location.hash = ""; vi.unstubAllGlobals(); });
 
 function connect(hash: string) {
   localStorage.setItem("tracepilot-signed-in", "1");
-  window.location.hash = hash;
+  const path = hash.startsWith("#") ? hash.slice(1) : hash;
+  window.history.pushState(null, "", path);
+  window.location.hash = "";
 }
 
 it("returns from a trace to the filtered, time-bounded trace list", async () => {
@@ -26,9 +28,9 @@ it("returns from a trace to the filtered, time-bounded trace list", async () => 
   expect(await screen.findByRole("heading", { name: "Trace detail" })).toBeTruthy();
   fireEvent.click(screen.getByRole("link", { name: /Back to traces/ }));
   expect(await screen.findByLabelText("Filter by service")).toBeTruthy();
-  expect(window.location.hash).toContain("service=checkout");
-  expect(window.location.hash).toContain("status=ERROR");
-  expect(window.location.hash).toContain("from=2026-10-01T00");
+  expect(window.location.search).toContain("service=checkout");
+  expect(window.location.search).toContain("status=ERROR");
+  expect(window.location.search).toContain("from=2026-10-01T00");
   expect((screen.getByLabelText("Filter by service") as HTMLInputElement).value).toBe("checkout");
 });
 
@@ -46,8 +48,8 @@ it("returns from an incident to the filtered incident list and labels a direct v
   fireEvent.click(await screen.findByRole("link", { name: "Inspect" }));
   fireEvent.click(await screen.findByRole("link", { name: /Back to incidents/ }));
   expect(await screen.findByLabelText("Filter by service")).toBeTruthy();
-  expect(window.location.hash).toContain("status=OPEN");
-  expect(window.location.hash).toContain("service=checkout");
+  expect(window.location.search).toContain("status=OPEN");
+  expect(window.location.search).toContain("service=checkout");
 });
 
 it("shows a recovery path when a trace is no longer stored", async () => {

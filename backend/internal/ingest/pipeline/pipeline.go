@@ -46,6 +46,7 @@ type Pipeline struct {
 	flushInterval      time.Duration
 	workers            int
 	store              StoreFunc
+	onPersist          func([]telemetry.Event)
 	metrics            *metrics.Registry
 	submitMutex        sync.RWMutex
 	accepting          bool
@@ -208,4 +209,10 @@ func (pipeline *Pipeline) Shutdown(ctx context.Context) error {
 		pipeline.observeShutdown("timeout")
 		return fmt.Errorf("drain %d event(s): %w", pipeline.inflightEvents.Load(), ctx.Err())
 	}
+}
+
+// SetOnPersist registers an optional listener that receives batches of events after
+// storage commits them successfully.
+func (pipeline *Pipeline) SetOnPersist(listener func([]telemetry.Event)) {
+	pipeline.onPersist = listener
 }

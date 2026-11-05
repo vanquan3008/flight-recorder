@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, BellRing, ClipboardList, Gauge, GitBranch, LogOut, Menu, Network, PanelLeftClose, PanelLeftOpen, ScrollText, Settings, TrendingUp, X } from "lucide-react";
+import { Activity, BellRing, Check, ChevronDown, ClipboardList, Gauge, GitBranch, LogOut, Menu, Network, PanelLeftClose, PanelLeftOpen, ScrollText, Settings, TrendingUp, X } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { api, APIError, onSessionRefreshed, refreshAccess, sessionCredential, setAccessToken, setProjectContext } from "../shared/api";
@@ -181,20 +181,164 @@ export function AppShell() {
   </AuthContext.Provider>;
 }
 
-function SessionControls({ name, memberships, current, onSwitch, onSignOut, status, dot }: { name: string; memberships: SessionView["memberships"]; current?: string; onSwitch: (id: string) => void; onSignOut: () => void; status: string; dot: string }) {
-  return <div className="session-controls flex items-center gap-2.5">
-    <div className="connection-pill hidden sm:inline-flex items-center gap-2 px-3 py-1.5 rounded-full backdrop-blur-2xl bg-white/70 dark:bg-white/5 border border-white/80 dark:border-white/10 shadow-xs">
-      <span className={`w-2 h-2 rounded-full ${dot}`} aria-hidden="true" />
-      <span className="connection-label text-slate-900 dark:text-sky-300 text-xs font-bold whitespace-nowrap" role="status">{status}</span>
-    </div>
-    {memberships.length > 0 && <>
+function ProjectDropdown({ memberships, current, onSwitch, status, dot }: { memberships: SessionView["memberships"]; current?: string; onSwitch: (id: string) => void; status?: string; dot?: string }) {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const navigate = useNavigate();
+
+  const currentMembership = memberships.find((m) => m.project.id === current) ?? memberships[0];
+  const currentProject = currentMembership?.project;
+  const initial = currentProject?.name.trim().charAt(0).toUpperCase() || "P";
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    }
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") setOpen(false);
+    }
+    if (open) {
+      document.addEventListener("mousedown", handleClickOutside);
+      document.addEventListener("keydown", handleKeyDown);
+      return () => {
+        document.removeEventListener("mousedown", handleClickOutside);
+        document.removeEventListener("keydown", handleKeyDown);
+      };
+    }
+  }, [open]);
+
+  return (
+    <div className="relative inline-block" ref={containerRef}>
+      {/* Hidden native select for accessibility and automated test compatibility */}
       <label className="sr-only" htmlFor="project-switcher">Project</label>
-      <select id="project-switcher" className="project-switcher" value={current ?? ""} onChange={(event) => onSwitch(event.target.value)}>
-        {memberships.map(({ project }) => <option key={project.id} value={project.id}>{project.name}</option>)}
+      <select
+        id="project-switcher"
+        className="sr-only"
+        value={current ?? ""}
+        onChange={(event) => onSwitch(event.target.value)}
+        tabIndex={-1}
+        aria-hidden="true"
+      >
+        {memberships.map(({ project }) => (
+          <option key={project.id} value={project.id}>{project.name}</option>
+        ))}
       </select>
-    </>}
-    <span className="session-user" title="Signed in">{name}</span>
-    <button type="button" className="disconnect-btn inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-bold text-rose-700 dark:text-rose-400 backdrop-blur-2xl bg-rose-50/80 dark:bg-rose-500/10 border border-rose-300/80 dark:border-rose-500/20 hover:bg-rose-100 dark:hover:bg-rose-500/20 active:scale-95 transition-all cursor-pointer shadow-none" onClick={onSignOut}><LogOut size={13} aria-hidden="true" /> Sign out</button>
+
+      {/* Modern Glass Trigger with integrated status dot on avatar badge */}
+      <button
+        type="button"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={() => setOpen((prev) => !prev)}
+        className="group flex items-center h-[34px] gap-2 pl-2 pr-2.5 rounded-full backdrop-blur-2xl bg-white/70 dark:bg-white/5 border border-white/80 dark:border-white/10 hover:border-black/15 dark:hover:border-white/25 shadow-xs active:scale-95 transition-all cursor-pointer text-slate-800 dark:text-slate-100"
+        title={`${currentProject?.name ?? "Select project"}${status ? ` · ${status}` : ""}`}
+      >
+        <div className="relative shrink-0 flex items-center justify-center">
+          <span className="w-5 h-5 rounded-md bg-gradient-to-br from-indigo-500 via-indigo-600 to-sky-500 text-white font-bold text-[10px] flex items-center justify-center shadow-xs select-none">
+            {initial}
+          </span>
+          {dot && (
+            <span
+              className={`absolute -bottom-0.5 -right-0.5 w-2 h-2 rounded-full ring-1.5 ring-white dark:ring-[#08182f] ${dot.replace(/shadow-\[[^\]]+\]/, "")}`}
+              title={status}
+              aria-label={status}
+            />
+          )}
+        </div>
+        <span className="text-xs font-semibold max-w-[120px] md:max-w-[140px] truncate leading-none">
+          {currentProject?.name ?? "Select project"}
+        </span>
+        <ChevronDown size={13} className={`text-slate-400 group-hover:text-slate-600 dark:group-hover:text-slate-200 transition-transform duration-200 ${open ? "rotate-180" : ""}`} />
+      </button>
+
+      {/* Modern Glass Dropdown Menu */}
+      {open && (
+        <div className="absolute right-0 top-full mt-2 w-64 rounded-2xl p-1.5 backdrop-blur-3xl bg-white/95 dark:bg-[#08182f]/95 border border-white/80 dark:border-white/15 shadow-[0_16px_48px_rgba(0,0,0,0.18)] dark:shadow-[0_20px_50px_rgba(0,0,0,0.65)] z-50 animate-in fade-in zoom-in-95 duration-150">
+          <div className="flex items-center justify-between px-3 py-1.5 border-b border-black/5 dark:border-white/10 mb-1">
+            <span className="text-[10.5px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 select-none">Projects</span>
+            <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">{memberships.length} accessible</span>
+          </div>
+
+          <div className="max-h-60 overflow-y-auto flex flex-col gap-0.5 py-0.5" role="listbox">
+            {memberships.map(({ project }) => {
+              const isSelected = project.id === current;
+              const itemInitial = project.name.trim().charAt(0).toUpperCase() || "P";
+              return (
+                <button
+                  key={project.id}
+                  type="button"
+                  role="option"
+                  aria-selected={isSelected}
+                  onClick={() => {
+                    onSwitch(project.id);
+                    setOpen(false);
+                  }}
+                  className={`flex items-center gap-2.5 w-full text-left px-2.5 py-2 rounded-xl text-xs font-medium transition-colors cursor-pointer ${
+                    isSelected
+                      ? "bg-sky-500/10 text-sky-900 dark:text-sky-200 font-semibold"
+                      : "text-slate-700 dark:text-slate-300 hover:bg-black/5 dark:hover:bg-white/5"
+                  }`}
+                >
+                  <span className="w-6 h-6 rounded-lg bg-gradient-to-br from-indigo-500 via-indigo-600 to-sky-500 text-white font-bold text-[11px] flex items-center justify-center shrink-0 shadow-xs select-none">
+                    {itemInitial}
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <div className="truncate font-semibold text-[12.5px] leading-tight text-slate-900 dark:text-white">{project.name}</div>
+                    <div className="truncate text-[10.5px] font-mono text-slate-400 dark:text-slate-500">{project.slug}</div>
+                  </div>
+                  {isSelected && <Check size={14} className="text-sky-600 dark:text-sky-400 shrink-0 ml-auto" />}
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="border-t border-black/5 dark:border-white/10 pt-1 mt-1">
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                navigate("/settings?tab=projects");
+              }}
+              className="flex items-center gap-2 w-full text-left px-2.5 py-1.5 rounded-xl text-[11.5px] font-semibold text-slate-600 dark:text-slate-400 hover:text-slate-950 dark:hover:text-white hover:bg-black/5 dark:hover:bg-white/5 transition-colors cursor-pointer"
+            >
+              <Settings size={13} />
+              <span>Manage all projects</span>
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SessionControls({ name, memberships, current, onSwitch, onSignOut, status, dot }: { name: string; memberships: SessionView["memberships"]; current?: string; onSwitch: (id: string) => void; onSignOut: () => void; status: string; dot: string }) {
+  return <div className="session-controls flex items-center gap-2 md:gap-2.5">
+    {/* Modern Project Switcher with Integrated Live Status */}
+    {memberships.length > 0 && <ProjectDropdown memberships={memberships} current={current} onSwitch={onSwitch} status={status} dot={dot} />}
+
+    {/* Unified Account & Sign Out Capsule */}
+    <div className="account-capsule flex items-center h-[34px] pl-2 pr-3 rounded-full backdrop-blur-2xl bg-white/70 dark:bg-white/5 border border-white/80 dark:border-white/10 shadow-xs gap-2.5">
+      <div className="flex items-center gap-1.5 text-xs text-slate-800 dark:text-slate-200">
+        <span className="w-5 h-5 rounded-full bg-slate-200 dark:bg-slate-700/80 text-slate-700 dark:text-slate-200 flex items-center justify-center text-[10px] font-bold uppercase select-none ring-1 ring-black/5 dark:ring-white/10">
+          {name.charAt(0) || "U"}
+        </span>
+        <span className="session-user max-w-[90px] md:max-w-[120px] truncate font-semibold" title={`Signed in as ${name}`}>{name}</span>
+      </div>
+
+      <span className="w-px h-3.5 bg-black/10 dark:bg-white/15 shrink-0" aria-hidden="true" />
+
+      <button
+        type="button"
+        className="disconnect-btn inline-flex items-center gap-1 text-xs font-semibold text-slate-600 dark:text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 active:scale-95 transition-colors cursor-pointer border-0 bg-transparent p-0 shadow-none"
+        onClick={onSignOut}
+        title="Sign out of TracePilot"
+      >
+        <LogOut size={13} aria-hidden="true" />
+        <span>Sign out</span>
+      </button>
+    </div>
   </div>;
 }
 

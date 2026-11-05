@@ -83,11 +83,11 @@ func (backend *identityBackend) RecordLogin(context.Context, string) error { ret
 func (backend *identityBackend) HasUsers(context.Context) (bool, error) { return backend.hasUsers, nil }
 
 func (backend *identityBackend) RegisterUser(_ context.Context, _ string, params auth.CreateUserParams, open bool) (auth.User, error) {
-	if backend.hasUsers && !open {
+	if !open {
 		return auth.User{}, auth.ErrRegistrationClosed
 	}
 	backend.registered = append(backend.registered, params)
-	user := auth.User{ID: "new-user", Email: params.Email, DisplayName: params.DisplayName, PlatformAdmin: !backend.hasUsers}
+	user := auth.User{ID: "new-user", Email: params.Email, DisplayName: params.DisplayName, PlatformAdmin: false}
 	backend.user = user
 	return user, nil
 }

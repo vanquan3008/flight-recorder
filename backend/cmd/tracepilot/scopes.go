@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"sync"
 	"time"
 
@@ -138,7 +137,7 @@ func storeByScope[T any](catalog *scopeCatalog, scopeOf func(T) scopeKey, store 
 		for key := range groups {
 			scope, resolveError := catalog.Resolve(ctx, key.project, key.environment)
 			if errors.Is(resolveError, ingestotlp.ErrUnknownEnvironment) {
-				return fmt.Errorf("%w: %v", telemetry.ErrInvalidEvent, resolveError)
+				return errors.Join(telemetry.ErrInvalidEvent, resolveError)
 			}
 			if resolveError != nil {
 				return resolveError

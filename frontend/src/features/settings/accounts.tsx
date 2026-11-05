@@ -58,6 +58,7 @@ export function AccountsSection() {
             <span className="scope-list">{account.disabled_at ? <Badge value="DISABLED" /> : <Badge value="ACTIVE" />}{account.platform_admin && <Badge value="ADMIN" />}{account.must_change_password && <Badge value="TEMP PASSWORD" />}</span>,
             account.last_login_at ? formatTime(account.last_login_at) : "Never", formatTime(account.created_at),
             self ? "—" : <span className="table-actions">
+              <button className="button-secondary" disabled={update.isPending} onClick={() => update.mutate({ id: account.id, platform_admin: !account.platform_admin })} aria-label={`${account.platform_admin ? "Demote" : "Grant admin"} ${account.email}`}>{account.platform_admin ? "Demote" : "Grant admin"}</button>
               <button className="button-secondary" disabled={reset.isPending} onClick={() => reset.mutate(account)} aria-label={`Reset password of ${account.email}`}>Reset password</button>
               <button className={account.disabled_at ? "button-secondary" : "button-danger"} disabled={update.isPending} onClick={() => update.mutate({ id: account.id, disabled: !account.disabled_at })} aria-label={`${account.disabled_at ? "Enable" : "Disable"} ${account.email}`}>{account.disabled_at ? "Enable" : "Disable"}</button>
             </span>,

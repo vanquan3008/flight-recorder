@@ -87,7 +87,7 @@ func (service *Service) processDue(ctx context.Context) {
 	batch, claimError := service.store.ClaimDueDeliveries(ctx, service.config.Workers)
 	if claimError != nil {
 		service.observe("claim_error")
-		service.logger.Error("claim webhook deliveries failed", "error", claimError)
+		service.logger.ErrorContext(ctx, "claim webhook deliveries failed", "error", claimError)
 		return
 	}
 	semaphore := make(chan struct{}, service.config.Workers)
@@ -134,7 +134,7 @@ func (service *Service) dispatch(ctx context.Context, deliveryID string, hook no
 	if success {
 		service.observe("success")
 		if recordError := service.recordAttempt(ctx, deliveryID, hook.ID, projectID, response.StatusCode, "", true); recordError != nil {
-			service.logger.Error("record webhook success failed", "delivery_id", deliveryID, "error", recordError)
+			service.logger.ErrorContext(ctx, "record webhook success failed", "delivery_id", deliveryID, "error", recordError)
 		}
 		return
 	}
@@ -144,9 +144,9 @@ func (service *Service) dispatch(ctx context.Context, deliveryID string, hook no
 func (service *Service) recordFailure(ctx context.Context, deliveryID string, hook notificationdomain.WebhookRecord, projectID string, status int, deliveryError error) {
 	service.observe("failure")
 	if recordError := service.recordAttempt(ctx, deliveryID, hook.ID, projectID, status, deliveryError.Error(), false); recordError != nil {
-		service.logger.Error("record webhook failure failed", "delivery_id", deliveryID, "error", recordError)
+		service.logger.ErrorContext(ctx, "record webhook failure failed", "delivery_id", deliveryID, "error", recordError)
 	}
-	service.logger.Warn("webhook delivery failed", "webhook_id", hook.ID, "status", status, "error", deliveryError)
+	service.logger.WarnContext(ctx, "webhook delivery failed", "webhook_id", hook.ID, "status", status, "error", deliveryError)
 }
 
 // recordTimeout bounds writing a delivery outcome after shutdown has begun.

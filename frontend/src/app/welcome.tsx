@@ -17,10 +17,9 @@ export function Welcome() {
   // Whether new accounts are accepted. If the server cannot say, offer registration and let the server decide.
   const status = useQuery({
     queryKey: ["auth-status"], retry: false,
-    queryFn: ({ signal }) => api<{ registration_open: boolean; first_account: boolean }>("/api/v1/auth/status", "", { signal }),
+    queryFn: ({ signal }) => api<{ registration_open: boolean }>("/api/v1/auth/status", "", { signal }),
   });
   const registrationOpen = status.data?.registration_open !== false;
-  const firstAccount = status.data?.first_account === true;
   const registering = mode === "register" && registrationOpen;
 
   // The access token is kept in memory the moment it arrives, before the console renders as signed in.
@@ -51,7 +50,7 @@ export function Welcome() {
     else signInRequest.mutate({ email, password });
   };
   const subtitle = registering
-    ? firstAccount ? "You are the first here, so this account becomes the super administrator." : "Create an account, then make a project for your product."
+    ? "Create an account. An administrator can grant you project access."
     : "Sign in to open your projects.";
 
   return <section className="welcome">

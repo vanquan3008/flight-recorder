@@ -26,13 +26,27 @@ type apiRouteDefinition struct {
 	handler        func(*Server, http.ResponseWriter, *http.Request, auth.Principal)
 	requiresReplay bool
 	// public routes need no credentials; they authenticate the request themselves.
-	public bool
+	public    bool
+	streaming bool
+}
+
+var streamRoutes = []apiRouteDefinition{
+	{
+		path:          "/api/v1/live/stream",
+		method:        http.MethodGet,
+		scope:         auth.ScopeRead,
+		tags:          []string{"Telemetric Streaming"},
+		operationID:   "streamLiveTelemetry",
+		successStatus: http.StatusOK,
+		handler:       (*Server).streamLiveTelemetry,
+		streaming:     true,
+	},
 }
 
 // Each feature file declares its own routes. The router, OpenAPI document and CORS method list all
 // read this combined list, so no surface can miss an endpoint.
 var apiRouteDefinitions = slices.Concat(
-	traceRoutes, analysisRoutes, incidentRoutes, authRoutes, projectRoutes, userRoutes, webhookRoutes,
+	traceRoutes, analysisRoutes, incidentRoutes, authRoutes, projectRoutes, userRoutes, webhookRoutes, streamRoutes,
 )
 
 func (server *Server) registerAPIRoutes(router *http.ServeMux) {
@@ -42,6 +56,10 @@ func (server *Server) registerAPIRoutes(router *http.ServeMux) {
 		}
 		if route.public {
 			router.HandleFunc(route.method+" "+route.path, server.publicRoute(handle))
+			continue
+		}
+		if route.streaming {
+			router.HandleFunc(route.method+" "+route.path, server.requireScopeStreaming(route.scope, handle))
 			continue
 		}
 		router.HandleFunc(route.method+" "+route.path, server.requireScope(route.scope, handle))
@@ -81,6 +99,30 @@ func (server *Server) requireScope(scope string, handle apiHandler) http.Handler
 		queryContext, cancel := context.WithTimeout(request.Context(), server.requestTimeout)
 		defer cancel()
 		handle(responseWriter, request.WithContext(queryContext), principal)
+	}
+}
+
+// requireScopeStreaming authenticates a long-lived streaming connection against the route's scope
+// without holding bounded query concurrency slots or timing out after the standard request deadline.
+func (server *Server) requireScopeStreaming(scope string, handle apiHandler) http.HandlerFunc {
+	return func(responseWriter http.ResponseWriter, request *http.Request) {
+		principal, ok := server.authenticateScope(responseWriter, request, scope)
+		if !ok {
+			return
+		}
+		if principal.ProjectID != "" {
+			environmentID, environmentError := server.resolveEnvironment(request.Context(), principal.ProjectID, strings.TrimSpace(request.Header.Get(environmentHeader)))
+			if errors.Is(environmentError, errEnvironmentNotFound) {
+				writeAPIError(responseWriter, http.StatusBadRequest, "INVALID_ENVIRONMENT", "unknown environment for this project")
+				return
+			}
+			if environmentError != nil {
+				server.writeInternalError(responseWriter, "resolve environment", environmentError)
+				return
+			}
+			principal.EnvironmentID = environmentID
+		}
+		handle(responseWriter, request, principal)
 	}
 }
 

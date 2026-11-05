@@ -3,16 +3,18 @@
 Mô tả các luồng chính của hệ thống. Sơ đồ tương ứng ở [diagrams.html](diagrams.html)
 (mở bằng trình duyệt, cần mạng để tải thư viện vẽ). Số trong ngoặc `[n]` là số sơ đồ.
 
-Một ứng dụng Go (API quản trị + bộ thu OTLP + worker nền), PostgreSQL riêng, và
-console React là ứng dụng riêng.
+Một ứng dụng Go (API quản trị + bộ thu OTLP + worker nền), PostgreSQL riêng,
+ClickHouse tùy chọn cho raw log và console React riêng.
 
 ## 1. Tổng quan [1]
 
 - Ứng dụng của bạn gửi OTLP (gRPC `:4317`, HTTP `:4318`) kèm **ingest token**.
 - Bộ thu xác thực, chuẩn hóa, đưa vào **pipeline** có giới hạn; pipeline ghi batch
-  vào PostgreSQL. Chỉ khi transaction **commit** mới trả ACK cho ứng dụng.
-- Cùng transaction ghi event/span/log còn tạo/cập nhật **incident** và xếp **webhook**
-  vào outbox.
+  theo scope. Trace/metric vào PostgreSQL, raw log vào ClickHouse khi cấu hình URL;
+  URL trống giữ cách lưu PostgreSQL cũ.
+- Log thường chỉ ghi ClickHouse; log gây incident giữ envelope lỗi gọn trong PostgreSQL.
+  Incident/evidence/occurrence và outbox vẫn commit cùng transaction PostgreSQL.
+  ACK chờ ClickHouse flush và mọi transaction PostgreSQL cần thiết thành công.
 - Worker nền: phát hiện bất thường mỗi phút, gửi webhook, tạo partition, dọn dữ liệu hết hạn.
 - Người dùng vào **console**, console gọi REST `/api/v1` (`:8080`) bằng access token.
 
@@ -23,9 +25,11 @@ Khởi động theo thứ tự, bước nào lỗi thì thoát với mã 1:
 1. Đọc cấu hình (mặc định → `backend/.env` → biến môi trường). Sai cấu hình → mã 2.
 2. Không có `TRACEPILOT_AUTH_JWT_SECRET` → sinh khóa ngẫu nhiên và cảnh báo (production
    thì cấu hình sai ngay từ bước 1).
-3. Kiểm tra schema đúng version (`CurrentVersion = 2`, không dirty). Server **không tự migrate**:
+3. Kiểm tra schema đúng version (`CurrentVersion = 3`, không dirty). Server **không tự migrate**:
    chạy `tracepilot migrate up` riêng.
-4. Mở pool, tạo partition theo ngày, tạo project/environment mặc định.
+4. Mở pool; nếu bật ClickHouse, kiểm tra schema tuần UTC đã được migrate riêng
+   (`migrate clickhouse up`). Tạo partition PostgreSQL ngày và project/environment mặc định.
+   Readiness kiểm tra cả hai kho; không tự fallback khi ClickHouse hỏng.
 5. Dựng replay (nếu bật), metrics, hai pipeline (events, metrics), bộ thu OTLP, API.
 6. Chạy song song: API, OTLP (thành phần cốt lõi; lỗi hoặc dừng thì tiến trình dừng),
    cùng detection, bảo trì partition, webhook (nếu bật), retention (nếu có max_age)
@@ -37,8 +41,7 @@ events và pipeline metrics drain lần lượt trong `shutdown_timeout` (15s). 
 
 ## 3. Đăng ký, đăng nhập, refresh [3]
 
-- **Đăng ký:** tài khoản đầu tiên luôn được phép, thành **super admin** và owner của project mặc
-  định. Các tài khoản sau chỉ đăng ký được khi `ALLOW_REGISTRATION=true`. Mật khẩu 12–256 ký tự.
+- **Đăng ký:** super admin development được tạo qua seed (`tracepilot seed` với `admin@tracepilot.local` / `admin-password-123`). Các tài khoản khác đăng ký qua form/API khi `ALLOW_REGISTRATION=true` và khởi tạo ở quyền tài khoản thông thường. Sau đó super admin sẽ cấp quyền sử dụng: cấp cờ super admin (`platform_admin`) trong Settings → Accounts hoặc thêm vào project trong Settings → Members. Mật khẩu 12–256 ký tự. Khi `ALLOW_REGISTRATION=false`, đăng ký tự do bị đóng hoàn toàn.
 - **Đăng nhập:** giới hạn theo IP và 10 lần/email/cửa sổ. Email lạ hay sai mật khẩu đều tốn cùng
   thời gian và cùng một thông báo. Thành công → server tạo phiên refresh, đặt cookie
   `tp_refresh` (`HttpOnly`, `SameSite=Strict`, path `/api/v1/auth`) và trả **access token** (JWT HS256,
@@ -82,11 +85,22 @@ Router kiểm theo **scope** mà bảng route khai báo; handler không tự ki�
 5. Lấy slot xử lý (hết slot → 503), giải mã (giới hạn cả body nén và giải nén), chuẩn hóa, che key
    nhạy cảm và pattern secret trong văn bản tự do. Record sai → đếm `rejected`, vẫn xử lý phần còn lại.
 6. Đưa vào pipeline: giới hạn số event và byte; đầy → 503 + `Retry-After`.
-7. Worker gom batch, gom theo scope, ghi **một transaction**: events + span/log + incident/occurrence/
-   evidence + outbox webhook. Ghi idempotent theo ID tất định.
-8. Commit xong mới ACK. Storage tạm lỗi → 503/Unavailable (exporter gửi lại, không trùng bản ghi).
-   PostgreSQL từ chối nội dung của một event → chia đôi batch tới khi tách được event hỏng, phần còn
-   lại vẫn commit, trả partial success.
+7. Worker gom batch theo scope, dùng pipeline cũ. Khi bật ClickHouse, `application/logs.Persist`
+   ghi raw log bằng HTTP/gzip JSONEachRow (`async_insert=1`, `wait_for_async_insert=1`),
+   rồi gọi `StoreEvents` cũ cho trace, `StoreLogIncidents` cho lỗi log. Hàm sau chỉ giữ
+   envelope lỗi (attributes rỗng, không raw body/resource/scope attributes), gọi lại
+   `RecordOccurrences` và outbox trong cùng transaction PostgreSQL. Log thường không ghi PG.
+   Span vẫn đánh dấu phút dirty cùng transaction. Metrics đi pipeline PostgreSQL riêng như cũ.
+8. Tất cả bước thành công mới ACK; không có transaction xuyên hai database. Bước sau lỗi
+   có thể để lại dữ liệu đã ghi ở bước trước; exporter retry với cùng ID. ClickHouse dùng
+   ReplacingMergeTree và đọc `FINAL` để khử trùng, PostgreSQL giữ idempotency hiện có.
+   Storage tạm lỗi → 503/Unavailable. Event có nội dung không thể lưu → chia đôi batch
+   tách record hỏng, phần còn lại commit và trả partial success.
+
+API ListLogs/GetLog và số đếm log trong TelemetryQuality đọc cùng kho đang được cấu hình,
+giữ project/environment, filter, cursor và correlation trace/span cũ. Không trộn hai kho khi phân trang.
+Chuyển dữ liệu cũ: dừng ingest/drain → `migrate clickhouse up` → `migrate clickhouse backfill`
+→ khởi động mọi replica với cùng cấu hình → mở ingest. Backfill có thể chạy lại, không xóa log PG.
 
 ## 6. Vòng đời incident [6]
 
@@ -105,6 +119,23 @@ lệch (latency cần ≥ 10 call ở cả hai cửa sổ; throughput cần base
 incident kèm evidence. Khi xem incident, RCA lấy evidence và quan hệ phụ thuộc rồi xếp hạng giả thuyết
 theo độ tin cậy. Đây là giả thuyết có bằng chứng, không phải kết luận.
 
+Trước khi detection chạy, worker cũ tổng hợp tối đa 64 phút đang dirty của mỗi scope vào
+`span_minute_rollups`, với deadline riêng 5 giây. Worker khóa các phút bằng `FOR UPDATE SKIP LOCKED`,
+rồi đọc snapshot mới để thay thế toàn bộ summary và đánh dấu clean trong cùng transaction.
+Span đến muộn hoặc retry đánh dấu phút dirty lại; không cộng dồn nên không đếm trùng.
+Refresh lỗi thì detection vẫn thử đường đọc gốc trong ngân sách còn lại.
+
+Các hàm `RequestPerformance`, `DetectServiceEvidence`, `DetectDependencyEvidence` và policy domain
+giữ nguyên contract. Detection ghép count và tổng duration của các phút clean, chỉ đọc span gốc cho
+phút dirty, chưa được tổng hợp hoặc cắt ngang ranh giới cửa sổ. Performance đọc các mảng timestamp,
+duration và trạng thái lỗi đã chuẩn bị từ summary; vẫn tính percentile trên từng request, không lấy
+trung bình p95/p99 giữa các phút. Vì vậy cửa sổ bất kỳ, bucket biểu đồ và mẫu trace evidence giữ nguyên.
+OTLP metrics/counter reset, topology và trace/log explorer tiếp tục dùng các hàm hiện có.
+
+Migration `000003_span_rollups` chỉ lập danh sách phút của dữ liệu cũ; worker xử lý dần, không dựng
+mảng latency trong migration. Khi worker chưa xử lý hết, query vẫn trả dữ liệu từ spans trên cùng
+snapshot với summary, nên không cần chờ backfill và không thêm cờ cấu hình hay tiến trình.
+
 ## 8. Ingest token [8]
 
 Owner tạo token (tên duy nhất trong project, mặc định hết hạn sau 1 năm, tối đa 3 năm). JWT chỉ hiện **một lần**;
@@ -120,17 +151,38 @@ không theo redirect), ký HMAC và gửi. Thất bại → thử lại theo ch�
 
 ## 10. Partition và retention [10]
 
-Bảng telemetry chia partition theo ngày UTC. Khởi động tạo 10 ngày từ hôm qua, bảo trì mỗi giờ. Retention
+Bảng telemetry PostgreSQL chia partition theo ngày UTC. Khởi động tạo 10 ngày từ hôm qua, bảo trì mỗi giờ. Retention
 chạy theo chu kỳ, mỗi nhóm một `max_age` (`0s` = giữ mãi): telemetry 7 ngày (drop partition cũ), incident đã
 đóng 90 ngày (kéo theo evidence, occurrence, lịch sử), audit 180 ngày, webhook delivery 30 ngày. Incident đang
 mở và delivery đang xử lý không bao giờ bị xóa.
+Retention dọn event/span/log và xóa bucket summary trước cutoff (kéo theo rollup) trong cùng
+transaction; lỗi bất kỳ thì rollback cả telemetry và summary. Phần phút còn
+span sống sót được đọc từ dữ liệu gốc cho tới khi có ingest mới đánh dấu cần tổng hợp lại.
 
-## 11. Giới hạn đã biết
+ClickHouse raw log chia tuần từ thứ Hai UTC bằng `toStartOfWeek(occurred_at, 1, 'UTC')`.
+`ReplacingMergeTree` đọc `FINAL`, khóa scope/service + timestamp millisecond + event ID để
+log backfill từ PostgreSQL microsecond vẫn khử trùng với retry nanosecond; timestamp/cursor
+gốc giữ nanosecond. TTL lấy `RETENTION_MAX_AGE`, API luôn lọc tuổi log. `ttl_only_drop_parts=1`
+chỉ xóa part hết hạn toàn bộ nên vật lý có thể lưu thêm gần một tuần cộng độ trễ merge.
+Đổi TTL phải chạy `migrate clickhouse up`; startup/readiness từ chối schema hoặc TTL lệch.
+
+## 11. Telemetry streaming thời gian thực (SSE) và tối ưu Waterfall
+
+- **Live Streaming qua SSE:** Tuyến `GET /api/v1/live/stream` (scope `read`) mở kênh Server-Sent Events (SSE)
+  truyền trực tiếp log mới và sự cố phát sinh sau khi mọi bước persist của batch thành công. Stream chạy qua bộ nhớ
+  `StreamHub` độc lập, không chiếm slot truy vấn bounded concurrency (`admitQuery`), có giới hạn 256 kết nối đồng thời
+  và bỏ write deadline riêng cho stream để không bị ngắt sau 30 giây.
+  Console cung cấp chế độ **Live Tail** trên trang Logs để theo dõi dòng log trực tiếp theo thời gian thực.
+- **Tối ưu hóa Trace Waterfall:** Cây span được ảo hóa hiển thị (`useVirtualList` zero-dependency); với các trace
+  phức tạp có hàng nghìn span, trình duyệt chỉ render các phần tử trong khung cuộn (viewport) kèm vùng đệm, giữ
+  cho DOM nhẹ và mượt mà mà không làm đứt đoạn trục thời gian.
+
+## 12. Giới hạn đã biết
 
 - Rate limit tính theo từng tiến trình; nhiều replica thì đặt thêm ở reverse proxy.
 - Ngân sách byte của queue là ước lượng, không phải giới hạn RSS (gRPC giải mã trước khi vào hàng đợi).
 - Chưa có SSO/MFA, đặt lại mật khẩu qua email, xóa project/environment.
-- Chưa đo tải/SLO; test tích hợp PostgreSQL cần database dùng một lần (`TRACEPILOT_INTEGRATION_TEST=1`).
-- DB tạo bằng lịch sử migration cũ (version 1–5) không nâng cấp tại chỗ; version 2 cũ **trùng số** với
-  `CurrentVersion` hiện tại nên server không tự phát hiện — đặt lại `schema_migrations` về 1 rồi `migrate up`,
-  hoặc dùng database mới.
+- Chưa đo tải/SLO production; test tích hợp PostgreSQL cần database dùng một lần (`TRACEPILOT_INTEGRATION_TEST=1`),
+  ClickHouse dùng instance dùng một lần (`TRACEPILOT_CLICKHOUSE_INTEGRATION_TEST=1`, `TRACEPILOT_CLICKHOUSE_TEST_URL`).
+- DB tạo bằng lịch sử migration cũ trước khi gộp schema (version 1–5) cần kiểm tra schema thực tế trước
+  khi nâng cấp; số version có thể trùng với lịch sử hiện tại. Không tự đặt lại version trên database thật.

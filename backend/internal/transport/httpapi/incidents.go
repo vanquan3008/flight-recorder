@@ -256,4 +256,3 @@ func parseIncidentFilter(request *http.Request) (incident.Filter, pageCursor, er
 		Status: status, From: from, To: to, Limit: limit,
 	}, cursor, nil
 }
-

@@ -243,4 +243,3 @@ func requireTraceID(responseWriter http.ResponseWriter, value string) bool {
 	writeAPIError(responseWriter, http.StatusBadRequest, "INVALID_PATH", "trace identifier must be 16 bytes of hexadecimal")
 	return false
 }
-

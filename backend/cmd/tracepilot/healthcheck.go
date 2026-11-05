@@ -3,8 +3,9 @@ package main
 import (
 	"crypto/tls"
 	"crypto/x509"
-	"fmt"
+	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
@@ -22,19 +23,19 @@ func healthcheck() int {
 	healthcheckURL := resolveHealthcheckURL()
 	healthcheckClient, clientError := newHealthcheckClient(healthcheckURL)
 	if clientError != nil {
-		fmt.Fprintf(os.Stderr, "healthcheck failed: %v\n", clientError)
+		slog.Error("healthcheck failed", "error", clientError)
 		return 1
 	}
 	healthcheckResponse, requestError := healthcheckClient.Get(healthcheckURL)
 	if requestError != nil {
-		fmt.Fprintf(os.Stderr, "healthcheck failed: %v\n", requestError)
+		slog.Error("healthcheck failed", "error", requestError)
 		return 1
 	}
 	defer healthcheckResponse.Body.Close()
 
 	_, _ = io.Copy(io.Discard, io.LimitReader(healthcheckResponse.Body, maxHealthcheckBody))
 	if healthcheckResponse.StatusCode != http.StatusOK {
-		fmt.Fprintf(os.Stderr, "healthcheck failed: status %d\n", healthcheckResponse.StatusCode)
+		slog.Error("healthcheck failed", "status", healthcheckResponse.StatusCode)
 		return 1
 	}
 	return 0
@@ -63,14 +64,14 @@ func newHealthcheckClient(healthcheckURL string) (http.Client, error) {
 	if caFile := os.Getenv(healthcheckCAFileEnv); caFile != "" {
 		certificatePEM, err := os.ReadFile(caFile)
 		if err != nil {
-			return http.Client{}, fmt.Errorf("read healthcheck CA file: %w", err)
+			return http.Client{}, errors.New("read healthcheck CA file: " + err.Error())
 		}
 		rootCAs, err := x509.SystemCertPool()
 		if err != nil || rootCAs == nil {
 			rootCAs = x509.NewCertPool()
 		}
 		if !rootCAs.AppendCertsFromPEM(certificatePEM) {
-			return http.Client{}, fmt.Errorf("parse healthcheck CA file %q", caFile)
+			return http.Client{}, errors.New("parse healthcheck CA file: invalid certificate PEM")
 		}
 		tlsConfig.RootCAs = rootCAs
 	}

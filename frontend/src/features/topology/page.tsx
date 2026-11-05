@@ -5,8 +5,9 @@ import { useAuth } from "../../app/auth";
 import { api, queryString } from "../../shared/api";
 import { FlowDiagram, GraphLegend, ServiceGraph, type FlowLink } from "../../shared/charts";
 import type { LogRecord, Page, Topology, TopologyEdge, TopologyNode } from "../../shared/types";
-import { Badge, DataTable, DetailLink, Empty, ErrorState, Loading, PageHeader, Panel, TimeWindowFilter, formatDuration, formatTime, logBodyText, useTimeWindow } from "../../shared/ui";
+import { Badge, DataTable, DetailLink, Empty, ErrorState, Loading, PageHeader, Panel, TimeWindowFilter, formatDuration, formatTime, useTimeWindow } from "../../shared/ui";
 import { ServiceDrawer } from "./drawer";
+import { FormattedLogLine, normalizeSeverity } from "./log-formatter";
 import "./topology.css";
 
 const recentLogLimit = "20";
@@ -65,8 +66,10 @@ export function TopologyPage() {
         : logs.isPending ? <Loading />
         : logs.isError ? <ErrorState error={logs.error} retry={() => void logs.refetch()} />
         : logs.data.data.length ? <ul className="topology-log-list">{logs.data.data.map((log) => <li key={log.event_id}>
-          <time>{formatTime(log.occurred_at)}</time><Badge value={log.severity_text} /><code>{logBodyText(log.body)}</code>
-          {log.trace_id ? <DetailLink to={`/traces/${log.trace_id}`}>Trace</DetailLink> : <span />}
+          <time>{formatTime(log.occurred_at)}</time>
+          <Badge value={normalizeSeverity(log.severity_text)} />
+          <FormattedLogLine body={log.body} />
+          {log.trace_id ? <DetailLink to={`/traces/${log.trace_id}`} className="log-trace-pill">Trace ↗</DetailLink> : <span />}
         </li>)}</ul> : <Empty>No logs from {node.name} in the selected time range.</Empty>}
     </div>
     <details className="topology-calls">

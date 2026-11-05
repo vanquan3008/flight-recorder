@@ -37,6 +37,7 @@ const (
 type Event struct {
 	ID                 string
 	ProjectID          string
+	EnvironmentID      string
 	Environment        string
 	ServiceName        string
 	ServiceVersion     string
