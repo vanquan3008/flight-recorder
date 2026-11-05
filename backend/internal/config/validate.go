@@ -10,33 +10,33 @@ type validator struct {
 	errs []string
 }
 
-func (v *validator) add(field, reason string) {
+func (validator *validator) add(field, reason string) {
 	slog.Error("invalid configuration", "field", field, "reason", reason)
-	v.errs = append(v.errs, field+": "+reason)
+	validator.errs = append(validator.errs, field+": "+reason)
 }
 
-func (v *validator) err() error {
-	if len(v.errs) == 0 {
+func (validator *validator) err() error {
+	if len(validator.errs) == 0 {
 		return nil
 	}
-	return errors.New(strings.Join(v.errs, "; "))
+	return errors.New(strings.Join(validator.errs, "; "))
 }
 
 // Validate checks the configuration for semantic errors, invalid ranges and production prerequisites.
 func (configuration Config) Validate() error {
-	var v validator
+	var validator validator
 
-	configuration.validateApp(&v)
-	configuration.validateHTTP(&v)
-	configuration.validateDatabase(&v)
-	configuration.validateClickHouse(&v)
-	configuration.validateAuth(&v)
-	configuration.validateCache(&v)
-	configuration.validateStorage(&v)
-	configuration.validateQueue(&v)
-	configuration.validateObservability(&v)
+	configuration.validateApp(&validator)
+	configuration.validateHTTP(&validator)
+	configuration.validateDatabase(&validator)
+	configuration.validateClickHouse(&validator)
+	configuration.validateAuth(&validator)
+	configuration.validateCache(&validator)
+	configuration.validateStorage(&validator)
+	configuration.validateQueue(&validator)
+	configuration.validateObservability(&validator)
 
-	return v.err()
+	return validator.err()
 }
 
 func validUUID(value string) bool {

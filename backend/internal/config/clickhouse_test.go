@@ -28,9 +28,9 @@ func TestClickHouseValidation(t *testing.T) {
 		}
 	}
 	base.URL = "http://logs.example.com:8123"
-	var v validator
-	base.validate(&v, true)
-	if v.err() == nil {
+	var validator validator
+	base.validate(&validator, true)
+	if validator.err() == nil {
 		t.Fatal("production accepted plaintext ClickHouse")
 	}
 }

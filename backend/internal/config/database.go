@@ -8,7 +8,7 @@ import (
 
 const maxDatabaseConnections = 1_000
 
-// DatabaseConfig configures the PostgreSQL connection pool and migration runner.
+// DatabaseConfig configures PostgreSQL connection pooling, migrations, and session timeouts.
 type DatabaseConfig struct {
 	URL                   string        `config:"url"`
 	MaxConnections        int32         `config:"max_connections"`
@@ -24,70 +24,107 @@ type DatabaseConfig struct {
 	IdleInTransactionTimeout time.Duration `config:"idle_in_transaction_timeout"`
 }
 
-func (configuration Config) validateDatabase(v *validator) {
-	if strings.TrimSpace(configuration.Database.URL) == "" {
-		v.add("database.url", "required via database.url or TRACEPILOT_DATABASE_URL")
-	}
-	if configuration.Database.MaxConnections <= 0 || configuration.Database.MaxConnections > maxDatabaseConnections {
-		v.add("database.max_connections", "must be between 1 and 1000")
-	}
-	if configuration.Database.MinConnections < 0 {
-		v.add("database.min_connections", "must not be negative")
-	}
-	if configuration.Database.MinConnections > configuration.Database.MaxConnections {
-		v.add("database.min_connections", "must not exceed max_connections")
-	}
-	if int32(configuration.Ingestion.Workers+2) > configuration.Database.MaxConnections {
-		v.add("database.max_connections", "must reserve at least one connection per ingestion worker plus two")
-	}
-	if configuration.Database.MaxConnectionLifetime <= 0 {
-		v.add("database.max_connection_lifetime", "must be positive")
-	}
-	if configuration.Database.MaxConnectionIdleTime <= 0 {
-		v.add("database.max_connection_idle_time", "must be positive")
-	}
-	if configuration.Database.HealthCheckPeriod <= 0 {
-		v.add("database.health_check_period", "must be positive")
-	}
-	if configuration.Database.ReadinessTimeout <= 0 {
-		v.add("database.readiness_timeout", "must be positive")
-	}
-	if strings.TrimSpace(configuration.Database.MigrationsPath) == "" {
-		v.add("database.migrations_path", "must not be empty")
-	}
-	if configuration.Production {
-		validateProductionDatabaseTLS(configuration.Database.URL, v)
-	}
-	configuration.validateDatabaseSessionLimits(v)
-}
-
-func (configuration Config) validateDatabaseSessionLimits(v *validator) {
+// validateDatabase validates the PostgreSQL configuration.
+func (configuration Config) validateDatabase(validator *validator) {
 	database := configuration.Database
-	if database.StatementTimeout < 0 || database.LockTimeout < 0 || database.IdleInTransactionTimeout < 0 {
-		v.add("database.session_limits", "statement_timeout, lock_timeout and idle_in_transaction_timeout must not be negative")
+
+	database.validateConnectionPool(validator)
+	if int32(configuration.Ingestion.Workers+2) > database.MaxConnections {
+		validator.add("database.max_connections", "must reserve at least one connection per ingestion worker plus two")
 	}
+	database.validateConnectionLifecycle(validator)
+	database.validateSessionLimits(validator)
 	if database.StatementTimeout > 0 && configuration.HTTP.RequestTimeout > 0 && database.StatementTimeout < configuration.HTTP.RequestTimeout {
-		v.add("database.statement_timeout", "must not be below http.request_timeout, or queries are cut off before the API can answer")
+		validator.add("database.statement_timeout", "must not be below http.request_timeout, or queries are cut off before the API can answer")
+	}
+	database.validateMigrations(validator)
+	validateDatabaseURL(database.URL, configuration.Production, validator)
+}
+
+// validateConnectionPool validates connection pool limits.
+func (database DatabaseConfig) validateConnectionPool(validator *validator) {
+	if database.MaxConnections < 1 || database.MaxConnections > maxDatabaseConnections {
+		validator.add("database.max_connections", "must be between 1 and 1000")
+	}
+	if database.MinConnections < 0 {
+		validator.add("database.min_connections", "must not be negative")
+	}
+	if database.MinConnections > database.MaxConnections {
+		validator.add("database.min_connections", "must not exceed max_connections")
 	}
 }
 
-// validateProductionDatabaseTLS rejects database URLs that can fall back to
-// plaintext. libpq defaults to sslmode=prefer, so a missing sslmode is rejected
-// too. Unix sockets never leave the host and are exempt. require encrypts but
-// does not authenticate the server; verify-full is the recommended mode.
-func validateProductionDatabaseTLS(databaseURL string, v *validator) {
-	parsed, parseError := url.Parse(databaseURL)
-	if parseError != nil || (parsed.Scheme != "postgres" && parsed.Scheme != "postgresql") {
-		v.add("database.url", "must be a postgres:// URL in production")
+// validateConnectionLifecycle validates connection lifetime and health check settings.
+func (database DatabaseConfig) validateConnectionLifecycle(validator *validator) {
+	if database.MaxConnectionLifetime <= 0 {
+		validator.add("database.max_connection_lifetime", "must be positive")
+	}
+	if database.MaxConnectionIdleTime <= 0 {
+		validator.add("database.max_connection_idle_time", "must be positive")
+	}
+	if database.HealthCheckPeriod <= 0 {
+		validator.add("database.health_check_period", "must be positive")
+	}
+	if database.ReadinessTimeout <= 0 {
+		validator.add("database.readiness_timeout", "must be positive")
+	}
+}
+
+// validateSessionLimits validates PostgreSQL statement, lock, and transaction timeouts.
+func (database DatabaseConfig) validateSessionLimits(validator *validator) {
+	if database.StatementTimeout < 0 {
+		validator.add("database.statement_timeout", "must not be negative")
+	}
+	if database.LockTimeout < 0 {
+		validator.add("database.lock_timeout", "must not be negative")
+	}
+	if database.IdleInTransactionTimeout < 0 {
+		validator.add("database.idle_in_transaction_timeout", "must not be negative")
+	}
+}
+
+// validateMigrations validates the migration directory configuration.
+func (database DatabaseConfig) validateMigrations(validator *validator) {
+	if strings.TrimSpace(database.MigrationsPath) == "" {
+		validator.add("database.migrations_path", "must not be empty")
+	}
+}
+
+// validateDatabaseURL validates the PostgreSQL URL and production TLS policy.
+func validateDatabaseURL(databaseURL string, production bool, validator *validator) {
+	if strings.TrimSpace(databaseURL) == "" {
+		validator.add("database.url", "required via database.url or TRACEPILOT_DATABASE_URL")
 		return
 	}
-	query := parsed.Query()
-	if strings.HasPrefix(parsed.Hostname(), "/") || strings.HasPrefix(query.Get("host"), "/") {
+	parsedURL, parseError := url.Parse(databaseURL)
+	if parseError != nil || (parsedURL.Scheme != "postgres" && parsedURL.Scheme != "postgresql") ||
+		parsedURL.Opaque != "" || parsedURL.Fragment != "" {
+		validator.add("database.url", "must be a valid postgres:// or postgresql:// URL")
+		return
+	}
+
+	query := parsedURL.Query()
+	if query.Has("sslmode") && len(query["sslmode"]) != 1 {
+		validator.add("database.url", "sslmode must be specified only once")
+		return
+	}
+
+	// Unix domain socket connections do not use TLS.
+	socketHost := query.Get("host")
+	isUnixSocket := strings.HasPrefix(socketHost, "/")
+
+	if !isUnixSocket && parsedURL.Hostname() == "" {
+		validator.add("database.url", "database hostname is required")
+		return
+	}
+
+	if !production || isUnixSocket {
 		return
 	}
 	switch query.Get("sslmode") {
 	case "require", "verify-ca", "verify-full":
 		return
+	default:
+		validator.add("database.url", "production requires sslmode=require, verify-ca, or verify-full")
 	}
-	v.add("database.url", "must set sslmode to require, verify-ca, or verify-full in production")
 }

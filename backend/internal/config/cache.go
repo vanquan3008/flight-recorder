@@ -128,8 +128,8 @@ func (c CacheConfig) EffectiveIdentityLimit() int {
 	return 4096
 }
 
-func (configuration Config) validateCache(v *validator) {
-	configuration.Cache.validate(v)
+func (configuration Config) validateCache(validator *validator) {
+	configuration.Cache.validate(validator)
 }
 
 func (c CacheConfig) validate(validator *validator) {

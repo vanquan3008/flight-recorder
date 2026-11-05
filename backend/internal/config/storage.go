@@ -20,27 +20,27 @@ type RetentionConfig struct {
 	BatchSize      int           `config:"batch_size"`
 }
 
-func (configuration Config) validateStorage(v *validator) {
-	configuration.validateRetentionLimits(v)
+func (configuration Config) validateStorage(validator *validator) {
+	configuration.validateRetentionLimits(validator)
 }
 
-func (configuration Config) validateRetentionLimits(v *validator) {
+func (configuration Config) validateRetentionLimits(validator *validator) {
 	if configuration.Retention.MaxAge < 0 {
-		v.add("retention.max_age", "must not be negative")
+		validator.add("retention.max_age", "must not be negative")
 	}
 	if configuration.Retention.IncidentMaxAge < 0 {
-		v.add("retention.incident_max_age", "must not be negative")
+		validator.add("retention.incident_max_age", "must not be negative")
 	}
 	if configuration.Retention.AuditMaxAge < 0 {
-		v.add("retention.audit_max_age", "must not be negative")
+		validator.add("retention.audit_max_age", "must not be negative")
 	}
 	if configuration.Retention.DeliveryMaxAge < 0 {
-		v.add("retention.delivery_max_age", "must not be negative")
+		validator.add("retention.delivery_max_age", "must not be negative")
 	}
 	if configuration.Retention.CheckInterval <= 0 {
-		v.add("retention.check_interval", "must be positive")
+		validator.add("retention.check_interval", "must be positive")
 	}
 	if configuration.Retention.BatchSize <= 0 || configuration.Retention.BatchSize > maxIngestionBatchSize {
-		v.add("retention.batch_size", "must be between 1 and 10000")
+		validator.add("retention.batch_size", "must be between 1 and 10000")
 	}
 }

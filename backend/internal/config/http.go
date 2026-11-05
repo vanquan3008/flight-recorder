@@ -33,55 +33,58 @@ type HTTPConfig struct {
 	RateLimitReplayRequests int           `config:"rate_limit_replay_requests"`
 }
 
-func (configuration Config) validateHTTP(v *validator) {
+func (configuration Config) validateHTTP(validator *validator) {
 	if strings.TrimSpace(configuration.HTTP.Address) == "" {
-		v.add("http.address", "must not be empty")
+		validator.add("http.address", "must not be empty")
 	}
 	if configuration.HTTP.ReadHeaderTimeout <= 0 {
-		v.add("http.read_header_timeout", "must be positive")
+		validator.add("http.read_header_timeout", "must be positive")
 	}
 	if configuration.HTTP.ReadTimeout <= 0 {
-		v.add("http.read_timeout", "must be positive")
+		validator.add("http.read_timeout", "must be positive")
 	}
 	if configuration.HTTP.WriteTimeout <= 0 {
-		v.add("http.write_timeout", "must be positive")
+		validator.add("http.write_timeout", "must be positive")
 	}
 	if configuration.HTTP.IdleTimeout <= 0 {
-		v.add("http.idle_timeout", "must be positive")
+		validator.add("http.idle_timeout", "must be positive")
 	}
 	if configuration.HTTP.MaxHeaderBytes <= 0 {
-		v.add("http.max_header_bytes", "must be positive")
+		validator.add("http.max_header_bytes", "must be positive")
 	}
 	if configuration.HTTP.ManagementMaxBodyBytes <= 0 {
-		v.add("http.management_max_body_bytes", "must be positive")
+		validator.add("http.management_max_body_bytes", "must be positive")
 	}
 	if configuration.HTTP.MaxConcurrentQueries <= 0 {
-		v.add("http.max_concurrent_queries", "must be positive")
+		validator.add("http.max_concurrent_queries", "must be positive")
 	}
 	if configuration.HTTP.RequestTimeout <= 0 || configuration.HTTP.RequestTimeout >= configuration.HTTP.WriteTimeout {
-		v.add("http.request_timeout", "must be positive and shorter than http.write_timeout")
+		validator.add("http.request_timeout", "must be positive and shorter than http.write_timeout")
 	}
 	if configuration.HTTP.RateLimitRequests <= 0 {
-		v.add("http.rate_limit_requests", "must be positive")
+		validator.add("http.rate_limit_requests", "must be positive")
 	}
 	if configuration.HTTP.RateLimitAuthRequests <= 0 {
-		v.add("http.rate_limit_auth_requests", "must be positive")
+		validator.add("http.rate_limit_auth_requests", "must be positive")
 	}
 	if configuration.HTTP.RateLimitReplayRequests <= 0 {
-		v.add("http.rate_limit_replay_requests", "must be positive")
+		validator.add("http.rate_limit_replay_requests", "must be positive")
 	}
 	if configuration.HTTP.RateLimitWindow <= 0 {
-		v.add("http.rate_limit_window", "must be positive")
+		validator.add("http.rate_limit_window", "must be positive")
+	}
+	if configuration.HTTP.MetricsToken != "" && len(configuration.HTTP.MetricsToken) < 32 {
+		validator.add("http.metrics_token", "must contain at least 32 characters")
 	}
 	for _, proxy := range configuration.HTTP.TrustedProxies {
 		if _, err := ParseProxyPrefix(proxy); err != nil {
-			v.add("http.trusted_proxies", "invalid entry: "+proxy+" (use CIDR or single IP)")
+			validator.add("http.trusted_proxies", "invalid entry: "+proxy+" (use CIDR or single IP)")
 		}
 	}
 	for _, origin := range configuration.HTTP.AllowedOrigins {
 		parsed, err := url.ParseRequestURI(origin)
 		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.User != nil || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
-			v.add("http.allowed_origins", "invalid origin: "+origin)
+			validator.add("http.allowed_origins", "invalid origin: "+origin)
 		}
 	}
 }

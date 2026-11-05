@@ -41,49 +41,49 @@ type NotificationsConfig struct {
 	RequestTimeout time.Duration `config:"request_timeout" env:"TRACEPILOT_WEBHOOK_REQUEST_TIMEOUT"`
 }
 
-func (configuration Config) validateApp(v *validator) {
+func (configuration Config) validateApp(validator *validator) {
 	if (configuration.TLS.CertificateFile == "") != (configuration.TLS.PrivateKeyFile == "") {
-		v.add("tls", "certificate_file and private_key_file must be set together")
+		validator.add("tls", "certificate_file and private_key_file must be set together")
 	}
 	if configuration.Replay.Enabled && len(configuration.Replay.AllowedHosts) == 0 {
-		v.add("replay.allowed_hosts", "required when replay is enabled")
+		validator.add("replay.allowed_hosts", "required when replay is enabled")
 	}
-	configuration.validateReplayLimits(v)
+	configuration.validateReplayLimits(validator)
 	if configuration.ShutdownTimeout <= 0 {
-		v.add("shutdown_timeout", "must be positive")
+		validator.add("shutdown_timeout", "must be positive")
 	}
-	configuration.validateNotifications(v)
+	configuration.validateNotifications(validator)
 }
 
-func (configuration Config) validateNotifications(v *validator) {
+func (configuration Config) validateNotifications(validator *validator) {
 	if !configuration.Notifications.Enabled {
 		return
 	}
 	if _, err := notification.DecodeEncryptionKey(configuration.Notifications.EncryptionKey); err != nil {
-		v.add("notifications.encryption_key", err.Error())
+		validator.add("notifications.encryption_key", err.Error())
 	}
 	if configuration.Notifications.PollInterval <= 0 {
-		v.add("notifications.poll_interval", "must be positive")
+		validator.add("notifications.poll_interval", "must be positive")
 	}
 	if configuration.Notifications.Workers <= 0 || configuration.Notifications.Workers > 64 {
-		v.add("notifications.workers", "must be between 1 and 64")
+		validator.add("notifications.workers", "must be between 1 and 64")
 	}
 	if configuration.Notifications.RequestTimeout <= 0 || configuration.Notifications.RequestTimeout > 5*time.Minute {
-		v.add("notifications.request_timeout", "must be between 1 and 5 minutes")
+		validator.add("notifications.request_timeout", "must be between 1 and 5 minutes")
 	}
 }
 
-func (configuration Config) validateReplayLimits(v *validator) {
+func (configuration Config) validateReplayLimits(validator *validator) {
 	if configuration.Replay.Timeout <= 0 {
-		v.add("replay.timeout", "must be positive")
+		validator.add("replay.timeout", "must be positive")
 	}
 	if configuration.Replay.MaxRequestBytes <= 0 || configuration.Replay.MaxRequestBytes > 4<<20 {
-		v.add("replay.max_request_bytes", "must be between 1 and 4194304")
+		validator.add("replay.max_request_bytes", "must be between 1 and 4194304")
 	}
 	if configuration.Replay.MaxResponseBytes <= 0 || configuration.Replay.MaxResponseBytes > 4<<20 {
-		v.add("replay.max_response_bytes", "must be between 1 and 4194304")
+		validator.add("replay.max_response_bytes", "must be between 1 and 4194304")
 	}
 	if configuration.Replay.MaxConcurrent <= 0 || configuration.Replay.MaxConcurrent > 16 {
-		v.add("replay.max_concurrent", "must be between 1 and 16")
+		validator.add("replay.max_concurrent", "must be between 1 and 16")
 	}
 }

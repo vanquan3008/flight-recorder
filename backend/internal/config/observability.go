@@ -2,15 +2,35 @@ package config
 
 import (
 	"log/slog"
+	"strings"
 )
 
-// ObservabilityConfig groups settings for runtime logging, metrics and diagnostics.
 type ObservabilityConfig struct {
-	LogLevel slog.Level `config:"log_level"`
+	LogLevel  slog.Level `config:"log_level"`
+	LogFormat string     `config:"log_format"`
 }
 
-func (configuration Config) validateObservability(v *validator) {
-	if configuration.HTTP.MetricsToken != "" && len(configuration.HTTP.MetricsToken) < 32 {
-		v.add("http.metrics_token", "must contain at least 32 characters")
+func (config Config) validateObservability(validator *validator) {
+	obs := config.Observability
+
+	switch obs.LogLevel {
+	case slog.LevelDebug,
+		slog.LevelInfo,
+		slog.LevelWarn,
+		slog.LevelError:
+	default:
+		validator.add(
+			"observability.log_level",
+			"must be DEBUG, INFO, WARN or ERROR",
+		)
+	}
+
+	switch strings.ToLower(obs.LogFormat) {
+	case "", "json", "text":
+	default:
+		validator.add(
+			"observability.log_format",
+			"must be json or text",
+		)
 	}
 }
