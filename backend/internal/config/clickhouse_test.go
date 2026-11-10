@@ -85,4 +85,3 @@ func TestLogPartitionExpr(t *testing.T) {
 		t.Errorf("empty partition must default to weekly")
 	}
 }
-

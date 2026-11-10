@@ -186,4 +186,3 @@ func TestValidateProductionRejectsSampleSecrets(t *testing.T) {
 		t.Fatalf("the sample secrets must keep working outside production: %v", err)
 	}
 }
-
