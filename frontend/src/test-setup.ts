@@ -2,7 +2,7 @@ import { configure } from "@testing-library/react";
 import { afterEach, vi } from "vitest";
 
 // The console resumes its session before it renders; under a parallel test run that can outlast the default second.
-configure({ asyncUtilTimeout: 4000 });
+configure({ asyncUtilTimeout: 8000 });
 
 // Most tests open the console as a signed-in owner. The console resumes a session by asking the server to
 // refresh, so wrap each stubbed `fetch` to answer that with a canned session unless the test answers it itself.

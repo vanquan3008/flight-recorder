@@ -8,7 +8,6 @@ import { IngestTokensSection } from "./ingest-tokens";
 import { MembersSection } from "./members";
 import { ProjectsSection } from "./projects";
 import { WebhooksSection } from "./webhooks";
-import "./settings.css";
 
 const sections = {
   projects: ["Projects", ProjectsSection],
@@ -40,8 +39,8 @@ export function SettingsPage() {
   const Content = sections[tab][1];
   return <>
     <PageHeader title="Settings">Projects, people and access. What you can change depends on your role in the project.</PageHeader>
-    <div className="segmented tabs">
-      {available.map((value) => <button type="button" className="chip" aria-pressed={tab === value} key={value} onClick={() => setParams({ tab: value })}>{sections[value][0]}</button>)}
+    <div className="segmented inline-flex min-w-0 gap-0.5 rounded-lg border border-glass-field-edge bg-glass-field p-0.75 tabs mb-4 flex max-w-full flex-wrap self-start gap-1 rounded-xl border-glass-divider bg-surface/35 p-1">
+      {available.map((value) => <button type="button" className="chip rounded-lg px-4.5 py-1.5 text-[12.5px] font-semibold text-muted transition-colors hover:bg-glass-hover hover:text-text aria-pressed:bg-btn aria-pressed:text-btn-text" aria-pressed={tab === value} key={value} onClick={() => setParams({ tab: value })}>{sections[value][0]}</button>)}
     </div>
     <Content />
   </>;

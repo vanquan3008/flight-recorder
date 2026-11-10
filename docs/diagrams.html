@@ -42,7 +42,7 @@
 
 <section id="d1">
   <h2>1. Tổng quan hệ thống</h2>
-  <p>Một ứng dụng Go phục vụ API và OTLP; PostgreSQL quản trị/trace/metric/incident, ClickHouse tùy chọn lưu raw log theo tuần UTC.</p>
+  <p>Một ứng dụng Go phục vụ API và OTLP; PostgreSQL quản trị/trace/metric/incident, ClickHouse bắt buộc lưu raw log.</p>
   <div class="diagram"><pre class="mermaid">
 flowchart LR
   subgraph Client["Bên ngoài"]
@@ -62,7 +62,7 @@ flowchart LR
     Maint["Partition và retention"]
   end
   DB[("PostgreSQL<br/>bảng chia theo ngày")]
-  CH[("ClickHouse tùy chọn<br/>raw log theo tuần UTC")]
+  CH[("ClickHouse<br/>raw log theo partition cấu hình")]
   App -->|"ingest token"| OTLP
   OTLP --> Pipe
   Pipe -->|"trace/metric, envelope lỗi log<br/>incident và outbox cùng transaction"| DB
@@ -90,7 +90,7 @@ flowchart TD
   C -->|"có"| D
   C1 --> D["Kiểm tra schema version 3, không dirty"]
   D -->|"lệch hoặc dirty"| X1(["Thoát mã 1"])
-  D --> E["Mở PG, kiểm schema ClickHouse nếu bật,<br/>tạo partition PG và scope mặc định"]
+  D --> E["Mở PG, kiểm schema ClickHouse bắt buộc,<br/>tạo partition PG và scope mặc định"]
   E -->|"lỗi"| X1
   E --> F["Dựng replay, metrics,<br/>2 pipeline, bộ thu OTLP, API"]
   F --> G["Chạy song song:<br/>API, OTLP (cốt lõi),<br/>detection, partition, webhook, retention (tự phục hồi)"]
@@ -123,7 +123,8 @@ sequenceDiagram
     A->>D: Tạo phiên refresh - chỉ lưu SHA-256
     A-->>C: Cookie tp_refresh + access token 15 phút + danh sách project
   end
-  Note over C,A: Gọi API với Bearer access token
+  Note over C: Dropdown Project/Environment chỉ đổi scope khi xác nhận<br/>Esc, Tab hoặc bấm bên ngoài đóng danh sách
+  Note over C,A: URL giữ project/environment, API gửi Bearer access token và scope headers
   C->>A: Request
   A-->>C: 401 TOKEN_EXPIRED
   C->>A: POST /auth/refresh kèm header X-TracePilot-Refresh
@@ -246,11 +247,24 @@ flowchart TD
   E --> R["BuildRCA xếp hạng giả thuyết<br/>theo độ tin cậy, rồi theo loại evidence"]
   R --> U(["Hiển thị giả thuyết kèm bằng chứng<br/>- không phải kết luận chắc chắn"])
   </pre></div>
+  <p>Console chỉ tải thông tin incident và analysis ban đầu; các tab còn lại tải khi mở. Timeline dùng cursor 25 bản ghi/trang, chỉ dựng trang đang xem. Analysis phân trang 3 giả thuyết, 8 evidence và 8 quan hệ; giữ đủ ID, series, giá trị gốc và trace link trong chi tiết.</p>
+  <div class="diagram"><pre class="mermaid">
+flowchart LR
+  Open["Mở incident"] --> Header["Thông tin, trạng thái và thao tác"]
+  Open --> Analysis["Investigation: heuristic + evidence"]
+  Analysis --> Select["Chọn giả thuyết → lọc evidence theo ID"]
+  Header --> Tab["Chọn tab cần xem"]
+  Tab --> Records["Occurrences / Linked telemetry / Status history"]
+  Records --> Cursor["Tải 25 bản ghi/trang theo cursor"]
+  Header --> Change["Yêu cầu đổi trạng thái"]
+  Change --> Success["Thành công: cập nhật header và lịch sử"]
+  Change --> Failure["Thất bại: giữ trạng thái và nội dung đang xem"]
+  </pre></div>
 </section>
 
 <section id="d8">
   <h2>8. Vòng đời ingest token</h2>
-  <p>Chuỗi JWT chỉ hiện một lần, ký bằng secret riêng; thu hồi có hiệu lực ngay nhờ bộ đệm tự xóa khi bị thu hồi.</p>
+  <p>Chuỗi JWT chỉ hiện một lần, ký bằng secret riêng. Thu hồi xóa cache của tiến trình xử lý và shared entry; replica khác có thể còn cache local tới khi hết TTL.</p>
   <div class="diagram"><pre class="mermaid">
 sequenceDiagram
   autonumber
@@ -301,7 +315,7 @@ flowchart TD
 
 <section id="d10">
   <h2>10. Partition và retention</h2>
-  <p>PG bảo trì partition mỗi giờ. ClickHouse tự chia tuần từ thứ Hai UTC, TTL riêng theo RETENTION_MAX_AGE (0s giữ mãi); API ẩn log hết hạn trước khi part được xóa vật lý.</p>
+  <p>PG bảo trì partition mỗi giờ. ClickHouse phân vùng theo cấu hình (ngày/tháng/năm/tuần UTC), TTL riêng theo RETENTION_MAX_AGE (0s giữ mãi); API ẩn log hết hạn trước khi part được xóa vật lý.</p>
   <div class="diagram"><pre class="mermaid">
 flowchart TD
   subgraph Part["Bảo trì partition - mỗi giờ"]
@@ -314,15 +328,27 @@ flowchart TD
     R3["Audit quá 180 ngày"]
     R4["Webhook delivery đã xong quá 30 ngày"]
   end
-  CH["ClickHouse TTL: xóa cả part khi hết hạn toàn bộ<br/>partition tuần; vật lý có thể lưu thêm gần 1 tuần<br/>đổi TTL bằng migrate clickhouse up"]
+  CH["ClickHouse TTL: xóa cả part khi hết hạn toàn bộ<br/>partition ngày/tháng/năm/tuần; vật lý lưu thêm chu kỳ<br/>đổi partition/TTL bằng migrate clickhouse up"]
   Ret --> N["Lỗi một nhóm không dừng nhóm khác"]
   K["Không bao giờ xóa:<br/>incident OPEN / INVESTIGATING,<br/>delivery đang xử lý"] -.-> Ret
   </pre></div>
 </section>
 
 <section id="d11">
-  <h2>11. Telemetry streaming thời gian thực (SSE)</h2>
-  <p>Stream log mới và cảnh báo sự cố trực tiếp tới console qua Server-Sent Events, tối đa 256 kết nối đồng thời và không chiếm concurrency slot.</p>
+  <h2>11. Telemetry streaming (SSE) và điều tra trace</h2>
+  <p>Stream tối đa 256 kết nối/tiến trình, không chiếm query slot; kết thúc theo JWT, kiểm quyền mỗi 15 giây với deadline 2 giây và giới hạn ghi từng frame 5 giây. Console giữ scope trên URL, dùng cùng API client cho REST/SSE, lọc và khử trùng 100 event live. Waterfall render hữu hạn ngay từ đầu, inspector nằm ngoài các dòng. Bảng tải thêm chủ động tối đa 20 trang; drill-down giữ nguyên from/to.</p>
+  <p>Trace detail ưu tiên operation và trạng thái request, gom self-time theo service; service map mở theo yêu cầu. Inspector nằm bên phải trên desktop, xếp dưới trên mobile và có tab hỗ trợ bàn phím. Log nằm dưới timeline, từng dòng mở khi cần; bộ lọc cục bộ chỉ tìm trong dữ liệu đã tải.</p>
+  <div class="diagram"><pre class="mermaid">
+flowchart LR
+  Header["Operation, trạng thái, chỉ số"] --> Flow["Self-time theo service"]
+  Flow --> Map["Mở service map khi cần"]
+  Flow --> Waterfall["Waterfall ảo hóa, tối đa 5.000 span"]
+  Filter["Tìm span / lọc lỗi<br/>gồm cả nhánh thu gọn"] --> Waterfall
+  Waterfall -->|Chọn span| Inspector["Inspector: Attributes / Resource / Events / Raw"]
+  Waterfall --> Logs["Log liên quan: lọc dữ liệu đã tải / mở nội dung"]
+  Inspector --> Explorer["Log explorer<br/>giữ trace, span và from/to"]
+  Logs --> Explorer
+  </pre></div>
   <div class="diagram"><pre class="mermaid">
 sequenceDiagram
   autonumber
@@ -333,11 +359,17 @@ sequenceDiagram
   participant DB as PostgreSQL
   participant CH as ClickHouse (nếu bật)
 
-  User->>API: GET /api/v1/live/stream (Bearer token)
+  User->>API: GET /api/v1/live/stream (JWT, X-Project-ID, X-Environment)
   API->>API: Xác thực scope read & resolve env
   API->>Hub: Đăng ký subscriber (project, env)
   Hub-->>API: Từ chối nếu đã đủ 256 subscriber
   API-->>User: 200 OK (text/event-stream, event: connected)
+  Note over User,API: Stream hết hạn theo JWT; console reconnect bằng token hiện tại hoặc refresh khi TOKEN_EXPIRED
+  opt Mỗi 15 giây
+    API->>DB: Kiểm tài khoản và membership trực tiếp, deadline 2 giây
+    DB-->>API: Còn quyền hoặc từ chối/lỗi
+    Note over User,API: Hết quyền hoặc lỗi kiểm tra thì đóng stream
+  end
   loop Ingest & Persist
     opt ClickHouse được cấu hình
       Pipe->>CH: Ghi batch raw log, chờ flush

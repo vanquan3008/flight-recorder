@@ -13,10 +13,17 @@ const incident = (id: string, title: string) => ({ id, title, severity: "HIGH", 
 it("leads with the worst thing to know: incidents, then failing traces, then calm, then silence", () => {
   expect(overviewStatus({ openIncidents: 2, failedTraces: 5, performance: busy })).toMatchObject({ tone: "danger", headline: "2 incidents need attention" });
   expect(overviewStatus({ openIncidents: 1, failedTraces: 0 }).headline).toBe("1 incident needs attention");
-  expect(overviewStatus({ openIncidents: 0, failedTraces: 3, performance: busy })).toMatchObject({ tone: "warning", headline: "No open incidents, but traces are failing" });
-  expect(overviewStatus({ openIncidents: 0, failedTraces: 0, performance: busy })).toMatchObject({ tone: "ok", headline: "All systems normal" });
+  expect(overviewStatus({ openIncidents: 0, failedTraces: 3, performance: busy })).toMatchObject({ tone: "warning", headline: "Errors observed in recent traces" });
+  expect(overviewStatus({ openIncidents: 0, failedTraces: 0, performance: busy })).toMatchObject({ tone: "warning", headline: "Errors observed in this window" });
   expect(overviewStatus({ openIncidents: 0, failedTraces: 0, performance: emptyPerformance }).tone).toBe("idle");
   expect(overviewStatus({ openIncidents: 0, failedTraces: 0 }).tone).toBe("idle");
+});
+
+it("does not claim overall health from a partial incident list or an unavailable traffic query", () => {
+  const calm = { ...busy, summary: { ...busy.summary, errors: 0, error_rate: 0 } };
+  expect(overviewStatus({ openIncidents: 0, failedTraces: 0, performance: calm, incidentsIncomplete: true }).tone).toBe("warning");
+  expect(overviewStatus({ openIncidents: 0, failedTraces: 0 }).headline).toBe("Traffic status is unavailable");
+  expect(overviewStatus({ openIncidents: 0, failedTraces: 0, performance: calm }).headline).toBe("No request errors observed");
 });
 
 it("summarises traffic only when there was some", () => {

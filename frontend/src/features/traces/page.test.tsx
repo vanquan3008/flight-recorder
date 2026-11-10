@@ -68,21 +68,21 @@ it("renders the trace list with pagination controls and handles Next / Prev navi
   // Page 1 should display trace 1
   expect(await screen.findByText("checkout")).toBeTruthy();
   expect(screen.getByText(traceID1)).toBeTruthy();
-  expect(screen.getByText("Trang 1 · 1 traces")).toBeTruthy();
+  expect(screen.getByText("Page 1 · 1 traces")).toBeTruthy();
 
   // Prev button should be disabled on page 1
-  const prevBtn = screen.getByRole("button", { name: "Trang trước" });
+  const prevBtn = screen.getByRole("button", { name: "Previous page" });
   expect(prevBtn).toHaveProperty("disabled", true);
 
   // Next button should be enabled
-  const nextBtn = screen.getByRole("button", { name: "Trang sau" });
+  const nextBtn = screen.getByRole("button", { name: "Next page" });
   expect(nextBtn).toHaveProperty("disabled", false);
 
   // Click Next -> loads page 2
   fireEvent.click(nextBtn);
   expect(await screen.findByText("worker")).toBeTruthy();
   expect(screen.getByText(traceID2)).toBeTruthy();
-  expect(screen.getByText("Trang 2 · 1 traces")).toBeTruthy();
+  expect(screen.getByText("Page 2 · 1 traces")).toBeTruthy();
 
   // Now Prev button should be enabled
   expect(prevBtn).toHaveProperty("disabled", false);
@@ -91,14 +91,14 @@ it("renders the trace list with pagination controls and handles Next / Prev navi
   fireEvent.click(prevBtn);
   expect(await screen.findByText("checkout")).toBeTruthy();
   expect(screen.getByText(traceID1)).toBeTruthy();
-  expect(screen.getByText("Trang 1 · 1 traces")).toBeTruthy();
+  expect(screen.getByText("Page 1 · 1 traces")).toBeTruthy();
 });
 
 it("supports selecting page size and re-fetches with new limit", async () => {
   const fetchMock = open();
   expect(await screen.findByText("checkout")).toBeTruthy();
 
-  const select = screen.getByLabelText("Số dòng mỗi trang");
+  const select = screen.getByLabelText("Rows per page");
   expect((select as HTMLSelectElement).value).toBe("15");
 
   fireEvent.change(select, { target: { value: "25" } });

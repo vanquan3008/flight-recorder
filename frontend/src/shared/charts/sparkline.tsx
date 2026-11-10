@@ -14,7 +14,7 @@ export function Sparkline({ values, tone = "var(--accent)" }: { values: number[]
   const area = `${line} L ${width} ${height} L 0 ${height} Z`;
   const id = `spark-${tone.replace(/[^a-z0-9]/gi, "")}`;
   return (
-    <svg className="sparkline" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" aria-hidden="true" focusable="false">
+    <svg className="sparkline mb-0.5 h-5.5 w-14 shrink-0 overflow-visible" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" aria-hidden="true" focusable="false">
       <defs>
         <linearGradient id={id} x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stopColor={tone} stopOpacity=".32" />

@@ -19,7 +19,7 @@ func TestEnvironmentFileDoesNotMutateProcessAndCanReload(t *testing.T) {
 	}
 	t.Chdir(root)
 	for _, databaseURL := range []string{"postgres://first", "postgres://second"} {
-		if err := os.WriteFile(filepath.Join(backend, ".env"), []byte("TRACEPILOT_DATABASE_URL="+databaseURL+"\nTRACEPILOT_HTTP_ADDRESS=:9200\n"), 0o600); err != nil {
+		if err := os.WriteFile(filepath.Join(backend, ".env"), []byte("TRACEPILOT_DATABASE_URL="+databaseURL+"\nTRACEPILOT_HTTP_ADDRESS=:9200\nTRACEPILOT_CLICKHOUSE_URL=http://localhost:8123\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		t.Setenv("TRACEPILOT_HTTP_ADDRESS", ":9300")
@@ -46,10 +46,10 @@ func TestBackendEnvironmentFileWinsFromRepositoryAndModuleDirectories(t *testing
 	if err := os.WriteFile(filepath.Join(backend, "go.mod"), []byte("module test\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, ".env"), []byte("TRACEPILOT_DATABASE_URL=postgres://root-file\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, ".env"), []byte("TRACEPILOT_DATABASE_URL=postgres://root-file\nTRACEPILOT_CLICKHOUSE_URL=http://root-ch\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(backend, ".env"), []byte("TRACEPILOT_DATABASE_URL=postgres://backend-file\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(backend, ".env"), []byte("TRACEPILOT_DATABASE_URL=postgres://backend-file\nTRACEPILOT_CLICKHOUSE_URL=http://backend-ch\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	for _, directory := range []string{root, backend} {

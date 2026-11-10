@@ -1,3 +1,4 @@
+import { toolbarClass } from "../../shared/ui/styles";
 import { Search } from "lucide-react";
 import type { FormEvent } from "react";
 import { useEffect, useState } from "react";
@@ -5,14 +6,14 @@ import { Link, useSearchParams } from "react-router-dom";
 import { useAuth } from "../../app/auth";
 import { compactSearchParams, queryString, usePagedQuery } from "../../shared/api";
 import type { TraceSummary } from "../../shared/types";
-import { Badge, DetailLink, ErrorState, PageHeader, PagedTable, Panel, formatDuration, formatTime } from "../../shared/ui";
-import "./traces.css";
+import { Badge, DetailLink, ErrorState, PageHeader, PagedTable, Panel, TimeWindowFilter, formatDuration, formatTime, useTimeWindow } from "../../shared/ui";
 
 const PAGE_SIZE_OPTIONS = [10, 15, 25, 50];
 
 export function TracesPage() {
   const { credential } = useAuth();
   const [params, setParams] = useSearchParams();
+  const window = useTimeWindow();
   const [pageSize, setPageSize] = useState<number>(() => {
     const raw = Number(params.get("limit"));
     return PAGE_SIZE_OPTIONS.includes(raw) ? raw : 15;
@@ -20,7 +21,7 @@ export function TracesPage() {
   const [pageIndex, setPageIndex] = useState(0);
 
   // Reset to first page when search filters change
-  const filterKey = `${params.get("service") || ""}|${params.get("status") || ""}|${params.get("traceId") || ""}|${params.get("from") || ""}|${params.get("to") || ""}|${pageSize}`;
+  const filterKey = `${params.get("service") || ""}|${params.get("status") || ""}|${params.get("traceId") || ""}|${window.from}|${window.to}|${pageSize}`;
   useEffect(() => {
     setPageIndex(0);
   }, [filterKey]);
@@ -29,8 +30,8 @@ export function TracesPage() {
     service: params.get("service") || undefined,
     status: params.get("status") || undefined,
     traceId: params.get("traceId") || undefined,
-    from: params.get("from") || undefined,
-    to: params.get("to") || undefined,
+    from: window.from,
+    to: window.to,
     limit: String(pageSize),
   })}`;
 
@@ -74,29 +75,30 @@ export function TracesPage() {
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    setParams(compactSearchParams(event.currentTarget, params, ["from", "to", "limit"]));
+    setParams(compactSearchParams(event.currentTarget, params, ["range", "from", "to", "limit"]));
   };
 
   if (query.isError) return <ErrorState error={query.error} retry={() => void query.refetch()} fullPage />;
 
   return (
-    <div className="trace-explorer-page">
+    <div className="trace-explorer-page flex h-full max-h-full min-h-0 w-full max-w-full flex-1 flex-col overflow-hidden">
       <div className="shrink-0">
-        <PageHeader title="Trace explorer">Find slow or failed requests, then inspect their spans and correlated logs.</PageHeader>
-        <form className="toolbar" onSubmit={submit}>
+        <PageHeader title="Trace explorer" action={<TimeWindowFilter {...window} />}>Find slow or failed requests, then inspect their spans and correlated logs.</PageHeader>
+        <form className={`toolbar ${toolbarClass}`} key={filterKey} onSubmit={submit}>
           <input name="service" placeholder="Service" aria-label="Filter by service" defaultValue={params.get("service") || ""} />
-          <input name="status" placeholder="Status" aria-label="Filter by status" defaultValue={params.get("status") || ""} />
+          <select name="status" aria-label="Filter by status" defaultValue={params.get("status") || ""}><option value="">All statuses</option><option value="ERROR">ERROR</option><option value="OK">OK</option></select>
           <input name="traceId" placeholder="Trace ID" aria-label="Filter by trace ID" defaultValue={params.get("traceId") || ""} />
           <button><Search size={16} /> Search traces</button>
         </form>
       </div>
       <Panel
         title="Recent traces"
-        className="panel-fit"
-        meta={query.isPending ? undefined : `Trang ${safePageIndex + 1} · ${traces.length} traces`}
+        fit
+        meta={query.isPending ? undefined : `Page ${safePageIndex + 1} · ${traces.length} traces`}
       >
         <PagedTable
           query={query}
+          rowKeys={traces.map((trace) => trace.trace_id)}
           pagination={{
             pageIndex: safePageIndex,
             pageSize,

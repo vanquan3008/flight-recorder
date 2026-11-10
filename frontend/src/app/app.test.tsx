@@ -53,7 +53,7 @@ describe("App", () => {
     fireEvent.click(screen.getAllByRole("button", { name: /^Sign in/ }).at(-1)!);
 
     expect(await screen.findByRole("button", { name: /Sign out/ })).toBeTruthy();
-    expect((screen.getByLabelText("Project") as HTMLSelectElement).value).toBe(project.id);
+    expect(screen.getByRole("combobox", { name: "Project" }).textContent).toContain(project.name);
     await waitFor(() => expect(calls.some((call) => call.path.startsWith("/api/v1/traces"))).toBe(true));
     const read = calls.find((call) => call.path.startsWith("/api/v1/traces"))!;
     const headers = new Headers(read.init.headers);

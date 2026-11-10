@@ -20,7 +20,8 @@ export function useVirtualList({
   overscan = 8,
 }: VirtualListOptions) {
   const [scrollTop, setScrollTop] = useState(0);
-  const [viewportHeight, setViewportHeight] = useState(0);
+  // Bound the first render before the viewport exists, including large traces.
+  const [viewportHeight, setViewportHeight] = useState(600);
 
   // Pre-calculate positions and heights for all items.
   const { positions, totalHeight } = useMemo(() => {
@@ -38,7 +39,7 @@ export function useVirtualList({
     const element = containerRef.current;
     if (!element) return;
     setScrollTop(element.scrollTop);
-    setViewportHeight(element.clientHeight);
+    setViewportHeight(element.clientHeight || 600);
   }, [containerRef]);
 
   useLayoutEffect(() => {
@@ -58,12 +59,11 @@ export function useVirtualList({
       element.removeEventListener("scroll", onScroll);
       observer?.disconnect();
     };
-  }, [containerRef, updateMeasurements]);
+  }, [containerRef, updateMeasurements, count]);
 
   const virtualItems = useMemo<VirtualItem[]>(() => {
     if (count === 0) return [];
-    // Fallback: In unit test environment (JSDOM) or when height cannot be measured, render all items.
-    if (viewportHeight === 0 || count <= 25) {
+    if (count <= 25) {
       return positions.map((position, index) => ({
         index,
         top: position.top,

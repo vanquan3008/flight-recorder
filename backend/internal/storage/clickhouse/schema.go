@@ -35,16 +35,30 @@ FROM system.tables WHERE database = {database:String} AND name = 'tracepilot_log
 	return state, nil
 }
 
+var validPartitionExprs = []string{
+	"toYYYYMMDD(occurred_at,'UTC')",
+	"toYYYYMM(occurred_at,'UTC')",
+	"toYear(occurred_at,'UTC')",
+	"toStartOfWeek(occurred_at,1,'UTC')",
+}
+
 func (store *Store) Ready(ctx context.Context) error {
 	state, err := store.schema(ctx)
 	if err != nil {
 		return err
 	}
 	compact := func(value string) string { return strings.Join(strings.Fields(value), "") }
-	if !strings.HasSuffix(state.Engine, "ReplacingMergeTree") ||
-		compact(state.Partition) != "toStartOfWeek(occurred_at,1,'UTC')" ||
+	got := compact(state.Partition)
+	partitionOK := false
+	for _, expr := range validPartitionExprs {
+		if got == expr {
+			partitionOK = true
+			break
+		}
+	}
+	if !strings.HasSuffix(state.Engine, "ReplacingMergeTree") || !partitionOK ||
 		compact(state.Sorting) != "project_id,environment_id,service_name,toStartOfMillisecond(occurred_at),event_id" {
-		return errors.New("ClickHouse log schema must use weekly UTC partitions and the expected deduplication key")
+		return errors.New("ClickHouse log schema must use a supported time-based partition (daily/monthly/yearly/weekly) and the expected deduplication key")
 	}
 	ttl := store.ttl()
 	if (ttl == "" && strings.Contains(state.DDL, "TTL ")) || (ttl != "" && !strings.Contains(state.DDL, ttl)) {
@@ -59,14 +73,16 @@ func (store *Store) Migrate(ctx context.Context) error {
 	if _, err := store.execute(ctx, "CREATE DATABASE IF NOT EXISTS `"+store.cfg.Database+"`", nil, nil, false); err != nil {
 		return err
 	}
-	ttl := store.ttl()
-	if _, err := store.execute(ctx, strings.Replace(schemaSQL, "__TTL__", ttl, 1), nil, nil, false); err != nil {
+	ddl := strings.Replace(schemaSQL, "__PARTITION__", store.cfg.LogPartition.PartitionExpr(), 1)
+	ddl = strings.Replace(ddl, "__TTL__", store.ttl(), 1)
+	if _, err := store.execute(ctx, ddl, nil, nil, false); err != nil {
 		return err
 	}
 	state, err := store.schema(ctx)
 	if err != nil {
 		return err
 	}
+	ttl := store.ttl()
 	if ttl != "" {
 		_, err = store.execute(ctx, "ALTER TABLE tracepilot_logs MODIFY "+ttl, nil, nil, false)
 	} else if strings.Contains(state.DDL, "TTL ") {

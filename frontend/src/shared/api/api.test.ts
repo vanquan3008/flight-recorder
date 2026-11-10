@@ -71,6 +71,26 @@ describe("api", () => {
     setAccessToken("");
   });
 
+  it("keeps the original request scope if the project changes during refresh", async () => {
+    setAccessToken("jwt-old");
+    setProjectContext({ project: "alpha", environment: "staging" });
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: { code: "TOKEN_EXPIRED" } }), { status: 401 }))
+      .mockImplementationOnce(() => {
+        setProjectContext({ project: "beta", environment: "production" });
+        return Promise.resolve(new Response(JSON.stringify({ user: { id: "u1" }, memberships: [], access_token: "jwt-new" })));
+      })
+      .mockResolvedValueOnce(new Response("{}"));
+    vi.stubGlobal("fetch", fetchMock);
+    await api("/api/v1/traces", sessionCredential);
+    const headers = new Headers(fetchMock.mock.calls[2][1].headers);
+    expect(headers.get("Authorization")).toBe("Bearer jwt-new");
+    expect(headers.get("X-Project-ID")).toBe("alpha");
+    expect(headers.get("X-Environment")).toBe("staging");
+    setAccessToken("");
+    setProjectContext({ project: "" });
+  });
+
   it("exposes API errors without leaking the response body", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: { code: "FORBIDDEN", message: "scope required" } }), { status: 403 })));
     await expect(api("/api/v1/rules", "key")).rejects.toMatchObject<Partial<APIError>>({ status: 403, code: "FORBIDDEN", message: "scope required" });

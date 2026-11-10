@@ -11,8 +11,14 @@ export function PerformancePage() {
   const qualityPath = `/api/v1/telemetry/quality?${queryString({ from: window.from, to: window.to })}`;
   // The quality donut is optional: the dashboard still renders when this call fails.
   const quality = useQuery({ queryKey: ["overview", qualityPath], queryFn: ({ signal }) => api<TelemetryQuality>(qualityPath, credential, { signal }) });
-  return <>
-    <PageHeader title="Performance" action={<TimeWindowFilter range={window.range} select={window.select} />}>Inbound request traffic, latency and errors, by service and endpoint.</PageHeader>
-    <PerformanceDashboard from={window.from} to={window.to} quality={quality.data} />
-  </>;
+  return (
+    <div className="performance-page flex h-full max-h-full min-h-0 w-full max-w-full flex-1 flex-col overflow-hidden">
+      <div className="shrink-0">
+        <PageHeader title="Performance" action={<TimeWindowFilter {...window} />}>
+          Inbound request traffic, latency and errors, by service and endpoint.
+        </PageHeader>
+      </div>
+      <PerformanceDashboard from={window.from} to={window.to} quality={quality.data} />
+    </div>
+  );
 }

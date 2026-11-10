@@ -110,6 +110,11 @@ func (server *Server) requireScopeStreaming(scope string, handle apiHandler) htt
 		if !ok {
 			return
 		}
+		claims, err := auth.VerifyJWTWithIssuerAudience(server.jwtSecret, bearerToken(request), auth.TokenAccess, server.issuer, server.audience, time.Now())
+		if err != nil || !time.Now().Before(claims.ExpiresAt) {
+			writeAPIError(responseWriter, http.StatusUnauthorized, "TOKEN_EXPIRED", "authentication required")
+			return
+		}
 		if principal.ProjectID != "" {
 			environmentID, environmentError := server.resolveEnvironment(request.Context(), principal.ProjectID, strings.TrimSpace(request.Header.Get(environmentHeader)))
 			if errors.Is(environmentError, errEnvironmentNotFound) {
@@ -122,7 +127,9 @@ func (server *Server) requireScopeStreaming(scope string, handle apiHandler) htt
 			}
 			principal.EnvironmentID = environmentID
 		}
-		handle(responseWriter, request, principal)
+		ctx, cancel := server.watchStreamAccess(request.Context(), principal, claims)
+		defer cancel()
+		handle(responseWriter, request.WithContext(ctx), principal)
 	}
 }
 

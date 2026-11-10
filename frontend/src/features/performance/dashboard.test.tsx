@@ -87,3 +87,24 @@ it("shows a layout skeleton first, then keeps the previous figures dimmed while 
   release(new Response(JSON.stringify(emptyPerformance), { status: 200 }));
   await waitFor(() => expect(document.querySelector(".performance-content.is-stale")).toBeNull());
 });
+
+it("switches between overview and endpoints tabs", async () => {
+  const stats = { requests: 50, errors: 2, requests_per_second: 0.1, error_rate: 0.04, average_latency_nanos: 80e6, p95_latency_nanos: 150e6, p99_latency_nanos: 200e6 };
+  const response = {
+    ...emptyPerformance, summary: stats,
+    services: [{ ...stats, service: "api-gw" }], endpoints: [{ ...stats, service: "api-gw", endpoint: "POST /checkout" }],
+    series: [{ ...stats, from: emptyPerformance.from, to: emptyPerformance.to }],
+  };
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(response), { status: 200 })));
+  renderDashboard();
+
+  expect((await screen.findByRole("tab", { name: "Overview" })).getAttribute("aria-selected")).toBe("true");
+  const endpointsTab = screen.getByRole("tab", { name: /Endpoints/ });
+  expect(endpointsTab.getAttribute("aria-selected")).toBe("false");
+
+  fireEvent.click(endpointsTab);
+  expect(endpointsTab.getAttribute("aria-selected")).toBe("true");
+  expect(screen.getByRole("tab", { name: "Overview" }).getAttribute("aria-selected")).toBe("false");
+  expect(screen.getByRole("heading", { name: /By endpoint/ })).toBeTruthy();
+  expect(screen.getByText("POST /checkout")).toBeTruthy();
+});
