@@ -71,6 +71,10 @@
     {
       "key": "ownerUserId",
       "value": ""
+    },
+    {
+      "key": "runLiveStream",
+      "value": "false"
     }
   ],
   "item": [
@@ -648,7 +652,7 @@
         {
           "name": "Logs: error linked to the trace",
           "request": {
-            "description": "With TRACEPILOT_CLICKHOUSE_URL configured, raw logs persist to ClickHouse weekly UTC partitions. ACK waits for ClickHouse flush and the PostgreSQL incident/outbox transaction; transient failures return 503 for exporter retry. The existing verify folder reads logs through the same API. For an existing database, stop ingestion, migrate clickhouse up, then migrate clickhouse backfill before restarting with ClickHouse enabled.",
+            "description": "ClickHouse is required for log storage: raw logs persist to ClickHouse time-based UTC partitions (daily, monthly, yearly, or weekly). ACK waits for ClickHouse flush and the PostgreSQL incident/outbox transaction; transient failures return 503 for exporter retry. The existing verify folder reads logs through the same API. For an existing database, stop ingestion, migrate clickhouse up, then migrate clickhouse backfill before restarting.",
             "method": "POST",
             "header": [
               {
@@ -1235,7 +1239,7 @@
         },
         {
           "name": "Live stream: SSE connection",
-          "description": "Keeps an authenticated SSE connection open. The server admits at most 256 concurrent streams and returns 503 STREAM_LIMIT when full.",
+          "description": "Manual SSE check. Set runLiveStream=true to enable; it is skipped in normal collection runs. Sends the access JWT, project and staging environment. The connection expires with its JWT, rechecks account/membership every 15s (2s check timeout), and bounds each frame write to 5s. Revoked access or a failed check closes it. At most 256 streams per process; live delivery is best effort and local to that process.",
           "request": {
             "method": "GET",
             "header": [
@@ -1250,6 +1254,10 @@
               {
                 "key": "Accept",
                 "value": "text/event-stream"
+              },
+              {
+                "key": "X-Environment",
+                "value": "staging"
               }
             ],
             "url": {
@@ -1266,6 +1274,15 @@
             }
           },
           "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.variables.get('runLiveStream') !== 'true') { pm.execution.skipRequest(); }"
+                ]
+              }
+            },
             {
               "listen": "test",
               "script": {
@@ -1665,6 +1682,96 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('status is 401', function () { pm.response.to.have.status(401); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Live stream with a session marker -> 401",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer session"
+              },
+              {
+                "key": "X-Project-ID",
+                "value": "{{projectId}}"
+              },
+              {
+                "key": "Accept",
+                "value": "text/event-stream"
+              },
+              {
+                "key": "X-Environment",
+                "value": "staging"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/live/stream",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "live",
+                "stream"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 401', function () { pm.response.to.have.status(401); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Live stream without a project -> 400",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "Accept",
+                "value": "text/event-stream"
+              },
+              {
+                "key": "X-Environment",
+                "value": "staging"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/live/stream",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "live",
+                "stream"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400', function () { pm.response.to.have.status(400); });"
                 ]
               }
             }

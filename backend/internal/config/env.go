@@ -1,7 +1,7 @@
 package config
 
 import (
-	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -14,27 +14,28 @@ import (
 )
 
 var (
-	durationType = reflect.TypeOf(time.Duration(0))
-	logLevelType = reflect.TypeOf(slog.Level(0))
+	durationType = reflect.TypeFor[time.Duration]()
+	logLevelType = reflect.TypeFor[slog.Level]()
 )
 
-// readEnvironmentFile reads only backend/.env. The Go command can be launched
-// from either the repository root or the backend module directory.
+// readEnvironmentFile reads backend/.env from the repository root
+// or the backend module directory.
 func readEnvironmentFile() (map[string]string, error) {
 	workingDirectory, err := os.Getwd()
 	if err != nil {
-		slog.Error("failed to locate working directory for environment file", "error", err)
-		return nil, errors.New("locate backend environment file: " + err.Error())
+		return nil, fmt.Errorf("get working directory: %w", err)
 	}
 
-	backendDirectory := filepath.Join(workingDirectory, "backend")
-	if hasGoModule(backendDirectory) {
-		return readEnvironmentFileAt(filepath.Join(backendDirectory, ".env"))
+	directory := filepath.Join(workingDirectory, "backend")
+	if filepath.Base(workingDirectory) == "backend" {
+		directory = workingDirectory
 	}
-	if filepath.Base(workingDirectory) == "backend" && hasGoModule(workingDirectory) {
-		return readEnvironmentFileAt(filepath.Join(workingDirectory, ".env"))
+
+	if !hasGoModule(directory) {
+		return nil, nil
 	}
-	return nil, nil
+
+	return readEnvironmentFileAt(filepath.Join(directory, ".env"))
 }
 
 func hasGoModule(directory string) bool {
@@ -52,11 +53,10 @@ func readEnvironmentFileAt(path string) (map[string]string, error) {
 	}
 
 	slog.Error("failed to read environment file", "path", path, "error", err)
-	return nil, errors.New("read environment file \"" + path + "\": invalid or unreadable file")
+	return nil, fmt.Errorf("read environment file %q: invalid or unreadable file", path)
 }
 
-// environmentValue resolves a configuration value.
-// OS environment variables take precedence over file values.
+// environmentValue prioritizes OS environment variables over .env.
 func environmentValue(name string, fileValues map[string]string) (string, bool) {
 	if value, exists := os.LookupEnv(name); exists {
 		return value, true
@@ -66,40 +66,19 @@ func environmentValue(name string, fileValues map[string]string) (string, bool) 
 	return value, exists
 }
 
-// applyEnvironment binds environment variables to configuration fields.
+// applyEnvironment binds environment values to Config.
 func applyEnvironment(configuration *Config, fileValues map[string]string) error {
 	if configuration == nil {
-		slog.Error("configuration must not be nil")
-		return errors.New("configuration must not be nil")
+		return fmt.Errorf("configuration must not be nil")
 	}
 
-	value := reflect.ValueOf(configuration)
-
-	if value.Kind() != reflect.Pointer || value.IsNil() {
-		slog.Error("configuration must be a non-nil pointer")
-		return errors.New("configuration must be a non-nil pointer")
-	}
-
-	value = value.Elem()
-
-	if value.Kind() != reflect.Struct {
-		slog.Error("configuration must point to a struct")
-		return errors.New("configuration must point to a struct")
-	}
-
-	return bindEnvironment(value, nil, fileValues)
+	return bindEnvironment(reflect.ValueOf(configuration).Elem(), nil, fileValues)
 }
 
-// bindEnvironment recursively binds configuration fields.
-func bindEnvironment(
-	value reflect.Value,
-	path []string,
-	fileValues map[string]string,
-) error {
+// bindEnvironment recursively binds exported configuration fields.
+func bindEnvironment(value reflect.Value, path []string, fileValues map[string]string) error {
 	if value.Kind() != reflect.Struct {
-		pathStr := strings.Join(path, ".")
-		slog.Error("expected struct at configuration path", "path", pathStr)
-		return errors.New("expected struct at " + pathStr)
+		return fmt.Errorf("expected struct at %s", strings.Join(path, "."))
 	}
 
 	valueType := value.Type()
@@ -108,40 +87,33 @@ func bindEnvironment(
 		field := value.Field(index)
 		fieldType := valueType.Field(index)
 
-		if fieldType.PkgPath != "" {
+		if !fieldType.IsExported() {
 			continue
 		}
 
-		configTag := fieldType.Tag.Get("config")
-		configName := strings.TrimSpace(strings.SplitN(configTag, ",", 2)[0])
-
+		configName := strings.TrimSpace(strings.SplitN(fieldType.Tag.Get("config"), ",", 2)[0])
 		if configName == "-" {
 			continue
 		}
-
 		if configName == "" {
 			configName = fieldType.Name
 		}
 
 		fieldPath := appendPath(path, configName)
 
-		if field.Kind() == reflect.Struct && field.Type() != durationType {
+		if field.Kind() == reflect.Struct {
 			if err := bindEnvironment(field, fieldPath, fileValues); err != nil {
 				return err
 			}
-
 			continue
 		}
 
 		environmentName := fieldType.Tag.Get("env")
-
 		if environmentName == "-" {
 			continue
 		}
-
 		if environmentName == "" {
-			environmentName = "TRACEPILOT_" +
-				strings.ToUpper(strings.Join(fieldPath, "_"))
+			environmentName = "TRACEPILOT_" + strings.ToUpper(strings.Join(fieldPath, "_"))
 		}
 
 		rawValue, exists := environmentValue(environmentName, fileValues)
@@ -150,94 +122,89 @@ func bindEnvironment(
 		}
 
 		if !field.CanSet() {
-			fieldStr := strings.Join(fieldPath, ".")
-			slog.Error("configuration field cannot be set", "field", fieldStr)
-			return errors.New("configuration field " + fieldStr + " cannot be set")
+			return fmt.Errorf("configuration field %s cannot be set", strings.Join(fieldPath, "."))
 		}
 
 		if err := setEnvironmentValue(field, rawValue); err != nil {
-			fieldStr := strings.Join(fieldPath, ".")
-			slog.Error("invalid configuration environment value", "field", fieldStr, "env", environmentName, "error", err)
-			return errors.New("invalid configuration " + fieldStr + " (environment variable " + environmentName + "): " + err.Error())
+			return fmt.Errorf(
+				"invalid configuration %s (environment variable %s): %w",
+				strings.Join(fieldPath, "."),
+				environmentName,
+				err,
+			)
 		}
 	}
 
 	return nil
 }
 
-// appendPath creates a new configuration path without modifying its parent.
+// appendPath creates a child path without modifying its parent.
 func appendPath(path []string, name string) []string {
 	result := make([]string, len(path), len(path)+1)
 	copy(result, path)
-
 	return append(result, name)
 }
 
-// setEnvironmentValue parses and assigns a configuration value.
+// setEnvironmentValue parses and assigns supported configuration types.
 func setEnvironmentValue(field reflect.Value, rawValue string) error {
 	fieldType := field.Type()
+	trimmed := strings.TrimSpace(rawValue)
 
 	switch {
 	case fieldType == durationType:
-		value, err := time.ParseDuration(strings.TrimSpace(rawValue))
+		value, err := time.ParseDuration(trimmed)
 		if err != nil {
-			return errors.New("must be a valid duration: " + err.Error())
+			return fmt.Errorf("invalid duration: %w", err)
 		}
-
 		field.SetInt(int64(value))
 
 	case fieldType == logLevelType:
-		var value slog.Level
-
-		if err := value.UnmarshalText(
-			[]byte(strings.ToUpper(strings.TrimSpace(rawValue))),
-		); err != nil {
-			return errors.New("must be debug, info, warn, or error: " + err.Error())
+		var level slog.Level
+		if err := level.UnmarshalText([]byte(strings.ToUpper(trimmed))); err != nil {
+			return fmt.Errorf("invalid log level: %w", err)
 		}
-
-		field.SetInt(int64(value))
+		field.SetInt(int64(level))
 
 	case field.Kind() == reflect.String:
 		field.SetString(rawValue)
 
 	case field.Kind() == reflect.Bool:
-		value, err := strconv.ParseBool(strings.TrimSpace(rawValue))
+		value, err := strconv.ParseBool(trimmed)
 		if err != nil {
-			return errors.New("must be a valid boolean: " + err.Error())
+			return fmt.Errorf("invalid boolean: %w", err)
 		}
-
 		field.SetBool(value)
 
 	case isIntegerKind(field.Kind()):
-		value, err := strconv.ParseInt(
-			strings.TrimSpace(rawValue),
-			10,
-			fieldType.Bits(),
-		)
+		value, err := strconv.ParseInt(trimmed, 10, fieldType.Bits())
 		if err != nil {
-			return errors.New("must be a valid integer: " + err.Error())
+			return fmt.Errorf("invalid integer: %w", err)
 		}
-
 		field.SetInt(value)
 
-	case field.Kind() == reflect.Slice &&
-		fieldType.Elem().Kind() == reflect.String:
+	case field.Kind() == reflect.Slice && fieldType.Elem().Kind() == reflect.String:
+		values := parseStringSlice(rawValue)
+		slice := reflect.MakeSlice(fieldType, 0, len(values))
 
-		field.Set(reflect.ValueOf(parseStringSlice(rawValue)))
+		for _, value := range values {
+			element := reflect.ValueOf(value).Convert(fieldType.Elem())
+			slice = reflect.Append(slice, element)
+		}
+
+		field.Set(slice)
 
 	default:
-		return errors.New("unsupported configuration type " + fieldType.String())
+		return fmt.Errorf("unsupported configuration type %s", fieldType)
 	}
 
 	return nil
 }
 
-// isIntegerKind reports whether the kind is a signed integer type.
 func isIntegerKind(kind reflect.Kind) bool {
 	return kind >= reflect.Int && kind <= reflect.Int64
 }
 
-// parseStringSlice parses a comma-separated string.
+// parseStringSlice parses comma-separated values.
 func parseStringSlice(rawValue string) []string {
 	if strings.TrimSpace(rawValue) == "" {
 		return []string{}

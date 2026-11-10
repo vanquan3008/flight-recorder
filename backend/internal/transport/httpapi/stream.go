@@ -149,13 +149,20 @@ func (server *Server) streamLiveTelemetry(responseWriter http.ResponseWriter, re
 		writeAPIError(responseWriter, http.StatusInternalServerError, "STREAMING_UNSUPPORTED", "streaming is not supported")
 		return
 	}
+	send := func(frame string) bool {
+		if request.Context().Err() != nil || controller.SetWriteDeadline(time.Now().Add(5*time.Second)) != nil {
+			return false
+		}
+		_, err := fmt.Fprint(responseWriter, frame)
+		return err == nil && controller.Flush() == nil
+	}
 
 	responseWriter.Header().Set("Content-Type", "text/event-stream")
 	responseWriter.Header().Set("Cache-Control", "no-cache, no-transform")
 	responseWriter.Header().Set("Connection", "keep-alive")
 	responseWriter.Header().Set("X-Accel-Buffering", "no")
 
-	if _, err := fmt.Fprint(responseWriter, "event: connected\ndata: {}\n\n"); err != nil || controller.Flush() != nil {
+	if !send("event: connected\ndata: {}\n\n") {
 		return
 	}
 
@@ -172,11 +179,11 @@ func (server *Server) streamLiveTelemetry(responseWriter http.ResponseWriter, re
 			if err != nil {
 				continue
 			}
-			if _, err := fmt.Fprintf(responseWriter, "data: %s\n\n", data); err != nil || controller.Flush() != nil {
+			if !send(fmt.Sprintf("data: %s\n\n", data)) {
 				return
 			}
 		case <-ticker.C:
-			if _, err := fmt.Fprint(responseWriter, ": ping\n\n"); err != nil || controller.Flush() != nil {
+			if !send(": ping\n\n") {
 				return
 			}
 		case <-request.Context().Done():

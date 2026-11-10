@@ -215,7 +215,7 @@ Mã nguồn được tổ chức chặt chẽ theo các ranh giới kiến trúc
 │       ├── app/                 # Shell ứng dụng, router, xác thực phiên
 │       ├── features/            # Các trang chức năng (overview, traces, logs, topology, settings...)
 │       ├── shared/              # Thành phần dùng chung (navigation, paged table, graph layout...)
-│       └── styles/              # Base, components, Tailwind CSS và responsive styles
+│       └── styles/              # Chỉ base/theme Tailwind và font tự host
 └── docs/                        # FLOW, diagrams.html và bộ kiểm tra Postman
 ```
 
@@ -363,11 +363,27 @@ go -C backend test -run '^$' -bench SpanRollup -benchtime=1s -benchmem ./interna
 
 **PostgreSQL (SQL-first).** Schema là `backend/db/migrations` (golang-migrate); truy vấn viết trong `backend/db/queries/<chức năng>.sql` (`@tên`, `sqlc.narg(tên)`), `sqlc` kiểm với schema rồi sinh hàm Go có kiểu qua pgx. `make sqlc-check` chạy sinh lại, so sánh với bản đã commit và `sqlc vet` (luật trong `sqlc.yaml`: `UPDATE`/`DELETE` phải có `WHERE`). Không truyền chuỗi SQL vào `Exec/Query` trong Go: architecture test báo lỗi, trừ các ngoại lệ có lý do trong `storage_sql_test.go` (DDL partition cần tên bảng, savepoint, dọn partition mặc định). Bảng của golang-migrate (`schema_migrations`) khai báo riêng cho sqlc ở `db/external/`. Tham số phải đặt tên rõ (`@tên::kiểu`): đừng để tham số nằm trong biểu thức như `@a::timestamptz - interval '1 hour'`, vì sqlc sẽ tự đặt một tham số phụ mà Go không gán; test `TestSqlcParametersAreNamed` bắt lỗi này. Không sửa code sinh ra bằng tay. ClickHouse dùng schema nhúng tại `internal/storage/clickhouse/schema.sql` và HTTP với tham số có kiểu; không đi qua sqlc PostgreSQL.
 
-**Giao diện.** Font Inter và JetBrains Mono được tự host qua `@fontsource-variable` (`frontend/src/styles/fonts.css`, chỉ subset latin, latin-ext, vietnamese); không dùng CDN vì CSP chỉ cho `'self'`. Kiểu glass: token `--glass*` và `--mesh` ở `base.css`, quy tắc ở `glass.css`; chỉ bề mặt cấp cao nhất làm mờ nền, và tự chuyển sang nền đặc khi thiếu `backdrop-filter` hoặc người dùng bật giảm độ trong suốt.
+**Giao diện.** Font Inter và JetBrains Mono được tự host qua `@fontsource-variable` (`frontend/src/styles/fonts.css`, chỉ subset latin, latin-ext, vietnamese); không dùng CDN vì CSP chỉ cho `'self'`. Frontend chỉ còn hai file CSS: `base.css` cho Tailwind, token/theme, reset trong `@layer base`, keyframe và các tùy chọn accessibility; `fonts.css` cho font tự host. Bố cục, responsive, component và SVG dùng Tailwind ngay trong JSX. Các mẫu nút/toolbar dùng lại ở `shared/ui/styles.ts`, form Settings ở `features/settings/form-styles.ts`. Bề mặt glass tự chuyển sang nền đặc khi thiếu blur hoặc người dùng giảm độ trong suốt. Animation đăng nhập dùng CSS/SVG, không thêm thư viện hay vòng lặp JavaScript và tắt khi bật reduced motion.
+
+Style component dùng utility class Tailwind; không thêm CSS riêng theo màn hình hoặc lớp override toàn cục. Dropdown project/environment nổi phía trên nội dung, đồng bộ sáng/tối, có dấu mục đang chọn và hỗ trợ phím mũi tên, Home/End, gõ tên, Enter, Esc và Tab. Scope chỉ đổi khi xác nhận mục; bấm ra ngoài đóng danh sách. Scope nằm trên URL; điều hướng giữ khung thời gian, còn link drill-down `from/to` giữ nguyên khoảng tuyệt đối. Bảng tải thêm chủ động và giới hạn 20 trang/truy vấn; thu hẹp filter để xem tiếp. Waterfall giữ tối đa 5.000 span, render các dòng trong viewport ngay từ đầu và mở inspector riêng để tránh chồng nội dung. Timestamp hiển thị millisecond và timezone của trình duyệt. Count của Overview là số bản ghi đã tải, không phải tổng incident/trace; trạng thái request dựa thêm vào thống kê performance toàn cửa sổ.
+
+Trace detail đặt operation và trạng thái request ở đầu trang, gom thời gian theo service thành dải tóm tắt; service map chỉ mở khi cần. Waterfall hỗ trợ tìm operation/service/span ID và lọc lỗi kể cả trong nhánh đã thu gọn. Chọn span mở inspector bên phải trên desktop, phía dưới trên màn hình nhỏ; các tab hỗ trợ phím mũi tên, Home/End. Log liên quan nằm ngay dưới timeline, thu gọn từng dòng và mở nội dung đầy đủ khi chọn. Ô lọc log chỉ tìm trong các log đã tải; dùng Log explorer để tìm trên server.
+
+Incident investigation có header tóm tắt và các tab Investigation, Occurrences, Linked telemetry, Status history. Trang chỉ tải incident/analysis ban đầu; tab dữ liệu tải khi được mở và dựng một trang 25 dòng. Evidence có số observed/baseline, tham chiếu từ giả thuyết và chi tiết đầy đủ; heuristic score không được trình bày như xác suất root cause.
+
+Live Tail dùng cùng JWT và scope với REST, giữ 100 event mới nhất và khử trùng với log lịch sử. Stream đóng khi JWT hết hạn, kiểm tra lại quyền mỗi 15 giây với deadline 2 giây, mỗi frame có deadline ghi 5 giây. Console tự kết nối lại; 4xx về quyền được hiển thị. Live Tail chỉ nhận broadcast của tiến trình đang giữ kết nối; cache ingest token cũng chưa đảm bảo thu hồi tức thì giữa các replica.
 
 **Postman.** Import `docs/tracepilot.postman_collection.json` (biến `baseUrl`, `otlpUrl` nằm trong file) và chạy thư mục 1 đến 6, hoặc `npx newman run docs/tracepilot.postman_collection.json`. Nó đăng ký tài khoản và project, tạo ingest token, gửi trace/log/metric, xác nhận không credential nào được lưu, và kiểm tra 401/403/413/429, vai trò thành viên, phiên đăng nhập cùng việc token bị thu hồi dừng ngay. Request "Bad token, repeat 65x" chặn cả địa chỉ gọi trong một phút, nên chạy riêng.
 
+Request SSE bỏ qua mặc định để Collection Runner không phải chờ stream dài. Đặt biến collection `runLiveStream=true` khi kiểm tra request này riêng; stream dùng environment `staging` của project được tạo trong collection. Hardening vẫn kiểm tra request stream với chuỗi `session` giả và thiếu project lần lượt trả 401/400.
+
 **Browser.** Với DB đã migrate, tài khoản development được seed và server đang chạy: `npm --prefix frontend exec playwright -- install chromium`, đặt `TRACEPILOT_E2E_BASE_URL` (và tùy chọn `TRACEPILOT_E2E_EMAIL` / `TRACEPILOT_E2E_PASSWORD`, mặc định là tài khoản admin do `tracepilot seed` tạo), rồi `npm --prefix frontend run test:e2e`.
+
+`frontend/e2e/beta-flow.spec.ts` dùng API giả lập, không cần database: chạy console, đặt `TRACEPILOT_E2E_BASE_URL` trỏ tới nó rồi chạy `npm --prefix frontend run test:e2e -- beta-flow.spec.ts`. Các test này kiểm tra scope/thời gian, SSE, waterfall 5.000 span và mobile ở hai theme; không thay thế E2E với backend thật hay đo tải production.
+
+`frontend/e2e/trace-workspace.spec.ts` cũng dùng API giả lập: `npm --prefix frontend run test:e2e -- trace-workspace.spec.ts`. Bộ này kiểm tra trace một span, inspector sáng/tối, lọc lỗi trong cây thu gọn, chuyển tab bằng bàn phím và log dài trên mobile.
+
+`frontend/e2e/incident-workspace.spec.ts` dùng API giả lập để kiểm tra lazy loading theo tab, cursor 25 dòng, đổi trạng thái, giá trị evidence nhỏ và layout sáng/tối/mobile. `beta-flow.spec.ts` còn kiểm tra layout các màn hình chính, form Settings, SVG và đăng nhập khi reduced motion được bật.
 
 ---
 

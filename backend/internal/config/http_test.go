@@ -30,8 +30,7 @@ func TestClientAddressUsesForwardedForOnlyBehindTrustedProxies(t *testing.T) {
 }
 
 func TestEmptyTrustedProxiesFromTheEnvironmentTemplateTrustsNoOne(t *testing.T) {
-	clearConfigEnvironment(t)
-	t.Setenv("TRACEPILOT_DATABASE_URL", "postgres://test")
+	setTestEnvironment(t)
 	t.Setenv("TRACEPILOT_HTTP_TRUSTED_PROXIES", "")
 	configuration, loadError := Load()
 	if loadError != nil {
@@ -43,8 +42,7 @@ func TestEmptyTrustedProxiesFromTheEnvironmentTemplateTrustsNoOne(t *testing.T) 
 }
 
 func TestTrustedProxiesAreReadFromTheEnvironment(t *testing.T) {
-	clearConfigEnvironment(t)
-	t.Setenv("TRACEPILOT_DATABASE_URL", "postgres://test")
+	setTestEnvironment(t)
 	t.Setenv("TRACEPILOT_HTTP_TRUSTED_PROXIES", "10.0.0.0/8, 192.0.2.7")
 	configuration, loadError := Load()
 	if loadError != nil {

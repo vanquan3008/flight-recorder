@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS tracepilot_logs (
     INDEX body_search body TYPE ngrambf_v1(3, 32768, 3, 0) GRANULARITY 4
 )
 ENGINE = ReplacingMergeTree
-PARTITION BY toStartOfWeek(occurred_at, 1, 'UTC')
+PARTITION BY __PARTITION__
 -- Keep the identity key stable across PostgreSQL microsecond backfill and OTLP nanosecond retries.
 ORDER BY (project_id, environment_id, service_name, toStartOfMillisecond(occurred_at), event_id)
 __TTL__

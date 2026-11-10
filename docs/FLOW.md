@@ -4,19 +4,24 @@ Mô tả các luồng chính của hệ thống. Sơ đồ tương ứng ở [di
 (mở bằng trình duyệt, cần mạng để tải thư viện vẽ). Số trong ngoặc `[n]` là số sơ đồ.
 
 Một ứng dụng Go (API quản trị + bộ thu OTLP + worker nền), PostgreSQL riêng,
-ClickHouse tùy chọn cho raw log và console React riêng.
+ClickHouse bắt buộc cho raw log và console React riêng.
 
 ## 1. Tổng quan [1]
 
 - Ứng dụng của bạn gửi OTLP (gRPC `:4317`, HTTP `:4318`) kèm **ingest token**.
 - Bộ thu xác thực, chuẩn hóa, đưa vào **pipeline** có giới hạn; pipeline ghi batch
-  theo scope. Trace/metric vào PostgreSQL, raw log vào ClickHouse khi cấu hình URL;
-  URL trống giữ cách lưu PostgreSQL cũ.
+  theo scope. Trace/metric vào PostgreSQL, 100% raw log vào ClickHouse (kho bắt buộc cho log storage).
 - Log thường chỉ ghi ClickHouse; log gây incident giữ envelope lỗi gọn trong PostgreSQL.
   Incident/evidence/occurrence và outbox vẫn commit cùng transaction PostgreSQL.
   ACK chờ ClickHouse flush và mọi transaction PostgreSQL cần thiết thành công.
 - Worker nền: phát hiện bất thường mỗi phút, gửi webhook, tạo partition, dọn dữ liệu hết hạn.
 - Người dùng vào **console**, console gọi REST `/api/v1` (`:8080`) bằng access token.
+- Console giữ project/environment trên URL và gửi chúng bằng `X-Project-ID`/`X-Environment`.
+  Dropdown nổi dùng chung cho Project/Environment: điều hướng bằng bàn phím hoặc con trỏ,
+  chỉ xác nhận mới đổi scope; Esc, Tab hoặc bấm bên ngoài đóng danh sách. Menu bám nút và giới hạn trong viewport.
+  Chuyển scope xóa query cache và dựng lại trang; buffer Live Tail của scope cũ không được giữ lại.
+  Liên kết giữa các trang giữ scope. Điều hướng các mục giữ khung thời gian; drill-down có
+  `from/to` dùng nguyên khoảng tuyệt đối, kể cả sau khi tìm kiếm hoặc bấm Back.
 
 ## 2. Khởi động và tắt [2]
 
@@ -27,7 +32,7 @@ Khởi động theo thứ tự, bước nào lỗi thì thoát với mã 1:
    thì cấu hình sai ngay từ bước 1).
 3. Kiểm tra schema đúng version (`CurrentVersion = 3`, không dirty). Server **không tự migrate**:
    chạy `tracepilot migrate up` riêng.
-4. Mở pool; nếu bật ClickHouse, kiểm tra schema tuần UTC đã được migrate riêng
+4. Mở pool; ClickHouse là kho bắt buộc cho log, kiểm tra schema partition (ngày, tháng, năm hoặc tuần) đã được migrate riêng
    (`migrate clickhouse up`). Tạo partition PostgreSQL ngày và project/environment mặc định.
    Readiness kiểm tra cả hai kho; không tự fallback khi ClickHouse hỏng.
 5. Dựng replay (nếu bật), metrics, hai pipeline (events, metrics), bộ thu OTLP, API.
@@ -52,6 +57,7 @@ events và pipeline metrics drain lần lượt trong `shutdown_timeout` (15s). 
 - **Đổi mật khẩu / khóa tài khoản:** đặt `tokens_valid_after`, xóa các phiên khác, nên access token
   cấp trước đó mất hiệu lực ngay. Tài khoản do admin tạo có mật khẩu tạm: chỉ gọi được
   `/auth/me` và `/auth/password` cho tới khi đổi.
+- Token mới sau đổi mật khẩu dùng cùng issuer, audience và TTL đã cấu hình như đăng nhập/refresh.
 
 ## 4. Xác thực và phân quyền một request API [4]
 
@@ -85,7 +91,7 @@ Router kiểm theo **scope** mà bảng route khai báo; handler không tự ki�
 5. Lấy slot xử lý (hết slot → 503), giải mã (giới hạn cả body nén và giải nén), chuẩn hóa, che key
    nhạy cảm và pattern secret trong văn bản tự do. Record sai → đếm `rejected`, vẫn xử lý phần còn lại.
 6. Đưa vào pipeline: giới hạn số event và byte; đầy → 503 + `Retry-After`.
-7. Worker gom batch theo scope, dùng pipeline cũ. Khi bật ClickHouse, `application/logs.Persist`
+7. Worker gom batch theo scope, dùng pipeline cũ. `application/logs.Persist`
    ghi raw log bằng HTTP/gzip JSONEachRow (`async_insert=1`, `wait_for_async_insert=1`),
    rồi gọi `StoreEvents` cũ cho trace, `StoreLogIncidents` cho lỗi log. Hàm sau chỉ giữ
    envelope lỗi (attributes rỗng, không raw body/resource/scope attributes), gọi lại
@@ -97,8 +103,8 @@ Router kiểm theo **scope** mà bảng route khai báo; handler không tự ki�
    Storage tạm lỗi → 503/Unavailable. Event có nội dung không thể lưu → chia đôi batch
    tách record hỏng, phần còn lại commit và trả partial success.
 
-API ListLogs/GetLog và số đếm log trong TelemetryQuality đọc cùng kho đang được cấu hình,
-giữ project/environment, filter, cursor và correlation trace/span cũ. Không trộn hai kho khi phân trang.
+API ListLogs/GetLog và số đếm log trong TelemetryQuality đọc trực tiếp từ ClickHouse,
+giữ project/environment, filter, cursor và correlation trace/span. Không trộn hai kho khi phân trang.
 Chuyển dữ liệu cũ: dừng ingest/drain → `migrate clickhouse up` → `migrate clickhouse backfill`
 → khởi động mọi replica với cùng cấu hình → mở ingest. Backfill có thể chạy lại, không xóa log PG.
 
@@ -110,6 +116,14 @@ Chuyển dữ liệu cũ: dừng ingest/drain → `migrate clickhouse up` → `m
   mỗi lần ghi lịch sử kèm người thực hiện.
 - `RESOLVED` mà có occurrence mới hơn lúc resolve (trong cửa sổ dedup 1 giờ) → tự mở lại, người thực hiện
   là `system`, phát webhook `incident.opened` với `reopened: true`. `IGNORED` không tự mở lại.
+- Console mở trang incident bằng hai truy vấn: thông tin incident và analysis. Header giữ trạng thái,
+  severity, service, tổng occurrence và first/last seen. Investigation, Occurrences, Linked telemetry và
+  Status history là các tab hỗ trợ bàn phím, giữ tab trên URL. Ba tab dữ liệu chỉ gọi API khi được mở;
+  cursor tải 25 bản ghi/trang, chỉ dựng trang đang xem và giữ tối đa 20 trang đã tải trong cache.
+  Analysis hiển thị tối đa 3 giả thuyết, 8 evidence và 8 quan hệ mỗi trang. Score là heuristic, không phải
+  xác suất hay kết luận root cause. Chọn giả thuyết lọc evidence theo ID; số liệu gốc, series, ID và toàn bộ
+  trace link vẫn mở được trong chi tiết. Đổi trạng thái thành công cập nhật header và làm mới lịch sử;
+  thất bại giữ trạng thái cũ và các tab vẫn dùng được.
 
 ## 7. Phát hiện bất thường và RCA [7]
 
@@ -140,8 +154,10 @@ snapshot với summary, nên không cần chờ backfill và không thêm cờ c
 
 Owner tạo token (tên duy nhất trong project, mặc định hết hạn sau 1 năm, tối đa 3 năm). JWT chỉ hiện **một lần**;
 DB chỉ lưu dòng metadata. Token được ký bằng khóa riêng biệt `INGEST_JWT_SECRET` (hoặc fallback `JWT_SECRET` nếu chưa cấu hình).
-Dùng token: bộ thu tra dòng đó qua cache bộ nhớ (30s); khi chủ project thu hồi token qua API, cache xóa ngay lập tức
-nên **thu hồi có hiệu lực ngay**. Tách riêng khóa ký giúp xoay khóa tài khoản người dùng mà không gián đoạn OTLP ingestion của máy móc.
+Dùng token: bộ thu tra dòng đó qua cache với TTL cấu hình; khi chủ project thu hồi token qua API,
+cache local của tiến trình xử lý yêu cầu và entry shared cache được xóa. Replica khác có thể còn
+giữ entry local tới khi hết TTL; chưa cam kết thu hồi tức thì trên toàn cụm. Tách riêng khóa ký
+giúp xoay khóa tài khoản người dùng mà không gián đoạn OTLP ingestion của máy móc.
 
 ## 9. Webhook và outbox [9]
 
@@ -159,27 +175,44 @@ Retention dọn event/span/log và xóa bucket summary trước cutoff (kéo the
 transaction; lỗi bất kỳ thì rollback cả telemetry và summary. Phần phút còn
 span sống sót được đọc từ dữ liệu gốc cho tới khi có ingest mới đánh dấu cần tổng hợp lại.
 
-ClickHouse raw log chia tuần từ thứ Hai UTC bằng `toStartOfWeek(occurred_at, 1, 'UTC')`.
+ClickHouse raw log hỗ trợ cấu hình phân vùng thời gian qua `TRACEPILOT_CLICKHOUSE_LOG_PARTITION`: ngày (`toYYYYMMDD`), tháng (`toYYYYMM`), năm (`toYear`), hoặc tuần (`toStartOfWeek`, mặc định).
 `ReplacingMergeTree` đọc `FINAL`, khóa scope/service + timestamp millisecond + event ID để
 log backfill từ PostgreSQL microsecond vẫn khử trùng với retry nanosecond; timestamp/cursor
 gốc giữ nanosecond. TTL lấy `RETENTION_MAX_AGE`, API luôn lọc tuổi log. `ttl_only_drop_parts=1`
-chỉ xóa part hết hạn toàn bộ nên vật lý có thể lưu thêm gần một tuần cộng độ trễ merge.
-Đổi TTL phải chạy `migrate clickhouse up`; startup/readiness từ chối schema hoặc TTL lệch.
+chỉ xóa part hết hạn toàn bộ nên vật lý có thể lưu thêm partition period cộng độ trễ merge.
+Đổi partition hoặc TTL phải chạy `migrate clickhouse up`; startup/readiness từ chối schema không hợp lệ.
 
 ## 11. Telemetry streaming thời gian thực (SSE) và tối ưu Waterfall
 
 - **Live Streaming qua SSE:** Tuyến `GET /api/v1/live/stream` (scope `read`) mở kênh Server-Sent Events (SSE)
   truyền trực tiếp log mới và sự cố phát sinh sau khi mọi bước persist của batch thành công. Stream chạy qua bộ nhớ
   `StreamHub` độc lập, không chiếm slot truy vấn bounded concurrency (`admitQuery`), có giới hạn 256 kết nối đồng thời
-  và bỏ write deadline riêng cho stream để không bị ngắt sau 30 giây.
-  Console cung cấp chế độ **Live Tail** trên trang Logs để theo dõi dòng log trực tiếp theo thời gian thực.
+  và dùng deadline ghi 5 giây cho từng frame để client chậm không giữ tài nguyên vô hạn.
+  Stream kết thúc khi JWT hết hạn; mỗi 15 giây kiểm tra tài khoản và membership trực tiếp ở PostgreSQL,
+  không dùng role cache, với deadline kiểm tra 2 giây. Lỗi kiểm tra hoặc quyền bị thu hồi đóng stream.
+  Console dùng chung API client cho JSON và SSE (JWT thật, API origin, project/environment, refresh token).
+  Lỗi quyền 4xx được hiển thị; lỗi tạm kết nối lại với backoff tối đa 15 giây. Live Tail giữ tối đa
+  100 event mới, áp dụng service/severity/body/trace/span filter và khử trùng với kết quả lịch sử.
 - **Tối ưu hóa Trace Waterfall:** Cây span được ảo hóa hiển thị (`useVirtualList` zero-dependency); với các trace
   phức tạp có hàng nghìn span, trình duyệt chỉ render các phần tử trong khung cuộn (viewport) kèm vùng đệm, giữ
-  cho DOM nhẹ và mượt mà mà không làm đứt đoạn trục thời gian.
+  cho DOM nhẹ ngay từ lần render đầu. Dòng có chiều cao cố định; inspector chi tiết nằm ngoài danh sách
+  nên attributes hoặc stack trace dài không chồng lên span khác. Console tải tối đa 5.000 span/trace
+  và thông báo rõ khi bị cắt. Đóng inspector trả focus về nút đã mở nó.
+- **Điều tra trace:** Header hiển thị operation, trạng thái và bốn chỉ số; dải request flow tóm tắt self-time
+  theo service, service map mở theo yêu cầu. Tìm operation/service/span ID và lọc lỗi trên toàn bộ span đã tải,
+  kể cả các nhánh đang thu gọn. Chọn span mở inspector bên phải trên desktop, xếp dưới trên màn hình nhỏ;
+  Attributes/Resource/Events/Raw chuyển bằng click hoặc phím mũi tên, Home/End. Log liên quan nằm dưới
+  timeline; mỗi dòng mở nội dung đầy đủ và sao chép khi cần. Bộ lọc log cục bộ chỉ tìm các log đã tải,
+  còn Log explorer truy vấn server với trace/span và khoảng thời gian được giữ lại.
+- **Explorer và Overview:** bảng cursor tải thêm theo thao tác người dùng, tối đa 20 trang cho mỗi truy vấn;
+  chạm giới hạn thì yêu cầu thu hẹp bộ lọc. Timestamp hiển thị millisecond và timezone local.
+  Overview ghi rõ count thuộc trang đã tải; tín hiệu lỗi tổng lấy từ performance trong cùng cửa sổ.
+  Trang incident chưa đầy đủ hoặc traffic chưa có kết quả không được suy diễn thành trạng thái toàn hệ thống bình thường.
 
 ## 12. Giới hạn đã biết
 
 - Rate limit tính theo từng tiến trình; nhiều replica thì đặt thêm ở reverse proxy.
+- Live Tail là best effort từ bộ nhớ của tiến trình đang phục vụ kết nối; chưa fan-out giữa replica.
 - Ngân sách byte của queue là ước lượng, không phải giới hạn RSS (gRPC giải mã trước khi vào hàng đợi).
 - Chưa có SSO/MFA, đặt lại mật khẩu qua email, xóa project/environment.
 - Chưa đo tải/SLO production; test tích hợp PostgreSQL cần database dùng một lần (`TRACEPILOT_INTEGRATION_TEST=1`),

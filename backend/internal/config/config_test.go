@@ -9,107 +9,8 @@ import (
 	"time"
 )
 
-var configEnvironment = []string{
-	"TRACEPILOT_CLICKHOUSE_URL",
-	"TRACEPILOT_CLICKHOUSE_DATABASE",
-	"TRACEPILOT_CLICKHOUSE_USERNAME",
-	"TRACEPILOT_CLICKHOUSE_PASSWORD",
-	"TRACEPILOT_CLICKHOUSE_REQUEST_TIMEOUT",
-	"TRACEPILOT_CLICKHOUSE_MAX_CONNECTIONS",
-	"TRACEPILOT_CONFIG_FILE",
-	"TRACEPILOT_HTTP_ADDRESS",
-	"TRACEPILOT_HTTP_ALLOWED_ORIGINS",
-	"TRACEPILOT_HTTP_TRUSTED_PROXIES",
-	"TRACEPILOT_HTTP_MAX_CONCURRENT_QUERIES",
-	"TRACEPILOT_HTTP_REQUEST_TIMEOUT",
-	"TRACEPILOT_HTTP_READ_HEADER_TIMEOUT",
-	"TRACEPILOT_HTTP_READ_TIMEOUT",
-	"TRACEPILOT_HTTP_WRITE_TIMEOUT",
-	"TRACEPILOT_HTTP_IDLE_TIMEOUT",
-	"TRACEPILOT_HTTP_MAX_HEADER_BYTES",
-	"TRACEPILOT_HTTP_MANAGEMENT_MAX_BODY_BYTES",
-	"TRACEPILOT_HTTP_RATE_LIMIT_REQUESTS",
-	"TRACEPILOT_HTTP_RATE_LIMIT_WINDOW",
-	"TRACEPILOT_HTTP_RATE_LIMIT_AUTH_REQUESTS",
-	"TRACEPILOT_HTTP_RATE_LIMIT_REPLAY_REQUESTS",
-	"TRACEPILOT_INGESTION_GRPC_ADDRESS",
-	"TRACEPILOT_INGESTION_HTTP_ADDRESS",
-	"TRACEPILOT_INGESTION_PROJECT_ID",
-	"TRACEPILOT_INGESTION_PROJECT_SLUG",
-	"TRACEPILOT_INGESTION_PROJECT_NAME",
-	"TRACEPILOT_INGESTION_ENVIRONMENT_ID",
-	"TRACEPILOT_INGESTION_ENVIRONMENT_NAME",
-	"TRACEPILOT_INGESTION_MAX_REQUEST_BYTES",
-	"TRACEPILOT_INGESTION_MAX_RECORDS_PER_REQUEST",
-	"TRACEPILOT_INGESTION_MAX_ATTRIBUTES_PER_RECORD",
-	"TRACEPILOT_INGESTION_MAX_ATTRIBUTE_VALUE_BYTES",
-	"TRACEPILOT_INGESTION_MAX_ATTRIBUTE_DEPTH",
-	"TRACEPILOT_INGESTION_QUEUE_SIZE",
-	"TRACEPILOT_INGESTION_QUEUE_MAX_BYTES",
-	"TRACEPILOT_INGESTION_ENQUEUE_TIMEOUT",
-	"TRACEPILOT_INGESTION_BATCH_SIZE",
-	"TRACEPILOT_INGESTION_BATCH_TIMEOUT",
-	"TRACEPILOT_INGESTION_FLUSH_INTERVAL",
-	"TRACEPILOT_INGESTION_WORKERS",
-	"TRACEPILOT_INGESTION_REDACTED_KEYS",
-	"TRACEPILOT_SHUTDOWN_TIMEOUT",
-	"TRACEPILOT_LOG_LEVEL",
-	"TRACEPILOT_DATABASE_URL",
-	"TRACEPILOT_DATABASE_MAX_CONNECTIONS",
-	"TRACEPILOT_DATABASE_MIN_CONNECTIONS",
-	"TRACEPILOT_DATABASE_MAX_CONNECTION_LIFETIME",
-	"TRACEPILOT_DATABASE_MAX_CONNECTION_IDLE_TIME",
-	"TRACEPILOT_DATABASE_HEALTH_CHECK_PERIOD",
-	"TRACEPILOT_DATABASE_READINESS_TIMEOUT",
-	"TRACEPILOT_MIGRATIONS_PATH",
-	"TRACEPILOT_AUTH_JWT_SECRET",
-	"TRACEPILOT_AUTH_INGEST_JWT_SECRET",
-	"TRACEPILOT_AUTH_ALLOW_REGISTRATION",
-	"TRACEPILOT_AUTH_ACCESS_TOKEN_TTL",
-	"TRACEPILOT_AUTH_REFRESH_TOKEN_TTL",
-	"TRACEPILOT_AUTH_COOKIE_DOMAIN",
-	"TRACEPILOT_AUTH_COOKIE_SAME_SITE",
-	"TRACEPILOT_AUTH_ISSUER",
-	"TRACEPILOT_AUTH_AUDIENCE",
-	"TRACEPILOT_CACHE_DRIVER",
-	"TRACEPILOT_CACHE_URL",
-	"TRACEPILOT_CACHE_ADDRESS",
-	"TRACEPILOT_CACHE_PASSWORD",
-	"TRACEPILOT_CACHE_DB",
-	"TRACEPILOT_CACHE_DEFAULT_TTL",
-	"TRACEPILOT_CACHE_DEFAULT_LIMIT",
-	"TRACEPILOT_CACHE_TOKEN_TTL",
-	"TRACEPILOT_CACHE_TOKEN_LIMIT",
-	"TRACEPILOT_CACHE_SCOPE_TTL",
-	"TRACEPILOT_CACHE_SCOPE_LIMIT",
-	"TRACEPILOT_CACHE_IDENTITY_TTL",
-	"TRACEPILOT_CACHE_IDENTITY_LIMIT",
-	"TRACEPILOT_PRODUCTION",
-	"TRACEPILOT_TLS_CERTIFICATE_FILE",
-	"TRACEPILOT_TLS_PRIVATE_KEY_FILE",
-	"TRACEPILOT_RETENTION_MAX_AGE",
-	"TRACEPILOT_RETENTION_INCIDENT_MAX_AGE",
-	"TRACEPILOT_RETENTION_AUDIT_MAX_AGE",
-	"TRACEPILOT_RETENTION_DELIVERY_MAX_AGE",
-	"TRACEPILOT_RETENTION_CHECK_INTERVAL",
-	"TRACEPILOT_RETENTION_BATCH_SIZE",
-	"TRACEPILOT_REPLAY_ENABLED",
-	"TRACEPILOT_NOTIFICATIONS_ENABLED",
-	"TRACEPILOT_WEBHOOK_ENCRYPTION_KEY",
-	"TRACEPILOT_WEBHOOK_POLL_INTERVAL",
-	"TRACEPILOT_WEBHOOK_REQUEST_TIMEOUT",
-	"TRACEPILOT_WEBHOOK_WORKERS",
-	"TRACEPILOT_REPLAY_ALLOWED_HOSTS",
-	"TRACEPILOT_REPLAY_ALLOW_PRIVATE",
-	"TRACEPILOT_REPLAY_TIMEOUT",
-	"TRACEPILOT_REPLAY_MAX_REQUEST_BYTES",
-	"TRACEPILOT_REPLAY_MAX_RESPONSE_BYTES",
-	"TRACEPILOT_REPLAY_MAX_CONCURRENT",
-}
-
 func TestNotificationsRequireValidEncryptionKeyWhenEnabled(t *testing.T) {
-	configuration := defaultConfig()
-	configuration.Database.URL = "postgres://test"
+	configuration := validConfig()
 	configuration.Notifications.Enabled = true
 	if err := configuration.Validate(); err == nil {
 		t.Fatal("enabled notifications accepted a missing key")
@@ -121,7 +22,7 @@ func TestNotificationsRequireValidEncryptionKeyWhenEnabled(t *testing.T) {
 }
 
 func TestLoadRateLimitEnvironmentOverrides(t *testing.T) {
-	clearConfigEnvironment(t)
+	setTestEnvironment(t)
 	t.Setenv("TRACEPILOT_DATABASE_URL", "postgres://environment")
 	t.Setenv("TRACEPILOT_HTTP_RATE_LIMIT_REQUESTS", "7")
 	t.Setenv("TRACEPILOT_HTTP_RATE_LIMIT_WINDOW", "30s")
@@ -137,7 +38,7 @@ func TestLoadRateLimitEnvironmentOverrides(t *testing.T) {
 }
 
 func TestLoadCachePoliciesFromEnvironment(t *testing.T) {
-	clearConfigEnvironment(t)
+	setTestEnvironment(t)
 	t.Setenv("TRACEPILOT_DATABASE_URL", "postgres://environment")
 	t.Setenv("TRACEPILOT_CACHE_TOKEN_TTL", "45s")
 	t.Setenv("TRACEPILOT_CACHE_TOKEN_LIMIT", "512")
@@ -159,8 +60,7 @@ func TestLoadCachePoliciesFromEnvironment(t *testing.T) {
 }
 
 func TestLoadRejectsInvalidConnectionBounds(t *testing.T) {
-	clearConfigEnvironment(t)
-	t.Setenv("TRACEPILOT_DATABASE_URL", "postgres://test")
+	setTestEnvironment(t)
 	t.Setenv("TRACEPILOT_DATABASE_MAX_CONNECTIONS", "2")
 	t.Setenv("TRACEPILOT_DATABASE_MIN_CONNECTIONS", "3")
 	if _, loadError := Load(); loadError == nil {
@@ -170,8 +70,17 @@ func TestLoadRejectsInvalidConnectionBounds(t *testing.T) {
 
 func TestLoadRequiresDatabaseURL(t *testing.T) {
 	clearConfigEnvironment(t)
+	t.Setenv("TRACEPILOT_CLICKHOUSE_URL", "http://localhost:8123")
 	if _, loadError := Load(); loadError == nil {
 		t.Fatal("expected missing database URL to fail")
+	}
+}
+
+func TestLoadRequiresClickHouseURL(t *testing.T) {
+	clearConfigEnvironment(t)
+	t.Setenv("TRACEPILOT_DATABASE_URL", "postgres://test")
+	if _, loadError := Load(); loadError == nil {
+		t.Fatal("expected missing ClickHouse URL to fail")
 	}
 }
 
@@ -186,6 +95,7 @@ func TestLoadReadsBackendEnvironmentFile(t *testing.T) {
 		t.Fatal(writeError)
 	}
 	contents := "TRACEPILOT_DATABASE_URL=postgres://repository\n" +
+		"TRACEPILOT_CLICKHOUSE_URL=http://repository-ch\n" +
 		"TRACEPILOT_HTTP_READ_TIMEOUT=9s\n" +
 		"TRACEPILOT_HTTP_ALLOWED_ORIGINS=https://one.example, https://two.example\n" +
 		"TRACEPILOT_MIGRATIONS_PATH=/opt/tracepilot/migrations\n"
@@ -201,6 +111,9 @@ func TestLoadReadsBackendEnvironmentFile(t *testing.T) {
 	if configuration.Database.URL != "postgres://repository" {
 		t.Fatalf("database URL = %q", configuration.Database.URL)
 	}
+	if configuration.ClickHouse.URL != "http://repository-ch" {
+		t.Fatalf("clickhouse URL = %q", configuration.ClickHouse.URL)
+	}
 	if configuration.HTTP.ReadTimeout != 9*time.Second || len(configuration.HTTP.AllowedOrigins) != 2 {
 		t.Fatalf("typed .env values were not loaded: %+v", configuration.HTTP)
 	}
@@ -210,8 +123,7 @@ func TestLoadReadsBackendEnvironmentFile(t *testing.T) {
 }
 
 func TestLoadAllowsDisabledRetention(t *testing.T) {
-	clearConfigEnvironment(t)
-	t.Setenv("TRACEPILOT_DATABASE_URL", "postgres://test")
+	setTestEnvironment(t)
 	t.Setenv("TRACEPILOT_RETENTION_MAX_AGE", "0s")
 	configuration, loadError := Load()
 	if loadError != nil {
@@ -223,8 +135,7 @@ func TestLoadAllowsDisabledRetention(t *testing.T) {
 }
 
 func TestRetentionDefaultsKeepTelemetryShorterThanHistory(t *testing.T) {
-	clearConfigEnvironment(t)
-	t.Setenv("TRACEPILOT_DATABASE_URL", "postgres://test")
+	setTestEnvironment(t)
 	configuration, loadError := Load()
 	if loadError != nil {
 		t.Fatal(loadError)
@@ -238,8 +149,7 @@ func TestRetentionDefaultsKeepTelemetryShorterThanHistory(t *testing.T) {
 
 func TestRetentionRejectsNegativeAges(t *testing.T) {
 	for _, name := range []string{"MAX_AGE", "INCIDENT_MAX_AGE", "AUDIT_MAX_AGE", "DELIVERY_MAX_AGE"} {
-		clearConfigEnvironment(t)
-		t.Setenv("TRACEPILOT_DATABASE_URL", "postgres://test")
+		setTestEnvironment(t)
 		t.Setenv("TRACEPILOT_RETENTION_"+name, "-1h")
 		if _, loadError := Load(); loadError == nil {
 			t.Fatalf("negative %s was accepted", name)
@@ -247,26 +157,8 @@ func TestRetentionRejectsNegativeAges(t *testing.T) {
 	}
 }
 
-func clearConfigEnvironment(t *testing.T) {
-	t.Helper()
-	for _, name := range configEnvironment {
-		originalValue, existed := os.LookupEnv(name)
-		if unsetError := os.Unsetenv(name); unsetError != nil {
-			t.Fatal(unsetError)
-		}
-		t.Cleanup(func() {
-			if existed {
-				_ = os.Setenv(name, originalValue)
-				return
-			}
-			_ = os.Unsetenv(name)
-		})
-	}
-}
-
 func TestAPIQueryLimitsHaveSafeDefaultsAndRejectBadValues(t *testing.T) {
-	clearConfigEnvironment(t)
-	t.Setenv("TRACEPILOT_DATABASE_URL", "postgres://test")
+	setTestEnvironment(t)
 	configuration, loadError := Load()
 	if loadError != nil {
 		t.Fatal(loadError)
@@ -279,8 +171,7 @@ func TestAPIQueryLimitsHaveSafeDefaultsAndRejectBadValues(t *testing.T) {
 		"TRACEPILOT_HTTP_REQUEST_TIMEOUT":        "0s",
 		"TRACEPILOT_HTTP_REQUEST_TIMEOUT ":       "45s", // longer than write_timeout: the client would see a closed connection
 	} {
-		clearConfigEnvironment(t)
-		t.Setenv("TRACEPILOT_DATABASE_URL", "postgres://test")
+		setTestEnvironment(t)
 		t.Setenv(strings.TrimSpace(name), value)
 		if _, loadError := Load(); loadError == nil {
 			t.Fatalf("%s=%s was accepted", name, value)
@@ -289,7 +180,7 @@ func TestAPIQueryLimitsHaveSafeDefaultsAndRejectBadValues(t *testing.T) {
 }
 
 func TestLoadAppliesDefaultsThenEnvironment(t *testing.T) {
-	clearConfigEnvironment(t)
+	setTestEnvironment(t)
 	t.Setenv("TRACEPILOT_DATABASE_URL", "postgres://environment")
 	t.Setenv("TRACEPILOT_HTTP_ADDRESS", ":9100")
 	t.Setenv("TRACEPILOT_DATABASE_MAX_CONNECTIONS", "8")
@@ -302,5 +193,27 @@ func TestLoadAppliesDefaultsThenEnvironment(t *testing.T) {
 	}
 	if configuration.HTTP.ReadTimeout != 15*time.Second {
 		t.Fatalf("a setting left unset must keep its default: %+v", configuration.HTTP)
+	}
+}
+
+func TestLoadClickHouseLogPartitionFromEnvironment(t *testing.T) {
+	for envVal, want := range map[string]LogPartition{
+		"daily":   LogPartitionDaily,
+		"monthly": LogPartitionMonthly,
+		"yearly":  LogPartitionYearly,
+		"weekly":  LogPartitionWeekly,
+		"":        "",
+	} {
+		setTestEnvironment(t)
+		if envVal != "" {
+			t.Setenv("TRACEPILOT_CLICKHOUSE_LOG_PARTITION", envVal)
+		}
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load with TRACEPILOT_CLICKHOUSE_LOG_PARTITION=%q failed: %v", envVal, err)
+		}
+		if cfg.ClickHouse.LogPartition != want {
+			t.Fatalf("got LogPartition=%q, want %q", cfg.ClickHouse.LogPartition, want)
+		}
 	}
 }

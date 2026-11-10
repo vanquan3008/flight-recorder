@@ -12,7 +12,7 @@ import (
 	ingestotlp "github.com/vanquan3008/tracepilot/internal/ingest/otlp"
 	"github.com/vanquan3008/tracepilot/internal/observability/logging"
 	"github.com/vanquan3008/tracepilot/internal/observability/metrics"
-	"github.com/vanquan3008/tracepilot/internal/storage/cache"
+	"github.com/vanquan3008/tracepilot/internal/cache"
 	"github.com/vanquan3008/tracepilot/internal/storage/migrations"
 	"github.com/vanquan3008/tracepilot/internal/storage/postgres"
 	"github.com/vanquan3008/tracepilot/internal/transport/httpapi"
