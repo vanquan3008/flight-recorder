@@ -1,3 +1,5 @@
+import { settingsFormClass } from "./form-styles";
+import { secondaryButtonClass } from "../../shared/ui/styles";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useState } from "react";
 import { useAuth } from "../../app/auth";
@@ -41,26 +43,26 @@ export function AccountsSection() {
   return <>
     {issued && <SecretNotice {...issued} onDismiss={() => setIssued(null)} />}
     <Panel title="Accounts" meta={`${accounts.length} loaded`}>
-      <form className="settings-form hook-form" onSubmit={submit}>
-        <h3 className="settings-form-title">New account</h3>
+      <form className={`settings-form ${settingsFormClass} hook-form min-[901px]:grid-cols-[minmax(180px,1fr)_minmax(220px,1.5fr)_auto]`} onSubmit={submit}>
+        <h3 className="settings-form-title col-span-full m-0 text-[11px] font-bold uppercase tracking-wider text-faint">New account</h3>
         <label>Email<input type="email" name="email" required maxLength={254} placeholder="person@company.com" /></label>
         <label>Display name<input name="name" required maxLength={100} placeholder="Full name" /></label>
-        <div className="settings-submit"><button type="submit" disabled={create.isPending}>{create.isPending ? "Creating…" : "Create account"}</button></div>
-        <label className="check settings-wide"><input type="checkbox" name="platform" /><span><b>Platform administrator</b> <small>Can create projects and accounts</small></span></label>
-        <p className="settings-hint">The person signs in with the temporary password shown once, then chooses their own.</p>
+        <div className="settings-submit flex items-end [&>button]:inline-flex [&>button]:items-center [&>button]:justify-center [&>button]:gap-1.5 [&>button]:whitespace-nowrap [&>button]:rounded-lg [&>button]:border [&>button]:border-btn-border [&>button]:bg-btn [&>button]:px-5.5 [&>button]:py-2 [&>button]:text-[13px] [&>button]:font-semibold [&>button]:text-btn-text [&>button:hover]:bg-btn-hover max-[900px]:[&>button]:w-full"><button type="submit" disabled={create.isPending}>{create.isPending ? "Creating…" : "Create account"}</button></div>
+        <label className="check relative inline-flex cursor-pointer [&>input]:absolute [&>input]:inset-0 [&>input]:size-full [&>input]:cursor-pointer [&>input]:opacity-0 [&>span]:inline-flex [&>span]:items-baseline [&>span]:gap-2 [&>span]:rounded-full [&>span]:border [&>span]:border-glass-field-edge [&>span]:bg-glass-field [&>span]:px-3.5 [&>span]:py-1.5 [&>span]:text-xs [&>span]:text-muted [&>input:checked+span]:border-accent [&>input:checked+span]:bg-accent/15 [&>input:focus-visible+span]:outline-2 [&>input:focus-visible+span]:outline-accent [&_b]:font-semibold [&_b]:text-text [&_small]:text-[11px] [&_small]:text-faint settings-wide col-span-full"><input type="checkbox" name="platform" /><span><b>Platform administrator</b> <small>Can create projects and accounts</small></span></label>
+        <p className="settings-hint col-span-full m-0 text-xs text-faint">The person signs in with the temporary password shown once, then chooses their own.</p>
       </form>
-      {failure && <p className="form-error" role="alert">{failure.message}</p>}
+      {failure && <p className="form-error mt-1.5 text-[12.5px] font-medium leading-relaxed text-danger-fg" role="alert">{failure.message}</p>}
       <PagedTable query={query} empty="No accounts." headers={["Person", "Status", "Last sign-in", "Created", "Actions"]}
         rows={accounts.map((account) => {
           const self = account.id === session?.user.id;
           return [
-            <span className="person"><span><b>{account.display_name}</b>{self && <small> (you)</small>}</span><small>{account.email}</small></span>,
-            <span className="scope-list">{account.disabled_at ? <Badge value="DISABLED" /> : <Badge value="ACTIVE" />}{account.platform_admin && <Badge value="ADMIN" />}{account.must_change_password && <Badge value="TEMP PASSWORD" />}</span>,
+            <span className="person grid gap-px [&_b]:font-semibold [&_small]:text-[11.5px] [&_small]:text-faint"><span><b>{account.display_name}</b>{self && <small> (you)</small>}</span><small>{account.email}</small></span>,
+            <span className="scope-list flex flex-wrap gap-1">{account.disabled_at ? <Badge value="DISABLED" /> : <Badge value="ACTIVE" />}{account.platform_admin && <Badge value="ADMIN" />}{account.must_change_password && <Badge value="TEMP PASSWORD" />}</span>,
             account.last_login_at ? formatTime(account.last_login_at) : "Never", formatTime(account.created_at),
-            self ? "—" : <span className="table-actions">
-              <button className="button-secondary" disabled={update.isPending} onClick={() => update.mutate({ id: account.id, platform_admin: !account.platform_admin })} aria-label={`${account.platform_admin ? "Demote" : "Grant admin"} ${account.email}`}>{account.platform_admin ? "Demote" : "Grant admin"}</button>
-              <button className="button-secondary" disabled={reset.isPending} onClick={() => reset.mutate(account)} aria-label={`Reset password of ${account.email}`}>Reset password</button>
-              <button className={account.disabled_at ? "button-secondary" : "button-danger"} disabled={update.isPending} onClick={() => update.mutate({ id: account.id, disabled: !account.disabled_at })} aria-label={`${account.disabled_at ? "Enable" : "Disable"} ${account.email}`}>{account.disabled_at ? "Enable" : "Disable"}</button>
+            self ? "—" : <span className="table-actions inline-flex flex-wrap items-center gap-1.5">
+              <button className={`button-secondary ${secondaryButtonClass}`} disabled={update.isPending} onClick={() => update.mutate({ id: account.id, platform_admin: !account.platform_admin })} aria-label={`${account.platform_admin ? "Demote" : "Grant admin"} ${account.email}`}>{account.platform_admin ? "Demote" : "Grant admin"}</button>
+              <button className={`button-secondary ${secondaryButtonClass}`} disabled={reset.isPending} onClick={() => reset.mutate(account)} aria-label={`Reset password of ${account.email}`}>Reset password</button>
+              <button className={account.disabled_at ? `button-secondary ${secondaryButtonClass}` : "button-danger inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border px-3 py-1.5 text-xs font-semibold leading-snug transition-colors hover:border-accent/45 border-danger/40 bg-danger-bg text-danger-fg hover:bg-danger/20"} disabled={update.isPending} onClick={() => update.mutate({ id: account.id, disabled: !account.disabled_at })} aria-label={`${account.disabled_at ? "Enable" : "Disable"} ${account.email}`}>{account.disabled_at ? "Enable" : "Disable"}</button>
             </span>,
           ];
         })} />

@@ -1,8 +1,75 @@
-/** Formats an ISO timestamp into a medium date + short time string. Returns "—" for missing values. */
-export const formatTime = (value?: string): string =>
-  value
-    ? new Date(value).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })
-    : "—";
+const timestampFormat = new Intl.DateTimeFormat(undefined, {
+  year: "numeric", month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit",
+  second: "2-digit", fractionalSecondDigits: 3, timeZoneName: "short",
+});
+
+const timeOnlyFormat = new Intl.DateTimeFormat(undefined, {
+  hour: "2-digit", minute: "2-digit", second: "2-digit", fractionalSecondDigits: 3, hour12: false,
+});
+
+const dateOnlyFormat = new Intl.DateTimeFormat(undefined, {
+  year: "numeric", month: "short", day: "2-digit",
+});
+
+const tzOnlyFormat = new Intl.DateTimeFormat(undefined, {
+  timeZoneName: "short",
+});
+
+const pad = (n: number, len = 2) => String(n).padStart(len, "0");
+
+/** Formats timestamp to a clean, single-line technical ISO string: YYYY-MM-DD HH:mm:ss.SSS */
+export const formatTimeIso = (value?: string): string => {
+  const date = value ? new Date(value) : undefined;
+  if (!date || !Number.isFinite(date.getTime())) return "—";
+  const y = date.getFullYear();
+  const m = pad(date.getMonth() + 1);
+  const d = pad(date.getDate());
+  const h = pad(date.getHours());
+  const min = pad(date.getMinutes());
+  const s = pad(date.getSeconds());
+  const ms = pad(date.getMilliseconds(), 3);
+  return `${y}-${m}-${d} ${h}:${min}:${s}.${ms}`;
+};
+
+/** Formats timestamp to time-only: HH:mm:ss.SSS */
+export const formatTimeOnly = (value?: string): string => {
+  const date = value ? new Date(value) : undefined;
+  if (!date || !Number.isFinite(date.getTime())) return "—";
+  const h = pad(date.getHours());
+  const min = pad(date.getMinutes());
+  const s = pad(date.getSeconds());
+  const ms = pad(date.getMilliseconds(), 3);
+  return `${h}:${min}:${s}.${ms}`;
+};
+
+export interface TimeParts {
+  time: string;
+  date: string;
+  full: string;
+}
+
+/**
+ * Splits timestamp into distinct clock time and date + timezone components.
+ * Ideal for stacked display in log explorers and dense tabular views.
+ */
+export const formatTimeParts = (value?: string): TimeParts | null => {
+  const date = value ? new Date(value) : undefined;
+  if (!date || !Number.isFinite(date.getTime())) return null;
+  const time = timeOnlyFormat.format(date);
+  const dateStr = dateOnlyFormat.format(date);
+  const tzPart = tzOnlyFormat.formatToParts(date).find((p) => p.type === "timeZoneName")?.value;
+  return {
+    time,
+    date: tzPart ? `${dateStr} · ${tzPart}` : dateStr,
+    full: timestampFormat.format(date),
+  };
+};
+
+/** Keeps sub-second event order visible and names the browser's local time zone. */
+export const formatTime = (value?: string): string => {
+  const date = value ? new Date(value) : undefined;
+  return date && Number.isFinite(date.getTime()) ? timestampFormat.format(date) : "—";
+};
 
 /** Formats a nanosecond duration into a human-readable µs / ms / s string. Returns "—" for falsy values. */
 export const formatDuration = (nanoseconds?: number): string => {

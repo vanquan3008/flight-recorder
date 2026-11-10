@@ -1,3 +1,4 @@
+import { secondaryButtonClass } from "../../shared/ui/styles";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
@@ -5,10 +6,9 @@ import { useAuth } from "../../app/auth";
 import { api, queryString } from "../../shared/api";
 import { FlowDiagram, GraphLegend, ServiceGraph, type FlowLink } from "../../shared/charts";
 import type { LogRecord, Page, Topology, TopologyEdge, TopologyNode } from "../../shared/types";
-import { Badge, DataTable, DetailLink, Empty, ErrorState, Loading, PageHeader, Panel, TimeWindowFilter, formatDuration, formatTime, useTimeWindow } from "../../shared/ui";
+import { Badge, DataTable, DetailLink, Empty, ErrorState, Loading, PageHeader, Panel, TimeCell, TimeWindowFilter, formatDuration, formatTime, useTimeWindow } from "../../shared/ui";
 import { ServiceDrawer } from "./drawer";
 import { FormattedLogLine, normalizeSeverity } from "./log-formatter";
-import "./topology.css";
 
 const recentLogLimit = "20";
 const count = (value: number, noun: string) => `${value} ${noun}${value === 1 ? "" : "s"}`;
@@ -50,29 +50,40 @@ export function TopologyPage() {
   const headers = ["From", "To", "Kind", "Calls", "Errors", "Avg", "P95", "Evidence"];
   const byId = new Map(nodes.map((item) => [item.id, item]));
   const link = (edge: TopologyEdge, otherId: string): FlowLink => ({ edge, node: byId.get(otherId) ?? { id: otherId, type: "UNKNOWN", name: otherId } });
-  const toggle = <div className="segmented view-switch" role="group" aria-label="Topology view">
+  const toggle = <div className="segmented inline-flex min-w-0 gap-0.5 rounded-lg border border-glass-field-edge bg-glass-field p-0.75 view-switch [&>button]:min-w-16 [&>button]:rounded-md [&>button]:px-4 [&>button]:py-1.25 [&>button]:text-xs [&>button]:font-semibold [&>button]:text-muted [&>button:hover]:text-text [&>button[aria-pressed=true]]:bg-btn [&>button[aria-pressed=true]]:text-btn-text" role="group" aria-label="Topology view">
     {(["list", "graph"] as const).map((value) => <button type="button" key={value} aria-pressed={view === value} onClick={() => setView(value)}>{value === "list" ? "List" : "Graph"}</button>)}
   </div>;
   const logLink = active ? `/logs?${queryString({ service: active.name, from: window.from, to: window.to })}` : "";
   const detailBody = node && <>
-    <div className="flow-position" role="group" aria-label={`Where ${node.name} sits in the flow`}>
-      <FlowDiagram node={node} onSelect={setSelected}
-        callers={callersOf(node.id).map((edge) => link(edge, edge.source_node_id))}
-        callees={calleesOf(node.id).map((edge) => link(edge, edge.target_node_id))} />
+    <div className="flow-canvas relative m-3 overflow-hidden rounded-2xl border border-glass-divider bg-glass-sunken bg-[radial-gradient(circle_at_1px_1px,color-mix(in_srgb,var(--text)_14%,transparent)_1px,transparent_0)] bg-size-[24px_24px] p-5 shadow-inner">
+      <div className="flow-canvas-hud mb-3 flex items-center justify-between text-[11px] font-semibold text-muted">
+        <span className="inline-flex items-center gap-2 rounded-full border border-glass-divider bg-surface-solid px-3 py-1 shadow-xs">
+          <i className="size-2 rounded-full bg-accent shadow-[0_0_6px_var(--accent)]" />
+          <span className="font-mono text-[10px] font-bold tracking-wider text-text uppercase">Telemetry Flow Architecture</span>
+        </span>
+        <span className="font-mono text-[11px] text-faint">
+          {callersOf(node.id).length + calleesOf(node.id).length} active connections
+        </span>
+      </div>
+      <div className="flow-position overflow-x-auto overflow-y-visible" role="group" aria-label={`Where ${node.name} sits in the flow`}>
+        <FlowDiagram node={node} onSelect={setSelected}
+          callers={callersOf(node.id).map((edge) => link(edge, edge.source_node_id))}
+          callees={calleesOf(node.id).map((edge) => link(edge, edge.target_node_id))} />
+      </div>
     </div>
-    <div className="topology-logs">
-      <div className="topology-logs-head"><h3>Recent logs</h3>{isService(node) && <Link to={logLink}>Open in Log explorer →</Link>}</div>
+    <div className="topology-logs flex flex-col border-t border-glass-divider px-4.5 pt-3 pb-3.5 [&_h3]:m-0 [&_h3]:text-[10.5px] [&_h3]:font-bold [&_h3]:tracking-wider [&_h3]:text-faint [&_h3]:uppercase">
+      <div className="topology-logs-head mb-2 flex items-center justify-between [&>a]:text-[11.5px] [&>a]:font-semibold [&>a]:text-accent [&>a]:no-underline [&>a:hover]:underline"><h3>Recent logs</h3>{isService(node) && <Link to={logLink}>Open in Log explorer →</Link>}</div>
       {!isService(node) ? <Empty>{node.type} dependencies do not write logs. Open a caller to read its logs.</Empty>
         : logs.isPending ? <Loading />
         : logs.isError ? <ErrorState error={logs.error} retry={() => void logs.refetch()} />
-        : logs.data.data.length ? <ul className="topology-log-list">{logs.data.data.map((log) => <li key={log.event_id}>
-          <time>{formatTime(log.occurred_at)}</time>
+        : logs.data.data.length ? <ul className="topology-log-list m-0 flex max-h-[300px] min-h-0 list-none flex-col gap-0.75 overflow-x-hidden overflow-y-auto rounded-xl border border-glass-divider bg-glass-nested p-1.5 [&>li]:grid [&>li]:grid-cols-[145px_80px_minmax(0,1fr)_auto] [&>li]:items-center [&>li]:gap-3 [&>li]:rounded-lg [&>li]:px-3 [&>li]:py-1.75 [&>li]:text-xs [&>li:hover]:bg-glass-hover [&_time]:flex [&_time]:min-w-0 [&_time]:overflow-hidden [&_time]:font-mono [&_time]:text-[11px] [&_time]:text-muted [&_.badge]:justify-center [&_.badge]:text-[10px] max-[760px]:[&>li]:grid-cols-[minmax(0,1fr)_auto] max-[760px]:[&>li]:gap-1.5 max-[760px]:[&_.log-line-code]:col-span-full max-[760px]:[&_.log-trace-pill]:col-start-2 max-[760px]:[&_.log-trace-pill]:justify-self-end">{logs.data.data.map((log) => <li key={log.event_id}>
+          <time title={formatTime(log.occurred_at)}><TimeCell value={log.occurred_at} /></time>
           <Badge value={normalizeSeverity(log.severity_text)} />
           <FormattedLogLine body={log.body} />
-          {log.trace_id ? <DetailLink to={`/traces/${log.trace_id}`} className="log-trace-pill">Trace ↗</DetailLink> : <span />}
+          {log.trace_id ? <DetailLink to={`/traces/${log.trace_id}`} className={`log-trace-pill ${secondaryButtonClass} rounded-full px-2.25 py-0.5 text-[11px] text-accent no-underline`}>Trace ↗</DetailLink> : <span />}
         </li>)}</ul> : <Empty>No logs from {node.name} in the selected time range.</Empty>}
     </div>
-    <details className="topology-calls">
+    <details className="topology-calls border-t border-glass-divider [&>summary]:cursor-pointer [&>summary]:px-4.5 [&>summary]:py-2.5 [&>summary]:text-xs [&>summary]:font-semibold [&>summary]:text-muted [&_h3]:px-4.5 [&_h3]:pt-1.5 [&_h3]:text-[10.5px] [&_h3]:text-faint [&_h3]:uppercase">
       <summary>Call details ({callersOf(node.id).length + calleesOf(node.id).length})</summary>
       <h3>Calls out</h3>
       <DataTable headers={headers} empty="This node makes no observed calls." rows={calleesOf(node.id).map(edgeRow)} />
@@ -80,33 +91,77 @@ export function TopologyPage() {
       <DataTable headers={headers} empty="No observed callers." rows={callersOf(node.id).map(edgeRow)} />
     </details>
   </>;
-  return <>
-    <PageHeader title="Service and dependency topology" action={<div className="header-controls">{toggle}<TimeWindowFilter range={window.range} select={window.select} /></div>}>Derived from parent/child spans and OpenTelemetry database, messaging, and client semantic attributes.</PageHeader>
-    {!node ? <Panel title="Services"><Empty>No services were observed in the selected time range.</Empty></Panel>
-      : view === "graph" ? <section className="panel topology-graph-panel" aria-label="Dependency graph">
-        <header className="topology-bar"><h2>Dependency graph</h2><span className="topology-count">{nodes.length} nodes · {edges.length} relationships</span></header>
-        <div className={`topology-canvas${active ? " with-drawer" : ""}`}>
-          <ServiceGraph nodes={nodes} edges={edges} selected={active?.id ?? ""} onSelect={setSelected} label="Service topology graph" />
-          {active && <ServiceDrawer node={active} logLink={logLink} logs={isService(active) ? logs : null} onSelect={setSelected} onClose={() => setSelected("")}
-            callers={callersOf(active.id).map((edge) => link(edge, edge.source_node_id))} callees={calleesOf(active.id).map((edge) => link(edge, edge.target_node_id))} />}
-        </div>
-        <GraphLegend nodes={nodes} />
-      </section> : <section className="panel topology-workspace" aria-label="Services and detail">
-        <aside className="topology-aside">
-          <header className="topology-bar"><h2>Services</h2><span className="topology-count">{services.length}</span></header>
-          <ul className="service-list">{services.map((item) => {
-            const errors = errorsOf(item.id);
-            return <li key={item.id}><button type="button" className="service-row" aria-pressed={node.id === item.id} onClick={() => setSelected(item.id)}>
-              <span className="service-name">{item.name}</span>{" "}
-              <span className="service-type">{item.type}</span>{" "}
-              <span className="service-meta">{callersOf(item.id).length} in · {calleesOf(item.id).length} out{errors > 0 && <span className="service-errors"> · {count(errors, "error")}</span>}</span>
-            </button></li>;
-          })}</ul>
-        </aside>
-        <div className="topology-main">
-          <header className="topology-bar"><h2>{node.name}</h2><span className="service-type">{node.type}</span></header>
-          {detailBody}
-        </div>
-      </section>}
-  </>;
+  return (
+    <div className="topology-page flex h-full max-h-full min-h-0 w-full max-w-full flex-1 flex-col overflow-hidden pb-1">
+      <div className="shrink-0">
+        <PageHeader title="Service and dependency topology" action={<div className="header-controls flex flex-wrap items-center justify-end gap-3">{toggle}<TimeWindowFilter {...window} /></div>}>
+          Derived from parent/child spans and OpenTelemetry database, messaging, and client semantic attributes.
+        </PageHeader>
+      </div>
+      {!node ? (
+        <Panel title="Services"><Empty>No services were observed in the selected time range.</Empty></Panel>
+      ) : view === "graph" ? (
+        <section className="panel flex flex-1 min-h-0 flex-col overflow-hidden rounded-3xl border border-glass-edge bg-glass backdrop-glass shadow-glass topology-graph-panel mb-2" aria-label="Dependency graph">
+          <header className="topology-bar shrink-0 flex min-h-12 items-center justify-between gap-2.5 border-b border-glass-divider px-5 py-2.5 [&>h2]:m-0 [&>h2]:text-[14px] [&>h2]:font-bold">
+            <div className="flex items-center gap-2.5">
+              <i className="size-2.5 rounded-full bg-accent shadow-[0_0_8px_var(--accent)]" />
+              <h2>Dependency graph</h2>
+              <span className="inline-flex items-center rounded-full border border-glass-divider bg-glass-field px-2.5 py-0.5 font-mono text-[10px] font-semibold text-muted">
+                {nodes.length} nodes · {edges.length} relationships
+              </span>
+            </div>
+            <span className="topology-count font-mono text-[11px] text-faint">Interactive DAG View</span>
+          </header>
+          <div className={`topology-canvas flex-1 min-h-0 grid ${active ? "grid-cols-[minmax(0,1fr)_390px] with-drawer" : "grid-cols-1"} max-[900px]:grid-cols-1 overflow-hidden`}>
+            <ServiceGraph nodes={nodes} edges={edges} selected={active?.id ?? ""} onSelect={setSelected} label="Service topology graph" />
+            {active && <ServiceDrawer node={active} logLink={logLink} logs={isService(active) ? logs : null} onSelect={setSelected} onClose={() => setSelected("")}
+              callers={callersOf(active.id).map((edge) => link(edge, edge.source_node_id))} callees={calleesOf(active.id).map((edge) => link(edge, edge.target_node_id))} />}
+          </div>
+          <div className="shrink-0">
+            <GraphLegend nodes={nodes} />
+          </div>
+        </section>
+      ) : (
+        <section className="panel flex flex-1 min-h-0 overflow-hidden rounded-3xl border border-glass-edge bg-glass backdrop-glass shadow-glass topology-workspace grid grid-cols-[300px_minmax(0,1fr)] max-[900px]:min-h-0 max-[900px]:grid-cols-1 mb-2" aria-label="Services and detail">
+          <aside className="topology-aside flex min-h-0 min-w-0 flex-col border-r border-glass-divider max-[900px]:border-r-0 max-[900px]:border-b">
+            <header className="topology-bar shrink-0 flex min-h-11 items-center justify-between gap-2.5 border-b border-glass-divider px-4.5 py-2 [&>h2]:m-0 [&>h2]:text-[13px] [&>h2]:font-semibold">
+              <h2>Services</h2>
+              <span className="topology-count font-mono text-[11.5px] font-semibold text-faint">{services.length}</span>
+            </header>
+            <ul className="service-list m-0 flex-1 min-h-0 grid list-none content-start gap-0.5 overflow-y-auto p-1.5">{services.map((item) => {
+              const errors = errorsOf(item.id);
+              return <li key={item.id}><button type="button" className="service-row grid w-full grid-cols-[1fr_auto] gap-x-2 gap-y-px rounded-xl px-3 py-2 text-left hover:bg-glass-hover aria-pressed:bg-accent/16" aria-pressed={node.id === item.id} onClick={() => setSelected(item.id)}>
+                <span className="service-name text-[13px] font-semibold wrap-anywhere">{item.name}</span>{" "}
+                <span className="service-type self-center text-[10px] font-bold tracking-wider text-faint uppercase">{item.type}</span>{" "}
+                <span className="service-meta col-span-full text-[11.5px] text-muted">{callersOf(item.id).length} in · {calleesOf(item.id).length} out{errors > 0 && <span className="service-errors text-danger-fg"> · {count(errors, "error")}</span>}</span>
+              </button></li>;
+            })}</ul>
+          </aside>
+          <div className="topology-main flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto">
+            <header className="topology-bar shrink-0 flex min-h-11 items-center justify-between gap-2.5 border-b border-glass-divider px-4.5 py-2 [&>h2]:m-0 [&>h2]:text-[13.5px] [&>h2]:font-semibold">
+              <div className="flex items-center gap-2.5">
+                <i className="size-2 rounded-full bg-accent shadow-[0_0_8px_var(--accent)]" />
+                <h2>{node.name}</h2>
+                <span className="service-type inline-flex items-center rounded-full border border-glass-divider bg-glass-field px-2 py-0.5 font-mono text-[9.5px] font-bold tracking-wider text-faint uppercase">{node.type}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                {errorsOf(node.id) > 0 ? (
+                  <span className="inline-flex items-center gap-1 rounded-full border border-red-500/30 bg-red-500/10 px-2 py-0.5 font-mono text-[10px] font-semibold text-danger-fg">
+                    <i className="size-1.5 rounded-full bg-current animate-pulse" />
+                    {count(errorsOf(node.id), "error")}
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 font-mono text-[10px] font-semibold text-emerald-500">
+                    <i className="size-1.5 rounded-full bg-current" />
+                    Nominal
+                  </span>
+                )}
+              </div>
+            </header>
+            {detailBody}
+          </div>
+        </section>
+      )}
+    </div>
+  );
 }

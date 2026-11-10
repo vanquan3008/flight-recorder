@@ -34,17 +34,19 @@ it("reads logs on their own inside the selected time window and links correlated
   expect(url.searchParams.get("to")).toBe("2026-10-01T01:00:00.000Z");
   expect(url.searchParams.get("service")).toBe("checkout");
   expect(url.searchParams.get("severity")).toBe("ERROR");
-  expect(screen.getByRole("link", { name: "Open trace" }).getAttribute("href")).toBe(`/traces/${traceID}`);
-  expect(screen.getByText("Not correlated")).toBeTruthy();
+  const traceLink = new URL(screen.getByRole("link", { name: "Open trace" }).getAttribute("href")!, "http://localhost");
+  expect(traceLink.pathname).toBe(`/traces/${traceID}`);
+  expect(traceLink.searchParams.get("project")).toBe("01900000-0000-7000-8000-0000000000a1");
+  expect(screen.getByLabelText("Not correlated")).toBeTruthy();
 });
 
 it("collapses a very long log body until the operator expands it", async () => {
   open("#/logs");
-  const expand = await screen.findByRole("button", { name: /Show all \(900 chars\)/ });
+  const expand = (await screen.findAllByRole("button", { name: "Expand log details" }))[1];
   expect(screen.queryByText(long)).toBeNull();
   fireEvent.click(expand);
   expect(await screen.findByText(long)).toBeTruthy();
-  expect(screen.getByRole("button", { name: "Show less" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Collapse log details" })).toBeTruthy();
 });
 
 it("opens a trace's logs without a time bound and keeps the span filter", async () => {

@@ -38,7 +38,7 @@ it("shows a call's numbers while it is hovered", () => {
 it("focuses a service: unrelated nodes dim and its calls gain latency", () => {
   render(<Harness />);
   fireEvent.click(screen.getByRole("button", { name: /^service web/ }));
-  const state = (name: RegExp) => screen.getByRole("button", { name }).getAttribute("class") ?? "";
+  const state = (name: RegExp) => screen.getByRole("button", { name }).getAttribute("class")?.split(/\s+/) ?? [];
   expect(state(/^service web/)).toContain("selected");
   expect(state(/^service api/)).not.toContain("dim");
   expect(state(/^database db/)).toContain("dim");

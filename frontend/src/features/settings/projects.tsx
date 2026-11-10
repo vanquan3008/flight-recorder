@@ -1,3 +1,5 @@
+import { settingsFormClass } from "./form-styles";
+import { secondaryButtonClass } from "../../shared/ui/styles";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { type FormEvent, useState } from "react";
 import { FolderPlus, Info, Layers, Pencil, Plus, Server, ShieldCheck } from "lucide-react";
@@ -30,13 +32,13 @@ export function CreateProjectForm({ onCreated }: { onCreated?: (project: Project
   };
   return (
     <div className="border-b border-black/5 dark:border-white/10 bg-slate-500/[0.02] dark:bg-white/[0.015] p-5 sm:p-6">
-      <form className="settings-form project-form max-w-5xl" onSubmit={submit}>
+      <form className={`settings-form ${settingsFormClass} project-form max-w-[980px] border-b-0 px-0 pt-3.5 pb-0 min-[901px]:grid-cols-[minmax(180px,1.2fr)_minmax(160px,1fr)_minmax(160px,1fr)_auto] max-w-5xl`} onSubmit={submit}>
         <div className="col-span-full mb-1">
           <div className="flex items-center gap-2">
             <span className="p-1.5 rounded-lg bg-indigo-500/10 text-indigo-600 dark:text-indigo-400">
               <FolderPlus size={16} />
             </span>
-            <h3 className="settings-form-title !m-0 !text-[12px] !font-bold tracking-wider">New project</h3>
+            <h3 className="settings-form-title col-span-full m-0 text-[11px] font-bold uppercase tracking-wider text-faint !m-0 !text-[12px] !font-bold ">New project</h3>
           </div>
           <p className="text-[12.5px] text-slate-500 dark:text-slate-400 mt-1 m-0">Create a dedicated space to collect traces, spans, and metrics for your team.</p>
         </div>
@@ -52,13 +54,13 @@ export function CreateProjectForm({ onCreated }: { onCreated?: (project: Project
           First environment
           <input name="environment" maxLength={63} placeholder="production" />
         </label>
-        <div className="settings-submit">
+        <div className="settings-submit flex items-end [&>button]:inline-flex [&>button]:items-center [&>button]:justify-center [&>button]:gap-1.5 [&>button]:whitespace-nowrap [&>button]:rounded-lg [&>button]:border [&>button]:border-btn-border [&>button]:bg-btn [&>button]:px-5.5 [&>button]:py-2 [&>button]:text-[13px] [&>button]:font-semibold [&>button]:text-btn-text [&>button:hover]:bg-btn-hover max-[900px]:[&>button]:w-full">
           <button type="submit" disabled={create.isPending} className="inline-flex items-center justify-center gap-1.5 shadow-sm">
             <Plus size={15} />
             <span>{create.isPending ? "Creating…" : "Create project"}</span>
           </button>
         </div>
-        {create.error && <p className="form-error settings-wide" role="alert">{create.error.message}</p>}
+        {create.error && <p className="form-error mt-1.5 text-[12.5px] font-medium leading-relaxed text-danger-fg settings-wide col-span-full" role="alert">{create.error.message}</p>}
       </form>
     </div>
   );
@@ -121,9 +123,9 @@ export function ProjectsSection() {
             <span key="created" className="text-xs text-slate-500 dark:text-slate-400 font-medium">
               {formatTime(project.created_at)}
             </span>,
-            <span key="actions" className="table-actions">
+            <span key="actions" className="table-actions inline-flex flex-wrap items-center gap-1.5">
               {isCurrent ? (
-                <span className="current-tag inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border border-emerald-500/25 shadow-xs">
+                <span className="current-tag inline-flex items-center gap-1.5 rounded-full border border-accent/35 bg-accent/12 px-2.5 py-0.75 text-[11.5px] font-semibold text-accent gap-2 px-3 py-1 text-xs bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/25 shadow-xs">
                   <span className="relative flex h-2 w-2">
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                     <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
@@ -131,17 +133,17 @@ export function ProjectsSection() {
                   Current
                 </span>
               ) : (
-                <button type="button" className="button-secondary compact !rounded-lg !text-xs !font-semibold !px-3.5 !py-1.5 shadow-xs" onClick={() => session.switchProject(project.id)}>
+                <button type="button" className={`button-secondary ${secondaryButtonClass} compact px-2.5 py-1 text-[11.5px] !rounded-lg !text-xs !font-semibold !px-3.5 !py-1.5 shadow-xs`} onClick={() => session.switchProject(project.id)}>
                   Open
                 </button>
               )}
               {!session.user.platform_admin && (leaving === project.id
-                ? <span className="inline-confirm"><button className="button-danger" disabled={leave.isPending} onClick={() => leave.mutate(project.id)}>Confirm leave</button><button className="button-secondary" onClick={() => setLeaving("")}>Cancel</button></span>
-                : <button type="button" className="button-danger compact !rounded-lg !text-xs !font-semibold" onClick={() => setLeaving(project.id)} aria-label={`Leave ${project.name}`}>Leave</button>)}
+                ? <span className="inline-confirm inline-flex flex-wrap items-center gap-1.5"><button className="button-danger inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border px-3 py-1.5 text-xs font-semibold leading-snug transition-colors hover:border-accent/45 border-danger/40 bg-danger-bg text-danger-fg hover:bg-danger/20" disabled={leave.isPending} onClick={() => leave.mutate(project.id)}>Confirm leave</button><button className={`button-secondary ${secondaryButtonClass}`} onClick={() => setLeaving("")}>Cancel</button></span>
+                : <button type="button" className="button-danger inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border px-3 py-1.5 text-xs font-semibold leading-snug transition-colors hover:border-accent/45 border-danger/40 bg-danger-bg text-danger-fg hover:bg-danger/20 compact px-2.5 py-1 text-[11.5px] !rounded-lg !text-xs !font-semibold" onClick={() => setLeaving(project.id)} aria-label={`Leave ${project.name}`}>Leave</button>)}
             </span>,
           ];
         })} />
-      {leave.error && <p className="form-error" role="alert">{leave.error.message}</p>}
+      {leave.error && <p className="form-error mt-1.5 text-[12.5px] font-medium leading-relaxed text-danger-fg" role="alert">{leave.error.message}</p>}
     </Panel>
     {current && <Panel title={`${current.project.name} — environments`} meta={detail.data ? `${detail.data.environments.length} environments` : undefined}>
       {canManageRole(session.role) && (
@@ -153,20 +155,20 @@ export function ProjectsSection() {
                 <span className="p-1.5 rounded-lg bg-slate-500/10 text-slate-700 dark:text-slate-300">
                   <Pencil size={15} />
                 </span>
-                <h3 className="settings-form-title !m-0 !text-[12px] !font-bold">Rename project</h3>
+                <h3 className="settings-form-title col-span-full m-0 text-[11px] font-bold uppercase tracking-wider text-faint !m-0 !text-[12px] !font-bold">Rename project</h3>
               </div>
               <p className="text-[12px] text-slate-500 dark:text-slate-400 mb-4">Change the display name of this project across the console.</p>
-              <form className="settings-form single-field-form !p-0 !border-0 !gap-3" onSubmit={submitRename} key={current.project.name}>
+              <form className={`settings-form ${settingsFormClass} single-field-form w-full justify-start min-[901px]:grid-cols-[minmax(180px,1fr)_auto] !p-0 !border-0 !gap-3`} onSubmit={submitRename} key={current.project.name}>
                 <label className="w-full">
                   Name
                   <input name="name" defaultValue={current.project.name} required maxLength={100} className="w-full" />
                 </label>
-                <div className="settings-submit">
+                <div className="settings-submit flex items-end [&>button]:inline-flex [&>button]:items-center [&>button]:justify-center [&>button]:gap-1.5 [&>button]:whitespace-nowrap [&>button]:rounded-lg [&>button]:border [&>button]:border-btn-border [&>button]:bg-btn [&>button]:px-5.5 [&>button]:py-2 [&>button]:text-[13px] [&>button]:font-semibold [&>button]:text-btn-text [&>button:hover]:bg-btn-hover max-[900px]:[&>button]:w-full">
                   <button type="submit" disabled={rename.isPending} className="!bg-slate-900 hover:!bg-slate-800 dark:!bg-slate-100 dark:!text-slate-900 dark:hover:!bg-white !text-white !font-bold !text-xs !px-4 !py-2.5 !rounded-xl transition-all shadow-xs">
                     {rename.isPending ? "Saving…" : "Save name"}
                   </button>
                 </div>
-                {rename.error && <p className="form-error settings-wide" role="alert">{rename.error.message}</p>}
+                {rename.error && <p className="form-error mt-1.5 text-[12.5px] font-medium leading-relaxed text-danger-fg settings-wide col-span-full" role="alert">{rename.error.message}</p>}
               </form>
             </div>
 
@@ -176,21 +178,21 @@ export function ProjectsSection() {
                 <span className="p-1.5 rounded-lg bg-indigo-500/10 text-indigo-600 dark:text-indigo-400">
                   <Layers size={15} />
                 </span>
-                <h3 className="settings-form-title !m-0 !text-[12px] !font-bold">Add an environment</h3>
+                <h3 className="settings-form-title col-span-full m-0 text-[11px] font-bold uppercase tracking-wider text-faint !m-0 !text-[12px] !font-bold">Add an environment</h3>
               </div>
               <p className="text-[12px] text-slate-500 dark:text-slate-400 mb-4">Create partitions like staging, production, or testing.</p>
-              <form className="settings-form single-field-form !p-0 !border-0 !gap-3" onSubmit={submitEnvironment}>
+              <form className={`settings-form ${settingsFormClass} single-field-form w-full justify-start min-[901px]:grid-cols-[minmax(180px,1fr)_auto] !p-0 !border-0 !gap-3`} onSubmit={submitEnvironment}>
                 <label className="w-full">
                   Name
                   <input name="environment" required maxLength={63} placeholder="e.g. staging" className="w-full" />
                 </label>
-                <div className="settings-submit">
+                <div className="settings-submit flex items-end [&>button]:inline-flex [&>button]:items-center [&>button]:justify-center [&>button]:gap-1.5 [&>button]:whitespace-nowrap [&>button]:rounded-lg [&>button]:border [&>button]:border-btn-border [&>button]:bg-btn [&>button]:px-5.5 [&>button]:py-2 [&>button]:text-[13px] [&>button]:font-semibold [&>button]:text-btn-text [&>button:hover]:bg-btn-hover max-[900px]:[&>button]:w-full">
                   <button type="submit" disabled={addEnvironment.isPending} className="inline-flex items-center gap-1.5 !text-xs !font-bold !px-4 !py-2.5 !rounded-xl shadow-xs">
                     <Plus size={15} />
                     <span>{addEnvironment.isPending ? "Adding…" : "Add environment"}</span>
                   </button>
                 </div>
-                {addEnvironment.error && <p className="form-error settings-wide" role="alert">{addEnvironment.error.message}</p>}
+                {addEnvironment.error && <p className="form-error mt-1.5 text-[12.5px] font-medium leading-relaxed text-danger-fg settings-wide col-span-full" role="alert">{addEnvironment.error.message}</p>}
               </form>
             </div>
           </div>
@@ -198,7 +200,7 @@ export function ProjectsSection() {
           {/* OTLP Hint callout */}
           <div className="mt-4 rounded-xl p-3.5 bg-blue-500/5 dark:bg-blue-400/5 border border-blue-500/15 text-blue-900 dark:text-blue-200 text-xs flex items-start gap-2.5">
             <Info size={16} className="text-blue-600 dark:text-blue-400 shrink-0 mt-0.5" />
-            <p className="settings-hint !m-0 !text-slate-600 dark:!text-slate-300 text-xs leading-relaxed">
+            <p className="settings-hint col-span-full m-0 text-xs text-faint !m-0 !text-slate-600 dark:!text-slate-300 leading-relaxed">
               Senders pick an environment with the <code className="px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-950 font-mono text-[11px] text-blue-800 dark:text-blue-300 font-semibold">X-Environment</code> header (OTLP and API); without it, telemetry goes to the first one.
             </p>
           </div>

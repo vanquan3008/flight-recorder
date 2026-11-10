@@ -14,7 +14,7 @@ export function compactSearchParams(form: HTMLFormElement, current?: URLSearchPa
     const normalized = String(value).trim();
     if (normalized) params.set(key, normalized);
   });
-  for (const key of preserve) {
+  for (const key of ["project", "environment", ...preserve]) {
     const value = current?.get(key);
     if (value) params.set(key, value);
   }

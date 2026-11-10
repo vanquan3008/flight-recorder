@@ -30,10 +30,12 @@ function open(data = spans) {
 
 it("summarises the whole request and shows who called whom", async () => {
   open();
+  expect((await screen.findAllByText("250 ms")).length).toBeGreaterThanOrEqual(1);
   const flow = (await screen.findByRole("heading", { name: "Request flow" })).closest("section")!;
-  expect(within(flow).getByText("250 ms")).toBeTruthy();
-  const stats = Object.fromEntries([...flow.querySelectorAll(".flow-stats > div")].map((item) => [item.querySelector("span")!.textContent, item.querySelector("strong")!.textContent]));
+  const stats = Object.fromEntries([...document.querySelectorAll(".flow-stats > div")].map((item) => [item.querySelector("span")!.textContent, item.querySelector("strong")!.textContent]));
   expect(stats).toEqual({ "Total duration": "250 ms", Spans: "4", Services: "4", Errors: "1" });
+  expect(within(flow).queryByRole("region", { name: "Service flow for this trace" })).toBeNull();
+  fireEvent.click(within(flow).getByRole("button", { name: "Service map" }));
   expect(within(flow).getByRole("region", { name: "Service flow for this trace" })).toBeTruthy();
   const hops = within(flow).getAllByRole("row").map((row) => row.textContent);
   expect(hops.some((text) => text?.startsWith("order-servicepostgres1"))).toBe(true);
@@ -52,14 +54,14 @@ it("lays spans out as a time-scaled waterfall with an axis and marks failures in
   expect(document.querySelector(".wf-axis")?.textContent).toContain("250 ms");
 });
 
-it("collapses and expands a subtree and opens span details in place", async () => {
+it("collapses and expands a subtree and opens a separate span inspector", async () => {
   open();
   fireEvent.click(await screen.findByRole("button", { name: "Collapse GET /orders/{id}" }));
   expect(screen.queryByText("SELECT orders")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Expand all" }));
   fireEvent.click(await screen.findByText("SELECT orders"));
   const detail = screen.getByRole("region", { name: "Span SELECT orders" });
-  expect(detail.closest("li")?.textContent).toContain("SELECT orders");
+  expect(detail.closest(".wf-inspector")).not.toBeNull();
   expect(within(detail).getByText(/starts at \+40\.0 ms/)).toBeTruthy();
   expect(within(detail).getByRole("link", { name: "Logs for this span" }).getAttribute("href")).toContain("spanId=db");
 });
@@ -77,7 +79,7 @@ it("highlights one service's spans from the flow and clears the focus again", as
 
 it("explains a single-service trace instead of drawing an empty graph", async () => {
   open([span("a", "api", "GET /health", 0, 5), span("b", "api", "db.query", 1, 3, { parent_span_id: "a" })]);
-  expect(await screen.findByText(/no service-to-service calls to draw/)).toBeTruthy();
+  expect(await screen.findByText("Single-service trace")).toBeTruthy();
 });
 
 it("keeps rendering a trace with no spans", async () => {

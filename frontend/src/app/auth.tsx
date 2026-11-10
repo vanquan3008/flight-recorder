@@ -11,6 +11,7 @@ export type AuthState = {
     user: Account;
     memberships: Membership[];
     project?: Membership;
+    environment?: string;
     /** The role in the current project; a super administrator is an owner everywhere. */
     role?: Role;
     switchProject: (projectID: string) => void;

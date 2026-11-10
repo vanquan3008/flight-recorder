@@ -39,6 +39,21 @@ it("lists services and shows the flow position and recent logs of the selected o
   expect(screen.getByRole("link", { name: /Open in Log explorer/ }).getAttribute("href")).toContain("service=payment");
 });
 
+it("keeps the full topology window when opening and searching its logs", async () => {
+  const fetch = open("#/topology?range=24h&to=2026-10-02T00:00:00Z");
+  await screen.findByRole("link", { name: /Open in Log explorer/ });
+  fireEvent.click(screen.getByRole("link", { name: /Open in Log explorer/ }));
+  await screen.findByRole("heading", { name: "Log explorer" });
+  fireEvent.change(screen.getByLabelText("Search log body"), { target: { value: "card" } });
+  fireEvent.click(screen.getByRole("button", { name: "Search logs" }));
+  await waitFor(() => {
+    const requests = fetch.mock.calls.map(([path]) => new URL(String(path), "http://localhost"));
+    const search = requests.find((url) => url.pathname === "/api/v1/logs" && url.searchParams.get("search") === "card");
+    expect(search?.searchParams.get("from")).toBe("2026-10-01T00:00:00.000Z");
+    expect(search?.searchParams.get("to")).toBe("2026-10-02T00:00:00.000Z");
+  });
+});
+
 it("follows a neighbour in the flow and skips logs for a dependency that writes none", async () => {
   const fetch = open();
   fireEvent.click(await screen.findByRole("button", { name: /^checkout/ }));

@@ -44,11 +44,10 @@ export function findException(span: Span): ExceptionInfo | null {
 }
 
 export function renderVal(val: unknown): ReactNode {
-  if (val === null || val === undefined) return <span className="val-nil">null</span>;
-  if (typeof val === "boolean") return <span className={`val-bool ${val}`}>{String(val)}</span>;
-  if (typeof val === "number") return <span className="val-num">{val}</span>;
-  if (typeof val === "string") return <span className="val-str">{val}</span>;
-  return <span className="val-obj">{JSON.stringify(val)}</span>;
+  if (val === null || val === undefined) return <span className="text-faint">null</span>;
+  if (typeof val === "boolean") return <span className="text-violet-600 dark:text-violet-300">{String(val)}</span>;
+  if (typeof val === "number") return <span className="text-sky-700 dark:text-sky-300">{val}</span>;
+  return <span>{typeof val === "string" ? val : JSON.stringify(val)}</span>;
 }
 
 export function KeyValueTable({ data, placeholder }: { data?: Record<string, unknown>; placeholder?: string }) {
@@ -57,39 +56,26 @@ export function KeyValueTable({ data, placeholder }: { data?: Record<string, unk
 
   const filtered = useMemo(() => {
     if (!filter.trim()) return entries;
-    const q = filter.toLowerCase();
-    return entries.filter(([k, v]) => k.toLowerCase().includes(q) || String(v).toLowerCase().includes(q));
+    const q = filter.trim().toLowerCase();
+    return entries.filter(([k, v]) => k.toLowerCase().includes(q) || (typeof v === "object" ? JSON.stringify(v) : String(v)).toLowerCase().includes(q));
   }, [entries, filter]);
 
-  if (entries.length === 0) return <div className="kv-empty">No properties available.</div>;
+  if (entries.length === 0) return <p className="m-0 px-4 py-8 text-center text-xs text-muted">No properties recorded.</p>;
 
   return (
-    <div className="kv-wrap">
+    <div className="min-w-0">
       {entries.length > 4 && (
-        <div className="kv-search-bar">
-          <Search size={13} className="kv-search-icon" />
-          <input className="kv-search-input" placeholder={placeholder || "Filter properties..."} value={filter} onChange={(e) => setFilter(e.target.value)} />
-          {filter && <button type="button" className="kv-search-clear" onClick={() => setFilter("")}><X size={12} /></button>}
+        <div className="relative mx-3 my-3">
+          <Search size={12} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-faint" />
+          <input className="border border-glass-field-edge bg-glass-field text-text focus:border-accent focus:ring-2 focus:ring-accent/15 h-8 w-full rounded-md py-1 pr-7 pl-8 text-[11px]" aria-label={placeholder || "Filter properties"} placeholder={placeholder || "Filter properties…"} value={filter} onChange={(e) => setFilter(e.target.value)} />
+          {filter && <button type="button" className="absolute right-2 top-1/2 -translate-y-1/2 text-muted" aria-label="Clear property filter" onClick={() => setFilter("")}><X size={12} /></button>}
         </div>
       )}
-      <div className="kv-table-scroll">
-        <table className="kv-table">
-          <tbody>
-            {filtered.map(([k, v]) => (
-              <tr key={k}>
-                <td className="kv-key"><code>{k}</code></td>
-                <td className="kv-value">
-                  <span className="kv-val-render">{renderVal(v)}</span>
-                  <CopyButton value={typeof v === "object" ? JSON.stringify(v) : String(v)} label={`Copy ${k}`} />
-                </td>
-              </tr>
-            ))}
-            {filtered.length === 0 && (
-              <tr><td colSpan={2} className="kv-empty">No matching properties for &ldquo;{filter}&rdquo;</td></tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+      <dl className="m-0 divide-y divide-line-soft">{filtered.map(([k, v]) => <div key={k} className="grid grid-cols-[minmax(0,45%)_minmax(0,1fr)] items-start gap-3 px-4 py-2.5 text-[11px]">
+        <dt className="break-words font-mono leading-relaxed text-muted">{k}</dt>
+        <dd className="m-0 flex min-w-0 items-start justify-between gap-1"><span className="min-w-0 break-all font-mono leading-relaxed">{renderVal(v)}</span><span className="shrink-0 opacity-50 hover:opacity-100 focus-within:opacity-100"><CopyButton value={typeof v === "object" ? JSON.stringify(v) : String(v)} label={`Copy ${k}`} /></span></dd>
+      </div>)}</dl>
+      {filtered.length === 0 && <p className="m-0 px-4 py-6 text-center text-xs text-muted">No matching properties for “{filter}”.</p>}
     </div>
   );
 }

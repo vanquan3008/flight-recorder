@@ -44,12 +44,12 @@ export function onSessionRefreshed(listener: ((view: SessionView) => void) | und
 
 const authPrefix = "/api/v1/auth/";
 
-function buildRequest(path: string, init: RequestInit, signedIn: boolean): RequestInit {
+function buildRequest(path: string, init: RequestInit, signedIn: boolean, context = requestContext): RequestInit {
   const headers = new Headers(init.headers);
-  if (signedIn && requestContext.token) {
-    headers.set("Authorization", `Bearer ${requestContext.token}`);
-    if (requestContext.project) headers.set("X-Project-ID", requestContext.project);
-    if (requestContext.environment) headers.set("X-Environment", requestContext.environment);
+  if (signedIn && context.token) {
+    headers.set("Authorization", `Bearer ${context.token}`);
+    if (context.project) headers.set("X-Project-ID", context.project);
+    if (context.environment) headers.set("X-Environment", context.environment);
   }
   if (init.body) headers.set("Content-Type", "application/json");
   const options: RequestInit = { ...init, headers };
@@ -92,20 +92,34 @@ async function failure(response: Response): Promise<APIError> {
   return new APIError(response.status, body?.error?.message || `Request failed (${response.status})`, body?.error?.code);
 }
 
-export async function api<T>(
+/** Includes scope and token refresh for JSON requests and streaming responses. */
+export async function apiResponse(
   path: string,
   credential: string,
   init: RequestInit = {},
-): Promise<T> {
-  let response = await fetch(apiBase + path, buildRequest(path, init, Boolean(credential)));
+): Promise<Response> {
+  const context = requestContext;
+  let response = await fetch(apiBase + path, buildRequest(path, init, Boolean(credential), context));
   // An access token lasts minutes. When the server says it ran out, refresh once and repeat the call.
   if (response.status === 401 && credential && path !== `${authPrefix}refresh`) {
     const expired = (await response.clone().json().catch(() => undefined))?.error?.code === "TOKEN_EXPIRED";
-    if (expired && (await refreshAccess())) response = await fetch(apiBase + path, buildRequest(path, init, true));
+    if (expired && (await refreshAccess())) {
+      init.signal?.throwIfAborted();
+      response = await fetch(apiBase + path, buildRequest(path, init, true, { ...context, token: requestContext.token }));
+    }
   }
-  if (response.status === 204) return undefined as T;
   if (!response.ok) throw await failure(response);
+  return response;
+}
+
+export async function api<T>(path: string, credential: string, init: RequestInit = {}): Promise<T> {
+  const response = await apiResponse(path, credential, init);
+  if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
+}
+
+export function requestScopeKey(): string {
+  return `${requestContext.project}:${requestContext.environment}`;
 }
 
 function pageURL(path: string, cursor: string): string {
@@ -116,14 +130,15 @@ function pageURL(path: string, cursor: string): string {
 }
 
 export function usePagedQuery<T>(key: QueryKey, path: string, credential: string) {
-  return useInfiniteQuery({
-    queryKey: [...key, path],
+  const query = useInfiniteQuery({
+    queryKey: [...key, requestScopeKey(), path],
     enabled: Boolean(credential),
     initialPageParam: "",
     queryFn: ({ pageParam, signal }) =>
       api<Page<T>>(pageURL(path, pageParam), credential, { signal }),
-    getNextPageParam: (lastPage) => lastPage.next_cursor || undefined,
+    getNextPageParam: (lastPage, pages) => pages.length < 20 ? lastPage.next_cursor || undefined : undefined,
   });
+  return { ...query, limitReached: Boolean(query.data?.pages.length === 20 && query.data.pages.at(-1)?.next_cursor) };
 }
 
 export function pageItems<T>(pages: Page<T>[] | undefined) {

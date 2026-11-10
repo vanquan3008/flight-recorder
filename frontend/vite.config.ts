@@ -7,6 +7,21 @@ export default defineConfig({
   build: {
     outDir: "dist",
     assetsDir: "assets",
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes("node_modules/lucide-react")) {
+            return "icons";
+          }
+          if (id.includes("node_modules/react") || id.includes("node_modules/react-dom") || id.includes("node_modules/react-router")) {
+            return "vendor-react";
+          }
+          if (id.includes("node_modules/@tanstack/react-query")) {
+            return "vendor-query";
+          }
+        },
+      },
+    },
   },
   server: {
     proxy: {
@@ -17,9 +32,10 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     pool: "vmThreads",
+    maxWorkers: 4,
     exclude: ["e2e/**", "node_modules/**"],
     setupFiles: ["./src/test-setup.ts"],
     // The first render of App loads lazy routes; on a loaded machine that can pass vitest's default 5s.
-    testTimeout: 15_000,
+    testTimeout: 20_000,
   },
 });

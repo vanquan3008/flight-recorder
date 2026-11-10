@@ -3,6 +3,12 @@ import { renderHook } from "@testing-library/react";
 import { useVirtualList } from "./use-virtual-list";
 
 describe("useVirtualList", () => {
+  it("bounds the first render of a 5000-span trace before measurements are available", () => {
+    const { result } = renderHook(() => useVirtualList({ count: 5000, estimateHeight: () => 56, containerRef: { current: null } }));
+    expect(result.current.isVirtualized).toBe(true);
+    expect(result.current.virtualItems.length).toBeLessThan(100);
+    expect(result.current.totalHeight).toBe(280000);
+  });
   it("returns empty virtual items when count is zero", () => {
     const container = { current: null };
     const { result } = renderHook(() =>
