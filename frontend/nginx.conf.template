@@ -1,5 +1,5 @@
-# Render bởi envsubst lúc khởi động: chỉ ${TRACEPILOT_API_UPSTREAM} được thay.
-# Giá trị là scheme://host:port, không kèm đường dẫn.
+# Rendered by envsubst at startup; only ${TRACEPILOT_API_UPSTREAM} is substituted.
+# Use scheme://host:port without a path.
 server {
     listen 8080;
     server_name _;
@@ -11,8 +11,8 @@ server {
     gzip on;
     gzip_types text/css application/javascript application/json image/svg+xml;
 
-    # Header bảo mật khai báo một lần ở cấp server. Các location bên dưới chỉ dùng
-    # expires, không dùng add_header, để không làm mất các header này.
+    # Define security headers at server scope. Locations use expires instead of
+    # add_header so they inherit these headers.
     add_header Content-Security-Policy "default-src 'self'; frame-ancestors 'none'; connect-src 'self'" always;
     add_header X-Frame-Options "DENY" always;
     add_header X-Content-Type-Options "nosniff" always;
@@ -30,17 +30,17 @@ server {
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-        # Backend trả 504 sau TRACEPILOT_HTTP_REQUEST_TIMEOUT (20s); nginx phải chờ lâu hơn.
+        # Wait longer than the backend's TRACEPILOT_HTTP_REQUEST_TIMEOUT (20s).
         proxy_read_timeout 30s;
     }
 
-    # Tên file có hash nên cache lâu; file thiếu phải 404, không rơi về index.html.
+    # Cache hashed assets; missing files must return 404 instead of index.html.
     location /assets/ {
         try_files $uri =404;
         expires 1y;
     }
 
-    # Fallback SPA. index.html không cache để bản mới có hiệu lực ngay.
+    # SPA fallback. Do not cache index.html so new releases take effect immediately.
     location / {
         try_files $uri /index.html;
         expires -1;

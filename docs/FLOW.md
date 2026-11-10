@@ -30,18 +30,23 @@ Khởi động theo thứ tự, bước nào lỗi thì thoát với mã 1:
 1. Đọc cấu hình (mặc định → `backend/.env` → biến môi trường). Sai cấu hình → mã 2.
 2. Không có `TRACEPILOT_AUTH_JWT_SECRET` → sinh khóa ngẫu nhiên và cảnh báo (production
    thì cấu hình sai ngay từ bước 1).
-3. Kiểm tra schema đúng version (`CurrentVersion = 3`, không dirty). Server **không tự migrate**:
-   chạy `tracepilot migrate up` riêng.
-4. Mở pool; ClickHouse là kho bắt buộc cho log, kiểm tra schema partition (ngày, tháng, năm hoặc tuần) đã được migrate riêng
-   (`migrate clickhouse up`). Tạo partition PostgreSQL ngày và project/environment mặc định.
-   Readiness kiểm tra cả hai kho; không tự fallback khi ClickHouse hỏng.
+3. Mở một pool PostgreSQL dùng chung và một HTTP client ClickHouse dùng chung. Pool PG mặc định
+   2–20 kết nối, connect timeout 5s (URL `connect_timeout` được ưu tiên); vòng đời kết nối có jitter
+   10% để tránh thay đồng loạt. Ngân sách tối thiểu tính cả worker events và metrics, cộng hai kết nối.
+4. Kiểm tra đồng thời hai kho trong thời hạn lớn hơn giữa cấu hình `DATABASE_CONNECT_TIMEOUT` và `CLICKHOUSE_REQUEST_TIMEOUT`
+   (mặc định 10s): PG kiểm version 3/không dirty qua chính pool runtime; CH kiểm schema/TTL và quyền đọc.
+   Lỗi thì hủy kiểm tra còn lại và đóng cả hai client. Server **không tự migrate**; chạy
+   `migrate up` và `migrate clickhouse up` riêng. Sau đó tạo partition PG và scope mặc định.
+   Readiness cũng kiểm hai kho đồng thời trong cùng deadline 2s; truy vấn version PG đã kiểm luôn
+   kết nối nên không thêm một lần ping riêng. Không tự fallback khi ClickHouse hỏng.
 5. Dựng replay (nếu bật), metrics, hai pipeline (events, metrics), bộ thu OTLP, API.
 6. Chạy song song: API, OTLP (thành phần cốt lõi; lỗi hoặc dừng thì tiến trình dừng),
    cùng detection, bảo trì partition, webhook (nếu bật), retention (nếu có max_age)
    được giám sát phục hồi tự động (restart with backoff) để đảm bảo tính sẵn sàng cao.
 
 Tắt (SIGINT/SIGTERM hoặc một thành phần lỗi): listener ngừng nhận và chờ request, rồi pipeline
-events và pipeline metrics drain lần lượt trong `shutdown_timeout` (15s). Đặt grace của container
+events và pipeline metrics drain lần lượt trong `shutdown_timeout` (15s), rồi đóng HTTP client CH
+và pool PG. Đặt grace của container
 ≥ 35s. Exporter gửi lại phần chưa ACK.
 
 ## 3. Đăng ký, đăng nhập, refresh [3]

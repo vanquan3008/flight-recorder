@@ -13,35 +13,6 @@ import (
 
 const CurrentVersion uint = 3
 
-func EnsureCurrent(databaseURL, migrationsPath string) (runError error) {
-	migrationRunner, openError := open(databaseURL, migrationsPath)
-	if openError != nil {
-		return openError
-	}
-	defer func() {
-		sourceCloseError, databaseCloseError := migrationRunner.Close()
-		runError = errors.Join(runError, sourceCloseError, databaseCloseError)
-	}()
-	version, dirty, versionError := migrationRunner.Version()
-	return validateCurrentVersion(version, dirty, versionError)
-}
-
-func validateCurrentVersion(version uint, dirty bool, versionError error) error {
-	if errors.Is(versionError, migrate.ErrNilVersion) {
-		return errors.New("database schema is not initialized; run tracepilot migrate up")
-	}
-	if versionError != nil {
-		return fmt.Errorf("read database schema version: %w", versionError)
-	}
-	if dirty {
-		return fmt.Errorf("database schema version %d is dirty; repair it before starting TracePilot", version)
-	}
-	if version != CurrentVersion {
-		return fmt.Errorf("database schema version %d does not match binary version %d; run tracepilot migrate up", version, CurrentVersion)
-	}
-	return nil
-}
-
 func Run(databaseURL, migrationsPath, operation string, steps int) (result string, runError error) {
 	if operation != "up" && operation != "down" && operation != "version" {
 		return "", fmt.Errorf("unsupported migration operation %q", operation)

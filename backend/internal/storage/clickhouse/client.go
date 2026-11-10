@@ -105,6 +105,12 @@ func (store *Store) execute(ctx context.Context, sql string, parameters map[stri
 	defer response.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(response.Body, maxResponseBytes+1))
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			return nil, context.DeadlineExceeded
+		}
 		return nil, errors.New("read ClickHouse response")
 	}
 	if len(data) > maxResponseBytes {

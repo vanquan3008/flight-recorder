@@ -80,8 +80,9 @@ func defaultConfig() Config {
 	}
 
 	databaseDefaults := DatabaseConfig{
-		MaxConnections:           200,
+		MaxConnections:           20,
 		MinConnections:           2,
+		ConnectTimeout:           DefaultDatabaseConnectTimeout,
 		MaxConnectionLifetime:    time.Hour,
 		MaxConnectionIdleTime:    30 * time.Minute,
 		HealthCheckPeriod:        time.Minute,
