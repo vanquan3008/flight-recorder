@@ -6,13 +6,17 @@ import (
 	"time"
 )
 
-const maxDatabaseConnections = 1_000
+const (
+	maxDatabaseConnections        = 1_000
+	DefaultDatabaseConnectTimeout = 5 * time.Second
+)
 
 // DatabaseConfig configures PostgreSQL connection pooling, migrations, and session timeouts.
 type DatabaseConfig struct {
 	URL                   string        `config:"url"`
 	MaxConnections        int32         `config:"max_connections"`
 	MinConnections        int32         `config:"min_connections"`
+	ConnectTimeout        time.Duration `config:"connect_timeout"`
 	MaxConnectionLifetime time.Duration `config:"max_connection_lifetime"`
 	MaxConnectionIdleTime time.Duration `config:"max_connection_idle_time"`
 	HealthCheckPeriod     time.Duration `config:"health_check_period"`
@@ -29,8 +33,8 @@ func (configuration Config) validateDatabase(validator *validator) {
 	database := configuration.Database
 
 	database.validateConnectionPool(validator)
-	if int32(configuration.Ingestion.Workers+2) > database.MaxConnections {
-		validator.add("database.max_connections", "must reserve at least one connection per ingestion worker plus two")
+	if int32(2*configuration.Ingestion.Workers+2) > database.MaxConnections {
+		validator.add("database.max_connections", "must reserve one connection per event and metric worker plus two")
 	}
 	database.validateConnectionLifecycle(validator)
 	database.validateSessionLimits(validator)
@@ -56,6 +60,9 @@ func (database DatabaseConfig) validateConnectionPool(validator *validator) {
 
 // validateConnectionLifecycle validates connection lifetime and health check settings.
 func (database DatabaseConfig) validateConnectionLifecycle(validator *validator) {
+	if database.ConnectTimeout <= 0 {
+		validator.add("database.connect_timeout", "must be positive")
+	}
 	if database.MaxConnectionLifetime <= 0 {
 		validator.add("database.max_connection_lifetime", "must be positive")
 	}

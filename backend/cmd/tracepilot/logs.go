@@ -9,7 +9,6 @@ import (
 	"github.com/vanquan3008/tracepilot/internal/domain/analysis"
 	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
 	"github.com/vanquan3008/tracepilot/internal/query"
-	"github.com/vanquan3008/tracepilot/internal/storage/clickhouse"
 	"github.com/vanquan3008/tracepilot/internal/storage/postgres"
 )
 
@@ -28,27 +27,13 @@ type storageBackend struct {
 	logs logStore
 }
 
-func buildStorageBackend(ctx context.Context, cfg config.Config, database *postgres.Database) (*storageBackend, error) {
-	store, err := clickhouse.New(cfg.ClickHouse, cfg.Retention.MaxAge)
-	if err != nil {
-		return nil, err
-	}
-	if err := store.Ready(ctx); err != nil {
-		store.Close()
-		return nil, err
-	}
-	return &storageBackend{Database: database, logs: store}, nil
-}
-
-func (backend *storageBackend) closeLogs() {
+func (backend *storageBackend) Close() {
 	backend.logs.Close()
+	backend.Database.Close()
 }
 
 func (backend *storageBackend) Ready(ctx context.Context) error {
-	if err := backend.Database.Ready(ctx); err != nil {
-		return err
-	}
-	return backend.logs.Ready(ctx)
+	return checkDatabases(ctx, backend.Database, backend.logs)
 }
 
 func (backend *storageBackend) StoreEvents(ctx context.Context, scope config.IngestionConfig, events []telemetry.Event) error {

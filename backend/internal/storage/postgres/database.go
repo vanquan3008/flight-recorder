@@ -2,9 +2,11 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/vanquan3008/tracepilot/internal/config"
 	notificationdomain "github.com/vanquan3008/tracepilot/internal/domain/notification"
@@ -55,17 +57,10 @@ func OpenWithWebhookEncryptionKey(applicationContext context.Context, configurat
 }
 
 func open(applicationContext context.Context, configuration config.DatabaseConfig, webhookEncryptionKey string) (*Database, error) {
-	poolConfiguration, parseError := pgxpool.ParseConfig(configuration.URL)
+	poolConfiguration, parseError := parsePoolConfig(configuration)
 	if parseError != nil {
 		return nil, fmt.Errorf("parse database configuration: %w", parseError)
 	}
-
-	poolConfiguration.MaxConns = configuration.MaxConnections
-	poolConfiguration.MinConns = configuration.MinConnections
-	poolConfiguration.MaxConnLifetime = configuration.MaxConnectionLifetime
-	poolConfiguration.MaxConnIdleTime = configuration.MaxConnectionIdleTime
-	poolConfiguration.HealthCheckPeriod = configuration.HealthCheckPeriod
-	applySessionParameters(poolConfiguration.ConnConfig, configuration)
 
 	databasePool, openError := pgxpool.NewWithConfig(applicationContext, poolConfiguration)
 	if openError != nil {
@@ -95,16 +90,16 @@ func open(applicationContext context.Context, configuration config.DatabaseConfi
 }
 
 func (database *Database) Ready(readinessContext context.Context) error {
-	if pingError := database.pool.Ping(readinessContext); pingError != nil {
-		return fmt.Errorf("database ping failed: %w", pingError)
-	}
-
 	state, queryError := sqlcstore.New(database.pool).GetSchemaVersion(readinessContext)
 	if queryError != nil {
+		var pgError *pgconn.PgError
+		if errors.Is(queryError, pgx.ErrNoRows) || (errors.As(queryError, &pgError) && pgError.Code == "42P01") {
+			return fmt.Errorf("database schema is not initialized; run tracepilot migrate up: %w", queryError)
+		}
 		return fmt.Errorf("read schema version: %w", queryError)
 	}
 	if state.Dirty || uint(state.Version) != migrations.CurrentVersion {
-		return fmt.Errorf("schema version is %d (dirty=%t), expected %d", state.Version, state.Dirty, migrations.CurrentVersion)
+		return fmt.Errorf("schema version is %d (dirty=%t), expected %d; repair the schema or run tracepilot migrate up", state.Version, state.Dirty, migrations.CurrentVersion)
 	}
 	return nil
 }

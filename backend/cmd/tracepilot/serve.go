@@ -13,8 +13,6 @@ import (
 	ingestotlp "github.com/vanquan3008/tracepilot/internal/ingest/otlp"
 	"github.com/vanquan3008/tracepilot/internal/observability/logging"
 	"github.com/vanquan3008/tracepilot/internal/observability/metrics"
-	"github.com/vanquan3008/tracepilot/internal/storage/migrations"
-	"github.com/vanquan3008/tracepilot/internal/storage/postgres"
 	"github.com/vanquan3008/tracepilot/internal/transport/httpapi"
 	"log/slog"
 	"os"
@@ -60,25 +58,13 @@ func runServer(arguments []string) int {
 	// 1. Database initialization
 	// ---------------------------------------------------------
 
-	logger.Info("Checking database schema")
-
-	if err := migrations.EnsureCurrent(cfg.Database.URL, cfg.Database.MigrationsPath); err != nil {
-		logger.Error("database schema check failed", "error", err)
-		return 1
-	}
-
-	database, err := postgres.OpenWithWebhookEncryptionKey(appCtx, cfg.Database, cfg.Notifications.EncryptionKey)
+	backend, err := openStorageBackend(appCtx, cfg)
 	if err != nil {
-		logger.Error("database initialization failed", "error", err)
+		logger.Error("storage initialization failed", "error", err)
 		return 1
 	}
-	defer database.Close()
-	backend, err := buildStorageBackend(appCtx, cfg, database)
-	if err != nil {
-		logger.Error("log storage initialization failed", "error", err)
-		return 1
-	}
-	defer backend.closeLogs()
+	defer backend.Close()
+	database := backend.Database
 
 	if err := ensureTelemetryPartitions(appCtx, database); err != nil {
 		logger.Error("telemetry partition initialization failed", "error", err)

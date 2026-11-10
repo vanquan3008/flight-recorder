@@ -80,7 +80,7 @@ flowchart LR
 
 <section id="d2">
   <h2>2. Khởi động và tắt</h2>
-  <p>Server không tự migrate. Thành phần cốt lõi dừng thì tiến trình dừng; worker phụ tự phục hồi với backoff.</p>
+  <p>Một pool PostgreSQL và một HTTP client ClickHouse dùng chung; kiểm schema đồng thời có deadline. Server không tự migrate. Thành phần cốt lõi dừng thì tiến trình dừng; worker phụ tự phục hồi với backoff.</p>
   <div class="diagram"><pre class="mermaid">
 flowchart TD
   A(["Bắt đầu serve"]) --> B["Đọc cấu hình<br/>mặc định, .env, biến môi trường"]
@@ -88,17 +88,24 @@ flowchart TD
   B --> C{"Có JWT secret?"}
   C -->|"không"| C1["Sinh khóa ngẫu nhiên và cảnh báo"]
   C -->|"có"| D
-  C1 --> D["Kiểm tra schema version 3, không dirty"]
-  D -->|"lệch hoặc dirty"| X1(["Thoát mã 1"])
-  D --> E["Mở PG, kiểm schema ClickHouse bắt buộc,<br/>tạo partition PG và scope mặc định"]
-  E -->|"lỗi"| X1
-  E --> F["Dựng replay, metrics,<br/>2 pipeline, bộ thu OTLP, API"]
+  C1 --> D["Mở một pool PG và một HTTP client CH<br/>deadline startup mặc định 10s"]
+  D --> PG["PG: kiểm version 3, không dirty<br/>qua pool runtime"]
+  D --> CH["CH: kiểm schema, TTL và quyền đọc"]
+  PG --> E["Cả hai sẵn sàng"]
+  CH --> E
+  PG -->|"lỗi"| Fail["Hủy kiểm tra còn lại<br/>đóng cả hai client"]
+  CH -->|"lỗi"| Fail
+  Fail --> X1(["Thoát mã 1"])
+  E --> Scope["Tạo partition PG và scope mặc định"]
+  Scope -->|"lỗi"| Fail
+  Scope --> F["Dựng replay, metrics,<br/>2 pipeline, bộ thu OTLP, API"]
   F --> G["Chạy song song:<br/>API, OTLP (cốt lõi),<br/>detection, partition, webhook, retention (tự phục hồi)"]
   G --> H{"Tín hiệu dừng<br/>hoặc server cốt lõi lỗi?"}
   H -->|"chưa"| G
   H -->|"rồi"| I["Listener ngừng nhận,<br/>chờ request đang chạy"]
   I --> J["Drain pipeline events rồi metrics<br/>trong shutdown_timeout"]
-  J --> K{"Có lỗi thật?"}
+  J --> Close["Đóng HTTP client CH và pool PG"]
+  Close --> K{"Có lỗi thật?"}
   K -->|"có"| X1
   K -->|"không"| Z(["Thoát mã 0"])
   </pre></div>

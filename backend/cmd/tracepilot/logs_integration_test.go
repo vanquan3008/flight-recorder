@@ -58,11 +58,12 @@ func TestHybridLogsPreserveIncidentsRetryAndLegacyBackfill(t *testing.T) {
 			t.Error("ClickHouse test cleanup failed", response.StatusCode)
 		}
 	})
-	database, err := postgres.Open(ctx, cfg.Database)
+	backend, err := openStorageBackend(ctx, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer database.Close()
+	defer backend.Close()
+	database := backend.Database
 	if err := database.EnsureIngestionScope(ctx, scope); err != nil {
 		t.Fatal(err)
 	}
@@ -82,11 +83,6 @@ func TestHybridLogsPreserveIncidentsRetryAndLegacyBackfill(t *testing.T) {
 			}
 		}
 	})
-	backend, err := buildStorageBackend(ctx, cfg, database)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer backend.closeLogs()
 	info := telemetry.Event{ID: telemetry.DeterministicID(at, project, "info"), ProjectID: project,
 		EnvironmentID: scope.EnvironmentID, Environment: scope.EnvironmentName, ServiceName: "api",
 		Timestamp: at, Signal: telemetry.SignalLog, Type: telemetry.EventLog, SeverityNumber: 9,
