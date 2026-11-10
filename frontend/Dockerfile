@@ -3,13 +3,13 @@ WORKDIR /src
 COPY package.json package-lock.json ./
 RUN npm ci
 COPY . .
-# Chỉ đặt khi console và API khác origin; để trống thì nginx proxy /api về backend.
+# Set for a separate API origin; leave empty to use nginx's /api proxy.
 ARG VITE_API_BASE_URL=
 ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
 RUN npm run build
 
 FROM nginxinc/nginx-unprivileged:1.29-alpine AS console
-# Image gốc render *.template bằng envsubst lúc khởi động, chỉ thay biến đã định nghĩa.
+# The base image renders *.template with envsubst at startup using defined variables.
 COPY nginx.conf.template /etc/nginx/templates/default.conf.template
 COPY --from=build /src/dist /usr/share/nginx/html
 ENV TRACEPILOT_API_UPSTREAM=http://tracepilot:8080
