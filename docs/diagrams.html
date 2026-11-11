@@ -150,7 +150,7 @@ flowchart TD
 <section id="d3">
   <h2>3. Đăng ký, đăng nhập, refresh</h2>
   <p>tracepilot seed chỉ tạo super admin development, không tạo project, environment, membership hay telemetry mẫu; chạy lại giữ nguyên tài khoản và dữ liệu đã có. Sau khi đăng nhập, người dùng tạo project trong console.</p>
-  <p>application/session xác minh credential và đổi mật khẩu qua storage port. HTTP giữ rate limit, JWT, cookie và response contract. Đổi mật khẩu thu hồi phiên/token trong transaction rồi xóa identity cache và trả JWT mới. Access token (15 phút) nằm trong bộ nhớ; refresh token ngẫu nhiên nằm trong cookie HttpOnly và đổi mới mỗi lần dùng.</p>
+  <p>application/session xác minh credential và đổi mật khẩu qua storage port. HTTP giữ rate limit, JWT, cookie và response contract. Đổi mật khẩu thu hồi phiên/token trong transaction rồi đọc lại tài khoản từ DB và trả JWT mới. Access token (15 phút) nằm trong bộ nhớ; refresh token ngẫu nhiên nằm trong cookie HttpOnly và đổi mới mỗi lần dùng.</p>
   <div class="diagram"><pre class="mermaid">
 sequenceDiagram
   autonumber

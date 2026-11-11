@@ -125,7 +125,7 @@ jobs:
           go -C backend run ./cmd/tracepilot serve > tracepilot-e2e.log 2>&1 &
           server_pid=$!
           npm --prefix frontend run build
-          npm --prefix frontend exec vite -- preview --host 127.0.0.1 --port 4173 --strictPort > frontend-preview.log 2>&1 &
+          npm --prefix frontend exec vite -- preview frontend --host 127.0.0.1 --port 4173 --strictPort > frontend-preview.log 2>&1 &
           preview_pid=$!
           trap 'kill "$server_pid" "$preview_pid"' EXIT
           for _ in $(seq 1 30); do

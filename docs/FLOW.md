@@ -128,7 +128,7 @@ và pool PG. Đặt grace của container
   `/auth/me` và `/auth/password` cho tới khi đổi.
 - `application/session.ChangePassword` kiểm mật khẩu hiện tại, từ chối dùng lại mật khẩu và gọi
   storage để đổi cùng việc thu hồi phiên/token trong transaction; giữ session của trình duyệt hiện tại
-  khi có refresh cookie. Handler xóa identity cache và trả session view cùng JWT mới.
+  khi có refresh cookie. Handler đọc lại tài khoản từ DB và trả session view cùng JWT mới.
 - Token mới sau đổi mật khẩu dùng cùng issuer, audience và TTL đã cấu hình như đăng nhập/refresh.
 
 ## 4. Xác thực và phân quyền một request API [4]

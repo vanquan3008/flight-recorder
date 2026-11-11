@@ -67,12 +67,12 @@ func apply(ctx context.Context, databaseURL, operation string, steps int) (resul
 		err = runner.Up()
 		result = "migrations applied"
 	} else {
-		version, dirty, err := runner.Version()
-		if err != nil {
-			return "", err
+		version, dirty, versionError := runner.Version()
+		if versionError != nil {
+			return "", versionError
 		}
 		if dirty {
-			return "", fmt.Errorf("Dirty database version %d; repair the schema before rollback", version)
+			return "", fmt.Errorf("dirty database version %d; repair the schema before rollback", version)
 		}
 		if err := checkRollback(version, steps); err != nil {
 			return "", err
