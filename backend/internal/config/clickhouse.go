@@ -36,6 +36,7 @@ func (p LogPartition) PartitionExpr() string {
 // ClickHouseConfig configures ClickHouse HTTP(S) connectivity.
 type ClickHouseConfig struct {
 	URL            string        `config:"url"`
+	AutoMigrate    bool          `config:"auto_migrate"`
 	Database       string        `config:"database"`
 	Username       string        `config:"username"`
 	Password       string        `config:"password"`

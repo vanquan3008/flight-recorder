@@ -12,21 +12,12 @@ import (
 	"golang.org/x/sync/semaphore"
 )
 
-// errOversizedBatch marks a request whose points can never fit the byte budget.
 var errOversizedBatch = errors.New("metrics request exceeds the pipeline byte budget")
 
-// batchStoreTimeout is the maximum time allowed for a single metrics batch write.
 const batchStoreTimeout = 5 * time.Second
 
-// MetricsStoreFunc persists a batch of metric data points.
 type MetricsStoreFunc func(context.Context, []telemetry.MetricDataPoint) error
 
-// MetricsPipeline carries customer OTLP metrics to PostgreSQL. Like the event
-// pipeline it acknowledges only after the write commits: SubmitMetrics returns
-// success once the points are stored, an error for a retryable failure, and a
-// rejected count for points storage cannot hold. Admission is non-blocking, so
-// a full queue fails fast and the exporter retries. TracePilot's own
-// Prometheus metrics are a separate, in-process registry and are not stored here.
 type MetricsPipeline struct {
 	queue         chan metricBatch
 	byteBudget    *semaphore.Weighted
@@ -47,7 +38,6 @@ type MetricsPipeline struct {
 	queued        atomic.Int64
 }
 
-// MetricsPipelineConfig holds tuning parameters for MetricsPipeline.
 type MetricsPipelineConfig struct {
 	QueueSize     int
 	QueueMaxBytes int64
@@ -56,15 +46,12 @@ type MetricsPipelineConfig struct {
 	Metrics       *metrics.Registry
 }
 
-// metricBatch is one request's points. ack receives the write outcome exactly
-// once and is buffered, so a worker never blocks on a submitter that gave up.
 type metricBatch struct {
 	points []telemetry.MetricDataPoint
 	bytes  int64
 	ack    chan error
 }
 
-// NewMetricsPipeline creates a MetricsPipeline. Call Start before SubmitMetrics.
 func NewMetricsPipeline(cfg MetricsPipelineConfig, store MetricsStoreFunc) *MetricsPipeline {
 	if cfg.QueueSize <= 0 {
 		cfg.QueueSize = 1024
@@ -101,18 +88,13 @@ func (p *MetricsPipeline) Start() {
 		}
 		p.cancelWorkers = cancel
 		p.ready.Store(true)
-		for range p.workers {
+		for i := 0; i < p.workers; i++ {
 			p.waitGroup.Add(1)
 			go p.worker(workerCtx)
 		}
 	})
 }
 
-// SubmitMetrics queues one request's points and waits for them to commit. It
-// returns the committed count, the count storage rejected as invalid (retrying
-// cannot help), and an error for temporary failures that must be retried.
-// Writes are idempotent, so a retry after an unknown outcome cannot duplicate
-// points.
 func (p *MetricsPipeline) SubmitMetrics(ctx context.Context, points []telemetry.MetricDataPoint) (persisted, rejected int, err error) {
 	if len(points) == 0 {
 		return 0, 0, nil
@@ -122,7 +104,6 @@ func (p *MetricsPipeline) SubmitMetrics(ctx context.Context, points []telemetry.
 	}
 	batch, admitError := p.admit(points)
 	if errors.Is(admitError, errOversizedBatch) {
-		// No retry can succeed, so report the points as rejected rather than 503.
 		return 0, len(points), nil
 	}
 	if admitError != nil {
@@ -143,9 +124,6 @@ func (p *MetricsPipeline) SubmitMetrics(ctx context.Context, points []telemetry.
 	}
 }
 
-// admit reserves queue room and byte budget without blocking, then enqueues.
-// The read lock spans the send: Shutdown takes the write lock before closing
-// the channel, so a sender can never race with close.
 func (p *MetricsPipeline) admit(points []telemetry.MetricDataPoint) (metricBatch, error) {
 	p.stateMu.RLock()
 	defer p.stateMu.RUnlock()
@@ -179,7 +157,6 @@ func (p *MetricsPipeline) admit(points []telemetry.MetricDataPoint) (metricBatch
 	}
 }
 
-// reservePoints claims room for count points in the queue, or reports it full.
 func (p *MetricsPipeline) reservePoints(count int64) bool {
 	for {
 		queued := p.queued.Load()
@@ -200,17 +177,10 @@ func (p *MetricsPipeline) reject(count int, reason string, cause error) error {
 	return cause
 }
 
-// Ready reports whether the pipeline accepts requests: false before Start and
-// once Shutdown has begun.
 func (p *MetricsPipeline) Ready() bool { return p.ready.Load() }
 
-// DroppedTotal returns the cumulative count of data points refused at
-// admission because the queue or byte budget was full.
 func (p *MetricsPipeline) DroppedTotal() int64 { return p.dropped.Load() }
 
-// Shutdown stops admission and lets the workers drain queued batches, so every
-// accepted request still gets its outcome. When ctx expires first the workers
-// are cancelled and the remaining requests fail with a retryable error.
 func (p *MetricsPipeline) Shutdown(ctx context.Context) error {
 	p.shutdownOnce.Do(func() {
 		p.stateMu.Lock()
@@ -219,11 +189,13 @@ func (p *MetricsPipeline) Shutdown(ctx context.Context) error {
 		close(p.queue)
 		p.stateMu.Unlock()
 	})
+
 	done := make(chan struct{})
 	go func() {
 		p.waitGroup.Wait()
 		close(done)
 	}()
+
 	select {
 	case <-done:
 		if p.cancelWorkers != nil {
@@ -238,52 +210,74 @@ func (p *MetricsPipeline) Shutdown(ctx context.Context) error {
 	}
 }
 
-// worker merges queued requests into batches of up to batchSize points. The
-// loop ends when Shutdown closes the queue and every queued batch is flushed.
 func (p *MetricsPipeline) worker(ctx context.Context) {
 	defer p.waitGroup.Done()
-	for first := range p.queue {
-		batches, points := []metricBatch{first}, len(first.points)
-	collect:
-		for points < p.batchSize {
-			select {
-			case more, open := <-p.queue:
-				if !open {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case first, open := <-p.queue:
+			if !open {
+				return
+			}
+			batches := []metricBatch{first}
+			points := len(first.points)
+
+		collect:
+			for points < p.batchSize {
+				select {
+				case <-ctx.Done():
+					p.flush(ctx, batches)
+					return
+				case more, open := <-p.queue:
+					if !open {
+						break collect
+					}
+					batches = append(batches, more)
+					points += len(more.points)
+				default:
 					break collect
 				}
-				batches = append(batches, more)
-				points += len(more.points)
-			default:
-				break collect
 			}
+			p.flush(ctx, batches)
 		}
-		p.flush(ctx, batches)
 	}
 }
 
-// flush writes the merged points and answers every request in the batch. When
-// storage rejects the content of a merged write, each request is written alone
-// so one bad request cannot fail the others.
 func (p *MetricsPipeline) flush(ctx context.Context, batches []metricBatch) {
-	var points []telemetry.MetricDataPoint
+	totalPoints := 0
+	for _, batch := range batches {
+		totalPoints += len(batch.points)
+	}
+
+	// Tối ưu: Pre-allocate slice để tránh cấp phát lại bộ nhớ trên heap
+	points := make([]telemetry.MetricDataPoint, 0, totalPoints)
 	for _, batch := range batches {
 		points = append(points, batch.points...)
 	}
+
 	storeCtx, cancel := context.WithTimeout(ctx, batchStoreTimeout)
+	defer cancel()
+
 	writeError := p.store(storeCtx, points)
-	cancel()
+
 	if errors.Is(writeError, telemetry.ErrInvalidEvent) && len(batches) > 1 {
 		for _, batch := range batches {
 			p.flush(ctx, []metricBatch{batch})
 		}
 		return
 	}
+
 	if writeError != nil && !errors.Is(writeError, telemetry.ErrInvalidEvent) && p.metrics != nil {
 		p.metrics.ObserveRejected("metrics", "storage", len(points))
 	}
+
 	for _, batch := range batches {
 		p.queued.Add(-int64(len(batch.points)))
 		p.byteBudget.Release(batch.bytes)
-		batch.ack <- writeError
+		select {
+		case batch.ack <- writeError:
+		default:
+		}
 	}
 }

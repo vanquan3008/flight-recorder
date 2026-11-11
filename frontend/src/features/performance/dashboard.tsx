@@ -2,7 +2,7 @@ import { toolbarClass, secondaryButtonClass } from "../../shared/ui/styles";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { ArrowLeft } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
-import { useAuth } from "../../app/auth";
+import { useAuth } from "../../shared/session";
 import { api, queryString } from "../../shared/api";
 import { Sparkline } from "../../shared/charts";
 import type { PerformanceBucket, PerformanceStats, RequestPerformance, TelemetryQuality } from "../../shared/types";

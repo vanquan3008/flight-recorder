@@ -2,7 +2,7 @@ import { secondaryButtonClass } from "../../shared/ui/styles";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { useAuth } from "../../app/auth";
+import { useAuth } from "../../shared/session";
 import { api, queryString } from "../../shared/api";
 import { FlowDiagram, GraphLegend, ServiceGraph, type FlowLink } from "../../shared/charts";
 import type { LogRecord, Page, Topology, TopologyEdge, TopologyNode } from "../../shared/types";

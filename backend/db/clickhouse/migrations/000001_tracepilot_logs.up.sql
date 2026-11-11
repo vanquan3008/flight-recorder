@@ -24,7 +24,6 @@ CREATE TABLE IF NOT EXISTS tracepilot_logs (
 )
 ENGINE = ReplacingMergeTree
 PARTITION BY __PARTITION__
--- Keep the identity key stable across PostgreSQL microsecond backfill and OTLP nanosecond retries.
 ORDER BY (project_id, environment_id, service_name, toStartOfMillisecond(occurred_at), event_id)
 __TTL__
 SETTINGS ttl_only_drop_parts = 1

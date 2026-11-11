@@ -18,6 +18,8 @@ env:
   POSTGRES_USER: tracepilot
   POSTGRES_PASSWORD: tracepilot-test
   TRACEPILOT_DATABASE_URL: postgres://tracepilot:tracepilot-test@127.0.0.1:5432/tracepilot?sslmode=disable
+  TRACEPILOT_CLICKHOUSE_URL: http://127.0.0.1:8123
+  TRACEPILOT_CLICKHOUSE_TEST_URL: http://127.0.0.1:8123
 
 jobs:
   frontend:
@@ -84,17 +86,32 @@ jobs:
           --health-interval 2s
           --health-timeout 3s
           --health-retries 15
+      clickhouse:
+        image: clickhouse/clickhouse-server:26.7
+        ports:
+          - 8123:8123
+        env:
+          CLICKHOUSE_SKIP_USER_SETUP: "1"
+        options: >-
+          --health-cmd "clickhouse-client --query 'SELECT 1'"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: ./.github/actions/setup-go
-      - name: Verify PostgreSQL migrations
+      - name: Verify embedded migrations and schema readiness
         run: |
-          go -C backend run ./cmd/tracepilot migrate up
-          go -C backend run ./cmd/tracepilot migrate down 1
-          go -C backend run ./cmd/tracepilot migrate up
+          go -C backend build -o /tmp/tracepilot ./cmd/tracepilot
+          cd /tmp
+          /tmp/tracepilot migrate status
+          /tmp/tracepilot migrate clickhouse status
+          /tmp/tracepilot migrate all
+          /tmp/tracepilot migrate all
       - name: Test
         env:
           TRACEPILOT_INTEGRATION_TEST: "1"
+          TRACEPILOT_CLICKHOUSE_INTEGRATION_TEST: "1"
         run: go -C backend test -race -coverprofile=coverage.out ./...
       - name: Compile all packages
         run: go -C backend build ./...
@@ -111,7 +128,7 @@ jobs:
           npm --prefix frontend exec vite -- preview --host 127.0.0.1 --port 4173 --strictPort > frontend-preview.log 2>&1 &
           preview_pid=$!
           trap 'kill "$server_pid" "$preview_pid"' EXIT
-          for attempt in $(seq 1 30); do
+          for _ in $(seq 1 30); do
             if curl --fail --silent http://127.0.0.1:8080/health/ready > /dev/null && curl --fail --silent http://127.0.0.1:4173/ > /dev/null; then
               npm --prefix frontend run test:e2e
               exit 0

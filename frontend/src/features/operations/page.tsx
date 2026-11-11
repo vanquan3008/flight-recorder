@@ -2,7 +2,7 @@ import { IncidentMetrics, StatusBadge } from "./incident-metrics";
 import { ArrowRight, RotateCcw, Search, Server } from "lucide-react";
 import type { FormEvent } from "react";
 import { useSearchParams } from "react-router-dom";
-import { useAuth } from "../../app/auth";
+import { useAuth } from "../../shared/session";
 import { compactSearchParams, pageItems, queryString, usePagedQuery } from "../../shared/api";
 import type { Incident } from "../../shared/types";
 import {

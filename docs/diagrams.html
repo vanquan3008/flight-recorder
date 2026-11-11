@@ -42,7 +42,7 @@
 
 <section id="d1">
   <h2>1. Tổng quan hệ thống</h2>
-  <p>Một ứng dụng Go phục vụ API và OTLP; PostgreSQL quản trị/trace/metric/incident, ClickHouse bắt buộc lưu raw log.</p>
+  <p>Một ứng dụng Go phục vụ API và OTLP; PostgreSQL quản trị/trace/metric/incident, ClickHouse bắt buộc lưu raw log. cmd nối dependency; application điều phối qua interface nhỏ; domain giữ quy tắc thuần. Console ghép route ở app, feature dùng context từ shared/session và không phụ thuộc ngược vào app. Phạm vi MVP và roadmap nằm trong <a href="../README.md#mvp-scope-and-release-criteria">README</a>.</p>
   <div class="diagram"><pre class="mermaid">
 flowchart LR
   subgraph Client["Bên ngoài"]
@@ -80,23 +80,59 @@ flowchart LR
 
 <section id="d2">
   <h2>2. Khởi động và tắt</h2>
-  <p>Một pool PostgreSQL và một HTTP client ClickHouse dùng chung; kiểm schema đồng thời có deadline. Server không tự migrate. Thành phần cốt lõi dừng thì tiến trình dừng; worker phụ tự phục hồi với backoff.</p>
+  <p>Database-first: schema SQL có version là nguồn cho sqlc và runtime. PostgreSQL kiểm trạng thái/severity incident và event webhook hợp lệ kể cả khi import hoặc ghi SQL trực tiếp; dữ liệu cũ sai quy tắc làm migration constraint thất bại, không bị tự sửa/xóa.</p>
+  <div class="diagram"><pre class="mermaid">
+flowchart LR
+  Schema["Migration SQL mới"] --> Queries["Cập nhật named query"]
+  Schema --> Generate["sqlc generate + vet"]
+  Queries --> Generate
+  Generate --> Adapter["Cập nhật storage Go"]
+  Adapter --> Verify["Integration trên DB dùng một lần<br/>cài mới, chạy lại, dữ liệu hợp lệ và vi phạm"]
+  Schema --> Embedded["SQL nhúng trong binary"]
+  </pre></div>
+  <p>PG và CH có entry point quản lý riêng, mỗi bên chỉ nạp cấu hình của kho đó từ backend/.env; thiếu hoặc sai cấu hình kho kia không chặn lệnh riêng. SQL, version, journal và cờ auto độc lập. Auto-migrate gọi trực tiếp runner của từng kho. Helper chung chỉ giữ phần CLI và tính status thuần; hai storage adapter không import nhau. migrate all là lệnh tiện ích gọi lần lượt PG rồi CH, không giữ journal/version chung, rồi dùng lại luồng mở client/readiness của runtime với credential database; lỗi thì chặn khởi động, không tự rollback. status/version chỉ đọc và không chờ khóa mutation. serve chạy migration theo DATABASE_AUTO_MIGRATE và CLICKHOUSE_AUTO_MIGRATE (mặc định false) trước listener/worker. Runner PG tự giữ advisory lock, kể cả tạo journal mới. CH kiểm layout trước khi đổi TTL và kiểm schema/cột trước khi ghi clean; DDL không idempotent cần một updater.</p>
+  <div class="diagram"><pre class="mermaid">
+flowchart LR
+  PGC["migrate postgres up/down/status/version"] --> PGM["PostgreSQL manager<br/>chỉ cấu hình PostgreSQL"]
+  CHC["migrate clickhouse up/status"] --> CHM["ClickHouse manager<br/>chỉ cấu hình ClickHouse và log retention"]
+  PGSQL["db/postgres/migrations/000001_init.up.sql<br/>một baseline, một transaction; không rollback baseline"] --> PGM
+  CHSQL["db/clickhouse/migrations"] --> CHM
+  PGM --> PGJ[("PostgreSQL<br/>schema_migrations")]
+  CHM --> CHJ[("ClickHouse<br/>tracepilot_schema_migrations")]
+  </pre></div>
   <div class="diagram"><pre class="mermaid">
 flowchart TD
-  A(["Bắt đầu serve"]) --> B["Đọc cấu hình<br/>mặc định, .env, biến môi trường"]
+  Update(["Bước cập nhật / make start"]) --> Lock["migrate all: hai bộ version riêng<br/>SQL nhúng; PG chờ lock tối đa 10s"]
+  Lock --> Mpg["Gọi bộ quản lý PostgreSQL<br/>runner tự khóa; dirty hoặc lỗi: dừng"]
+  Mpg --> Mch["Gọi bộ quản lý ClickHouse<br/>journal riêng; kiểm layout rồi TTL/cột trước clean"]
+  Mch --> Check["Kiểm readiness cả hai schema"]
+  Check --> A(["Bắt đầu serve"])
+  Lock -->|"lỗi"| StopUpdate(["Chặn khởi động<br/>không tự rollback"])
+  Mpg -->|"lỗi"| StopUpdate
+  Mch -->|"lỗi"| StopUpdate
+  Check -->|"lỗi"| StopUpdate
+  A --> B["Đọc cấu hình<br/>mặc định, .env, biến môi trường"]
   B -->|"sai"| X2(["Thoát mã 2"])
   B --> C{"Có JWT secret?"}
   C -->|"không"| C1["Sinh khóa ngẫu nhiên và cảnh báo"]
-  C -->|"có"| D
-  C1 --> D["Mở một pool PG và một HTTP client CH<br/>deadline startup mặc định 10s"]
-  D --> PG["PG: kiểm version 3, không dirty<br/>qua pool runtime"]
-  D --> CH["CH: kiểm schema, TTL và quyền đọc"]
+  C -->|"có"| AutoPG
+  C1 --> AutoPG{"DATABASE_AUTO_MIGRATE?"}
+  AutoPG -->|"true"| RunPG["Chạy migration PG<br/>khóa advisory PG riêng"]
+  AutoPG -->|"false"| AutoCH
+  RunPG --> AutoCH{"CLICKHOUSE_AUTO_MIGRATE?"}
+  RunPG -->|"lỗi"| StopUpdate
+  AutoCH -->|"true"| RunCH["Chạy migration CH<br/>nhật ký version riêng"]
+  AutoCH -->|"false"| D
+  RunCH --> D["Mở một pool PG và một HTTP client CH<br/>deadline startup mặc định 10s"]
+  RunCH -->|"lỗi"| StopUpdate
+  D --> PG["PG: kiểm version từ SQL nhúng, không dirty<br/>qua pool runtime"]
+  D --> CH["CH: kiểm version, không dirty<br/>schema, TTL và quyền đọc"]
   PG --> E["Cả hai sẵn sàng"]
   CH --> E
   PG -->|"lỗi"| Fail["Hủy kiểm tra còn lại<br/>đóng cả hai client"]
   CH -->|"lỗi"| Fail
   Fail --> X1(["Thoát mã 1"])
-  E --> Scope["Tạo partition PG và scope mặc định"]
+  E --> Scope["Tạo partition PG<br/>không tạo project/environment mặc định"]
   Scope -->|"lỗi"| Fail
   Scope --> F["Dựng replay, metrics,<br/>2 pipeline, bộ thu OTLP, API"]
   F --> G["Chạy song song:<br/>API, OTLP (cốt lõi),<br/>detection, partition, webhook, retention (tự phục hồi)"]
@@ -113,17 +149,21 @@ flowchart TD
 
 <section id="d3">
   <h2>3. Đăng ký, đăng nhập, refresh</h2>
-  <p>Access token (15 phút) nằm trong bộ nhớ; refresh token ngẫu nhiên nằm trong cookie HttpOnly và đổi mới mỗi lần dùng.</p>
+  <p>tracepilot seed chỉ tạo super admin development, không tạo project, environment, membership hay telemetry mẫu; chạy lại giữ nguyên tài khoản và dữ liệu đã có. Sau khi đăng nhập, người dùng tạo project trong console.</p>
+  <p>application/session xác minh credential và đổi mật khẩu qua storage port. HTTP giữ rate limit, JWT, cookie và response contract. Đổi mật khẩu thu hồi phiên/token trong transaction rồi xóa identity cache và trả JWT mới. Access token (15 phút) nằm trong bộ nhớ; refresh token ngẫu nhiên nằm trong cookie HttpOnly và đổi mới mỗi lần dùng.</p>
   <div class="diagram"><pre class="mermaid">
 sequenceDiagram
   autonumber
   participant C as Console
   participant A as API
+  participant S as application/session
   participant D as PostgreSQL
   C->>A: POST /auth/login
   A->>A: Rate limit theo IP và 10 lần mỗi email
-  A->>D: Tìm tài khoản theo email
-  A->>A: Kiểm mật khẩu - email lạ vẫn tốn cùng thời gian
+  A->>S: Authenticate qua credential reader
+  S->>D: Tìm tài khoản theo email chuẩn hóa
+  S->>S: Kiểm mật khẩu - email lạ vẫn tốn cùng thời gian
+  S-->>A: User hoặc lỗi credential/storage
   alt sai hoặc bị khóa
     A-->>C: 401 INVALID_CREDENTIALS
   else đúng
@@ -183,7 +223,7 @@ flowchart TD
 
 <section id="d5">
   <h2>5. Ingest OTLP - ACK sau commit</h2>
-  <p>ACK chờ ClickHouse flush và mọi transaction PostgreSQL cần thiết. URL ClickHouse trống dùng luồng PostgreSQL cũ; không có transaction xuyên hai kho.</p>
+  <p>ACK chờ ClickHouse flush và mọi transaction PostgreSQL cần thiết. ClickHouse bắt buộc cho raw log; không có transaction xuyên hai kho.</p>
   <div class="diagram"><pre class="mermaid">
 flowchart TD
   S(["SDK gửi OTLP kèm ingest token"]) --> G{"Client đang bị chặn<br/>vì sai token quá nhiều?"}
@@ -203,10 +243,14 @@ flowchart TD
   RJ --> Q
   Q -->|"không"| R3
   Q --> B["Worker gom batch, nhóm theo scope"]
-  B --> CH["Nếu bật ClickHouse: raw log → batch gzip<br/>async_insert=1, wait_for_async_insert=1<br/>đọc FINAL khử trùng ID khi retry"]
-  CH -->|"lỗi tạm"| R3
+  B --> CH["Raw log → ClickHouse bắt buộc, batch gzip<br/>async_insert=1, wait_for_async_insert=1<br/>đọc FINAL khử trùng ID khi retry"]
+  CH -->|"lỗi tạm"| Retry{"Còn lượt thử?<br/>tối đa 3 lần ghi"}
   CH --> TX["PostgreSQL transaction cũ cho trace<br/>và transaction envelope lỗi log + incident/outbox<br/>log thường không ghi PG; metrics pipeline riêng"]
-  TX -->|"lỗi tạm"| R3
+  TX -->|"lỗi tạm"| Retry
+  Retry -->|"hết"| R3
+  Retry -->|"còn"| Wait["Backoff chỉ giữa hai lần thử"]
+  Wait -->|"hết thời gian chờ"| B
+  Wait -->|"hủy"| R3
   TX -->|"nội dung không thể lưu"| SP["Chia đôi batch tới khi tách được event hỏng"]
   SP --> B
   TX -->|"mọi bước thành công"| ACK(["ACK. Có record bị từ chối thì kèm partial success"])
@@ -302,12 +346,12 @@ sequenceDiagram
 
 <section id="d9">
   <h2>9. Webhook và outbox</h2>
-  <p>Gửi ít nhất một lần; người nhận phải chịu được delivery ID trùng.</p>
+  <p>Gửi ít nhất một lần; người nhận phải chịu được delivery ID trùng. Mỗi batch nhận tối đa NOTIFICATIONS_WORKERS delivery; chờ gửi và ghi kết quả xong mới poll tiếp, nên endpoint chậm không làm worker cộng dồn.</p>
   <div class="diagram"><pre class="mermaid">
 flowchart TD
   A["Transaction ingest hoặc detection<br/>mở / mở lại incident"] --> B["Ghi delivery vào outbox<br/>cùng transaction"]
   B --> C(["Worker quét theo chu kỳ"])
-  C --> D["Nhận việc bằng FOR UPDATE SKIP LOCKED<br/>lease 6 phút"]
+  C --> D["Nhận tối đa NOTIFICATIONS_WORKERS delivery<br/>FOR UPDATE SKIP LOCKED, lease 6 phút"]
   D --> E{"URL an toàn?<br/>HTTPS, không private / metadata,<br/>không theo redirect"}
   E -->|"không"| F["Đánh dấu failed"]
   E -->|"có"| G["Ký HMAC bằng secret đã giải mã và gửi"]
@@ -335,7 +379,7 @@ flowchart TD
     R3["Audit quá 180 ngày"]
     R4["Webhook delivery đã xong quá 30 ngày"]
   end
-  CH["ClickHouse TTL: xóa cả part khi hết hạn toàn bộ<br/>partition ngày/tháng/năm/tuần; vật lý lưu thêm chu kỳ<br/>đổi partition/TTL bằng migrate clickhouse up"]
+  CH["ClickHouse TTL: xóa cả part khi hết hạn toàn bộ<br/>partition ngày/tháng/năm/tuần; vật lý lưu thêm chu kỳ<br/>đổi TTL bằng migrate all / clickhouse up<br/>đổi khóa partition cần migration bảng riêng"]
   Ret --> N["Lỗi một nhóm không dừng nhóm khác"]
   K["Không bao giờ xóa:<br/>incident OPEN / INVESTIGATING,<br/>delivery đang xử lý"] -.-> Ret
   </pre></div>
@@ -361,10 +405,10 @@ sequenceDiagram
   autonumber
   actor User as Console (Live Tail)
   participant API as HTTP API (:8080)
-  participant Hub as StreamHub (In-Memory)
+  participant Hub as application/live.Hub (In-Memory)
   participant Pipe as Ingestion Pipeline
   participant DB as PostgreSQL
-  participant CH as ClickHouse (nếu bật)
+  participant CH as ClickHouse (raw logs)
 
   User->>API: GET /api/v1/live/stream (JWT, X-Project-ID, X-Environment)
   API->>API: Xác thực scope read & resolve env
@@ -378,7 +422,7 @@ sequenceDiagram
     Note over User,API: Hết quyền hoặc lỗi kiểm tra thì đóng stream
   end
   loop Ingest & Persist
-    opt ClickHouse được cấu hình
+    opt Batch có raw log
       Pipe->>CH: Ghi batch raw log, chờ flush
       CH-->>Pipe: Xác nhận ghi
     end

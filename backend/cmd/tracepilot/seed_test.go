@@ -4,28 +4,24 @@ import (
 	"regexp"
 	"strings"
 	"testing"
-
-	"github.com/vanquan3008/tracepilot/internal/config"
 )
 
 var seedUUIDPattern = regexp.MustCompile(`[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}`)
 
-func TestRenderSeedSQLCreatesOnlyDevelopmentAdmin(t *testing.T) {
+func TestRenderSeedSQLCreatesOnlySuperAdmin(t *testing.T) {
 	t.Parallel()
 
-	ingestion := seedTestConfig()
-	sql, err := renderSeedSQL(ingestion)
+	sql, err := renderSeedSQL()
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	for _, want := range []string{
-		"VALUES ('" + ingestion.ProjectID + "', 'sample', 'Dev''s project')",
-		"VALUES ('" + ingestion.EnvironmentID + "', '" + ingestion.ProjectID + "', 'test''s environment')",
+		"INSERT INTO users (id, email, display_name, password_hash, platform_admin)",
 		adminEmail,
 		"'Admin'",
-		"WHERE email = '" + adminEmail + "'",
-		"'owner'",
+		"true",
+		"ON CONFLICT (email) DO NOTHING",
 	} {
 		if !strings.Contains(sql, want) {
 			t.Errorf("rendered seed SQL does not contain %q", want)
@@ -33,6 +29,9 @@ func TestRenderSeedSQLCreatesOnlyDevelopmentAdmin(t *testing.T) {
 	}
 	for _, forbidden := range []string{
 		"tracepilot-sample",
+		"INSERT INTO projects",
+		"INSERT INTO environments",
+		"INSERT INTO project_members",
 		"INSERT INTO services",
 		"INSERT INTO events",
 		"INSERT INTO spans",
@@ -48,30 +47,25 @@ func TestRenderSeedSQLCreatesOnlyDevelopmentAdmin(t *testing.T) {
 	}
 
 	ids := seedUUIDs(sql)
-	if len(ids) != 3 {
-		t.Fatalf("rendered admin seed has %d unique UUIDs, want project, environment, and admin", len(ids))
+	if len(ids) != 1 {
+		t.Fatalf("rendered admin seed has %d unique UUIDs, want only the admin", len(ids))
 	}
 }
 
 func TestRenderSeedSQLGeneratesDifferentAdminIDs(t *testing.T) {
 	t.Parallel()
 
-	ingestion := seedTestConfig()
-	first, err := renderSeedSQL(ingestion)
+	first, err := renderSeedSQL()
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := renderSeedSQL(ingestion)
+	second, err := renderSeedSQL()
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	firstIDs := seedUUIDs(first)
 	secondIDs := seedUUIDs(second)
-	for _, configuredID := range []string{ingestion.ProjectID, ingestion.EnvironmentID} {
-		delete(firstIDs, configuredID)
-		delete(secondIDs, configuredID)
-	}
 	if len(firstIDs) != 1 || len(secondIDs) != 1 {
 		t.Fatalf("generated admin ID counts = %d and %d, want one per seed", len(firstIDs), len(secondIDs))
 	}
@@ -98,16 +92,6 @@ func TestNewSeedUUIDsAreV4AndUnique(t *testing.T) {
 			t.Fatalf("duplicate UUID generated: %q", id)
 		}
 		seen[id] = struct{}{}
-	}
-}
-
-func seedTestConfig() config.IngestionConfig {
-	return config.IngestionConfig{
-		ProjectID:       "123e4567-e89b-42d3-a456-426614174000",
-		ProjectSlug:     "sample",
-		ProjectName:     "Dev's project",
-		EnvironmentID:   "123e4567-e89b-42d3-a456-426614174001",
-		EnvironmentName: "test's environment",
 	}
 }
 

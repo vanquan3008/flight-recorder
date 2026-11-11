@@ -1,7 +1,7 @@
 import { useQueries, useQuery } from "@tanstack/react-query";
 import { Activity, AlertTriangle, BellRing, Gauge } from "lucide-react";
 import { Link } from "react-router-dom";
-import { useAuth } from "../../app/auth";
+import { useAuth } from "../../shared/session";
 import { api, queryString } from "../../shared/api";
 import type { Incident, Page, RequestPerformance, TelemetryQuality, TraceSummary } from "../../shared/types";
 import { Badge, DataTable, DetailLink, ErrorState, Loading, PageHeader, Panel, TimeWindowFilter, formatDuration, formatTime, useTimeWindow } from "../../shared/ui";

@@ -3,7 +3,7 @@ import { secondaryButtonClass } from "../../shared/ui/styles";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { type FormEvent, useState } from "react";
 import { FolderPlus, Info, Layers, Pencil, Plus, Server, ShieldCheck } from "lucide-react";
-import { useAuth } from "../../app/auth";
+import { useAuth } from "../../shared/session";
 import { canManageRole, type Project, type ProjectDetail, roleLabels } from "../../shared/session";
 import { api } from "../../shared/api";
 import { DataTable, ErrorState, Loading, Panel, formatTime } from "../../shared/ui";

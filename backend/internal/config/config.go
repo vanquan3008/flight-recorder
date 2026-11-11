@@ -34,6 +34,10 @@ type Config struct {
 //
 // Configuration is validated before being returned.
 func Load() (Config, error) {
+	return loadConfiguration(Config.Validate)
+}
+
+func loadConfiguration(validate func(Config) error, scopes ...string) (Config, error) {
 	fileValues, err := readEnvironmentFile()
 	if err != nil {
 		slog.Error("failed to read environment file", "error", err)
@@ -42,7 +46,7 @@ func Load() (Config, error) {
 
 	cfg := defaultConfig()
 
-	if err := applyEnvironment(&cfg, fileValues); err != nil {
+	if err := applyEnvironment(&cfg, fileValues, scopes...); err != nil {
 		slog.Error("failed to apply environment configuration", "error", err)
 		return Config{}, err
 	}
@@ -109,7 +113,7 @@ func Load() (Config, error) {
 		cfg.Ingestion.Workers = cfg.Queue.Workers
 	}
 
-	if err := cfg.Validate(); err != nil {
+	if err := validate(cfg); err != nil {
 		return Config{}, err
 	}
 

@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { App } from "../../app/app";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { AuthContext } from "../../app/auth";
+import { AuthContext } from "../../shared/session";
 import { IncidentPage } from "./incident-page";
 
 const incidentID = "01900000-0000-7000-8000-000000000001";

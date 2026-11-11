@@ -16,6 +16,7 @@ import (
 var handwrittenSQL = map[string]string{
 	"maintenance/partitions.go": "partition DDL names tables, which cannot be parameters; savepoints are transaction control",
 	"maintenance/retention.go":  "trims a default partition named at run time",
+	"migrations/status.go":      "migration status must work before the application schema exists; locks belong to the migration connection",
 }
 
 var sqlMethods = map[string]bool{"Exec": true, "Query": true, "QueryRow": true, "Queue": true}

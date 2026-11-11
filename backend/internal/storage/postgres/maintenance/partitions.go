@@ -15,7 +15,7 @@ import (
 // Telemetry tables are RANGE-partitioned by day on their event time, so
 // retention can drop a whole day instead of deleting its rows. The reasons and
 // the constraints this imposes are written at the top of
-// db/migrations/000001_init.up.sql; docs/FLOW.md describes the lifecycle.
+// db/postgres/migrations/000010_events.up.sql; docs/FLOW.md describes the lifecycle.
 //
 // Partitions are named <table>_pYYYYMMDD (UTC day). Rows whose day has no
 // partition go to <table>_default, so a missing partition never rejects data.

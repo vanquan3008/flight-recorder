@@ -56,7 +56,7 @@ func (store *Store) execute(ctx context.Context, sql string, parameters map[stri
 		"date_time_input_format": {"best_effort"}, "date_time_output_format": {"iso"},
 		"output_format_json_quote_64bit_integers": {"0"}, "wait_end_of_query": {"1"},
 		"max_execution_time": {strconv.Itoa(max(1, int(store.cfg.RequestTimeout.Seconds())))}}
-	if strings.HasPrefix(sql, "CREATE DATABASE ") {
+	if strings.HasPrefix(sql, "CREATE DATABASE ") || strings.Contains(sql, "FROM system.tables") {
 		values.Set("database", "default")
 	}
 	if strings.HasPrefix(sql, "ALTER TABLE ") {

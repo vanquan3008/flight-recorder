@@ -1,9 +1,3 @@
--- A trace matches when any of its spans matches the filters; the summary then
--- covers every span of that trace. The summary scan is bounded to one hour
--- either side of the matching spans: unbounded, it probed every daily
--- partition (including the empty future ones) once per matching trace. Spans of
--- a trace that start more than an hour from every matching span are left out of
--- its summary.
 -- name: ListTraces :many
 WITH matching_traces AS (
     SELECT spans.trace_id, min(spans.started_at) AS first_match, max(spans.started_at) AS last_match FROM spans

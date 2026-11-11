@@ -2,7 +2,7 @@ import { settingsFormClass } from "./form-styles";
 import { secondaryButtonClass } from "../../shared/ui/styles";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useState } from "react";
-import { useAuth } from "../../app/auth";
+import { useAuth } from "../../shared/session";
 import { canManageRole, type Member, type Role, roleHints, roleLabels, roles } from "../../shared/session";
 import { api } from "../../shared/api";
 import { Badge, DataTable, ErrorState, Loading, Panel, formatTime } from "../../shared/ui";

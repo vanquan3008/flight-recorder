@@ -42,7 +42,6 @@ type Service struct {
 	logger   *slog.Logger
 	config   Config
 	observer Observer
-	request  sync.WaitGroup
 }
 
 func NewService(store Store, logger *slog.Logger, configurations ...Config) *Service {
@@ -75,7 +74,6 @@ func (service *Service) Run(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
-			service.request.Wait()
 			return nil
 		case <-ticker.C:
 			service.processDue(ctx)
@@ -84,26 +82,26 @@ func (service *Service) Run(ctx context.Context) error {
 }
 
 func (service *Service) processDue(ctx context.Context) {
+	if ctx.Err() != nil {
+		return
+	}
 	batch, claimError := service.store.ClaimDueDeliveries(ctx, service.config.Workers)
 	if claimError != nil {
 		service.observe("claim_error")
 		service.logger.ErrorContext(ctx, "claim webhook deliveries failed", "error", claimError)
 		return
 	}
-	semaphore := make(chan struct{}, service.config.Workers)
+	// Finish this bounded batch before another poll can lease more work.
+	var requests sync.WaitGroup
+	defer requests.Wait()
 	for _, attempt := range batch {
-		service.request.Add(1)
+		if ctx.Err() != nil {
+			return
+		}
+		requests.Add(1)
 		go func(attempt notificationdomain.DeliveryAttempt) {
-			defer service.request.Done()
-			// Respect context cancellation so shutdown is not blocked by a
-			// goroutine waiting indefinitely for a free worker slot.
-			select {
-			case semaphore <- struct{}{}:
-			case <-ctx.Done():
-				return
-			}
+			defer requests.Done()
 			service.dispatchAttempt(ctx, attempt)
-			<-semaphore
 		}(attempt)
 	}
 }

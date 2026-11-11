@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { LogOut, RefreshCw } from "lucide-react";
 import { api } from "../shared/api";
 import type { ProjectDetail } from "../shared/session";
-import { useAuth } from "./auth";
+import { useAuth } from "../shared/session";
 import { ScopeSelect } from "./scope-select";
 
 export function SessionControls({

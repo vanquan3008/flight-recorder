@@ -4,7 +4,13 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"log/slog"
+	"os"
+	"os/signal"
+	"syscall"
+
 	"github.com/vanquan3008/tracepilot/internal/application/intelligence"
+	"github.com/vanquan3008/tracepilot/internal/application/live"
 	"github.com/vanquan3008/tracepilot/internal/application/notification"
 	"github.com/vanquan3008/tracepilot/internal/application/retention"
 	"github.com/vanquan3008/tracepilot/internal/auth"
@@ -14,10 +20,6 @@ import (
 	"github.com/vanquan3008/tracepilot/internal/observability/logging"
 	"github.com/vanquan3008/tracepilot/internal/observability/metrics"
 	"github.com/vanquan3008/tracepilot/internal/transport/httpapi"
-	"log/slog"
-	"os"
-	"os/signal"
-	"syscall"
 )
 
 func runServer(arguments []string) int {
@@ -68,11 +70,6 @@ func runServer(arguments []string) int {
 
 	if err := ensureTelemetryPartitions(appCtx, database); err != nil {
 		logger.Error("telemetry partition initialization failed", "error", err)
-		return 1
-	}
-
-	if err := database.EnsureIngestionScope(appCtx, cfg.Ingestion); err != nil {
-		logger.Error("ingestion scope initialization failed", "error", err)
 		return 1
 	}
 
@@ -127,7 +124,7 @@ func runServer(arguments []string) int {
 	otlpReceiver := buildOTLPReceiver(cfg, ingestionPipeline, metricsPipeline, selfMetrics, tokenCache, scopes)
 	otlpServer := ingestotlp.NewServer(cfg, otlpReceiver)
 
-	streamHub := httpapi.NewStreamHub()
+	streamHub := live.NewHub()
 	ingestionPipeline.SetOnPersist(streamHub.BroadcastEvents)
 
 	managementServer := httpapi.New(
@@ -190,7 +187,7 @@ func runServer(arguments []string) int {
 	ingestionPipeline.Start()
 	metricsPipeline.Start()
 
-	logStartup(logger, cfg)
+	logStartup(logger, cfg, version)
 	logger.Info("server started")
 
 	// Wait until an OS termination signal is received, or a component fails or exits unexpectedly.
@@ -210,7 +207,7 @@ func runServer(arguments []string) int {
 	defer cancelShutdown()
 
 	logger.Info("shutting down processing pipelines", "timeout", cfg.ShutdownTimeout)
-	shutdownError := drainPipelines(shutdownCtx, ingestionPipeline, metricsPipeline)
+	shutdownError := drainPipelines(shutdownCtx, logger, ingestionPipeline, metricsPipeline)
 
 	// Expected cancellation caused by an OS signal is not a failure; real component errors are kept.
 	if appCtx.Err() != nil && errors.Is(serveError, context.Canceled) {

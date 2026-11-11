@@ -87,7 +87,6 @@ func defaultConfig() Config {
 		MaxConnectionIdleTime:    30 * time.Minute,
 		HealthCheckPeriod:        time.Minute,
 		ReadinessTimeout:         2 * time.Second,
-		MigrationsPath:           "./db/migrations",
 		StatementTimeout:         30 * time.Second,
 		LockTimeout:              10 * time.Second,
 		IdleInTransactionTimeout: 30 * time.Second,

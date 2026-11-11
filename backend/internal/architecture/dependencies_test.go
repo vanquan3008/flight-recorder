@@ -27,6 +27,8 @@ func TestAdapterDependencies(t *testing.T) {
 	assertNoImport(t, filepath.Join(internalRoot, "transport"), "/internal/storage")
 	assertNoImport(t, filepath.Join(internalRoot, "ingest"), "/internal/storage")
 	assertNoImport(t, filepath.Join(internalRoot, "storage"), "/internal/application")
+	assertNoImport(t, filepath.Join(internalRoot, "storage", "postgres"), "/internal/storage/clickhouse")
+	assertNoImport(t, filepath.Join(internalRoot, "storage", "clickhouse"), "/internal/storage/postgres")
 }
 
 func assertNoImport(t *testing.T, root, forbiddenSuffix string) {

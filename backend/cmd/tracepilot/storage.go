@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/vanquan3008/tracepilot/internal/config"
 	"github.com/vanquan3008/tracepilot/internal/storage/clickhouse"
 	"github.com/vanquan3008/tracepilot/internal/storage/postgres"
+	"github.com/vanquan3008/tracepilot/internal/storage/postgres/migrations"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -15,9 +17,26 @@ func openStorageBackend(ctx context.Context, cfg config.Config) (*storageBackend
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	if cfg.Database.AutoMigrate {
+		slog.Info("automatic PostgreSQL migration enabled")
+		if _, err := migrations.Run(ctx, cfg.Database.URL, "up", 0); err != nil {
+			return nil, fmt.Errorf("automatic PostgreSQL migration: %w", err)
+		}
+	}
+	if cfg.ClickHouse.AutoMigrate {
+		slog.Info("automatic ClickHouse migration enabled")
+		if _, err := migrateClickHouse(ctx, cfg.ClickHouse, cfg.Retention.MaxAge, "up"); err != nil {
+			return nil, fmt.Errorf("automatic ClickHouse migration: %w", err)
+		}
+	}
+	return connectStorageBackend(ctx, cfg, cfg.Notifications.EncryptionKey)
+}
+
+// connectStorageBackend checks both schemas without performing migrations.
+func connectStorageBackend(ctx context.Context, cfg config.Config, webhookEncryptionKey string) (*storageBackend, error) {
 	ctx, cancel := context.WithTimeout(ctx, max(cfg.Database.ConnectTimeout, cfg.ClickHouse.RequestTimeout))
 	defer cancel()
-	database, err := postgres.OpenWithWebhookEncryptionKey(ctx, cfg.Database, cfg.Notifications.EncryptionKey)
+	database, err := postgres.OpenWithWebhookEncryptionKey(ctx, cfg.Database, webhookEncryptionKey)
 	if err != nil {
 		return nil, fmt.Errorf("initialize PostgreSQL: %w", err)
 	}

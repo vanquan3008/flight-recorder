@@ -2,10 +2,7 @@ package main
 
 import (
 	"context"
-	"log/slog"
-	"os"
-	"os/signal"
-	"syscall"
+	"fmt"
 
 	"github.com/vanquan3008/tracepilot/internal/config"
 	"github.com/vanquan3008/tracepilot/internal/query"
@@ -13,46 +10,27 @@ import (
 	"github.com/vanquan3008/tracepilot/internal/storage/postgres"
 )
 
-func runClickHouseMigrations(arguments []string) int {
-	if len(arguments) != 1 || (arguments[0] != "up" && arguments[0] != "backfill") {
-		migrationUsage()
-		return 2
-	}
-	cfg, err := config.Load()
-	if err != nil {
-		slog.Error("invalid configuration", "error", err)
-		return 2
-	}
+// Backfill is the explicit cross-database workflow, separate from either migration engine.
+func migrateLogBackfill(ctx context.Context, cfg config.Config) (string, error) {
 	store, err := clickhouse.New(cfg.ClickHouse, cfg.Retention.MaxAge)
 	if err != nil {
-		slog.Error("invalid ClickHouse configuration", "error", err)
-		return 2
+		return "", err
 	}
 	defer store.Close()
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer cancel()
-	if arguments[0] == "up" {
-		err = store.Migrate(ctx)
-	} else if err = store.Ready(ctx); err == nil {
-		var database *postgres.Database
-		database, err = postgres.Open(ctx, cfg.Database)
-		if err == nil {
-			defer database.Close()
-			if err = database.Ready(ctx); err == nil {
-				var count int
-				count, err = backfillLogs(ctx, database, store)
-				slog.Info("log backfill progress", "rows_copied", count)
-			}
-		}
+	if err := store.Ready(ctx); err != nil {
+		return "", err
 	}
+	database, err := postgres.Open(ctx, cfg.Database)
 	if err != nil {
-		slog.Error("ClickHouse migration failed", "error", err)
-		return 1
+		return "", err
 	}
-	slog.Info("ClickHouse migration completed", "operation", arguments[0])
-	return 0
+	defer database.Close()
+	if err := database.Ready(ctx); err != nil {
+		return "", err
+	}
+	count, err := backfillLogs(ctx, database, store)
+	return fmt.Sprintf("copied %d log row(s)", count), err
 }
-
 func backfillLogs(ctx context.Context, database *postgres.Database, store *clickhouse.Store) (int, error) {
 	scopes, err := database.ListScopes(ctx)
 	if err != nil {

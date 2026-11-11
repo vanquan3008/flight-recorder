@@ -391,12 +391,6 @@ type ListTracesRow struct {
 	ErrorCount    int64
 }
 
-// A trace matches when any of its spans matches the filters; the summary then
-// covers every span of that trace. The summary scan is bounded to one hour
-// either side of the matching spans: unbounded, it probed every daily
-// partition (including the empty future ones) once per matching trace. Spans of
-// a trace that start more than an hour from every matching span are left out of
-// its summary.
 func (q *Queries) ListTraces(ctx context.Context, arg ListTracesParams) ([]ListTracesRow, error) {
 	rows, err := q.db.Query(ctx, listTraces,
 		arg.ProjectID,
