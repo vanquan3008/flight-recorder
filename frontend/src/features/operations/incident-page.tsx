@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { KeyboardEvent } from "react";
 import { useLocation, useParams, useSearchParams } from "react-router-dom";
-import { useAuth } from "../../app/auth";
+import { useAuth } from "../../shared/session";
 import { api } from "../../shared/api";
 import type { Incident } from "../../shared/types";
 import { ErrorState, Loading } from "../../shared/ui";

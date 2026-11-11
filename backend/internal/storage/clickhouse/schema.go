@@ -2,7 +2,6 @@ package clickhouse
 
 import (
 	"context"
-	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,9 +9,6 @@ import (
 
 	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
 )
-
-//go:embed schema.sql
-var schemaSQL string
 
 type schemaState struct {
 	Engine    string `json:"engine"`
@@ -32,7 +28,7 @@ FROM system.tables WHERE database = {database:String} AND name = 'tracepilot_log
 	if err := json.Unmarshal(data, &state); err != nil {
 		return state, errors.New("ClickHouse log schema is missing; run migrate clickhouse up")
 	}
-	return state, nil
+	return state, validateLogLayout(state)
 }
 
 var validPartitionExprs = []string{
@@ -43,10 +39,28 @@ var validPartitionExprs = []string{
 }
 
 func (store *Store) Ready(ctx context.Context) error {
+	state, err := store.MigrationStatus(ctx)
+	if err != nil {
+		return err
+	}
+	if state.Dirty || state.Version != state.Target {
+		return fmt.Errorf("ClickHouse schema version is %d (dirty=%t), expected %d; inspect migrate clickhouse status or run migrate clickhouse up", state.Version, state.Dirty, state.Target)
+	}
+	return store.readySchema(ctx)
+}
+
+func (store *Store) readySchema(ctx context.Context) error {
 	state, err := store.schema(ctx)
 	if err != nil {
 		return err
 	}
+	if store.ttlChange(state) != "" {
+		return errors.New("ClickHouse log TTL differs from retention configuration; run migrate clickhouse up")
+	}
+	return store.checkLogColumns(ctx)
+}
+
+func validateLogLayout(state schemaState) error {
 	compact := func(value string) string { return strings.Join(strings.Fields(value), "") }
 	got := compact(state.Partition)
 	partitionOK := false
@@ -60,38 +74,23 @@ func (store *Store) Ready(ctx context.Context) error {
 		compact(state.Sorting) != "project_id,environment_id,service_name,toStartOfMillisecond(occurred_at),event_id" {
 		return errors.New("ClickHouse log schema must use a supported time-based partition (daily/monthly/yearly/weekly) and the expected deduplication key")
 	}
-	ttl := store.ttl()
-	if (ttl == "" && strings.Contains(state.DDL, "TTL ")) || (ttl != "" && !strings.Contains(state.DDL, ttl)) {
-		return errors.New("ClickHouse log TTL differs from retention configuration; run migrate clickhouse up")
-	}
-	_, err = store.execute(ctx, "SELECT "+logColumns+" FROM tracepilot_logs LIMIT 0 FORMAT JSONEachRow", nil, nil, false)
+	return nil
+}
+
+func (store *Store) checkLogColumns(ctx context.Context) error {
+	_, err := store.execute(ctx, "SELECT "+logColumns+" FROM tracepilot_logs LIMIT 0 FORMAT JSONEachRow", nil, nil, false)
 	return err
 }
 
-// Migrate is explicit: serving traffic never creates or changes ClickHouse tables.
-func (store *Store) Migrate(ctx context.Context) error {
-	if _, err := store.execute(ctx, "CREATE DATABASE IF NOT EXISTS `"+store.cfg.Database+"`", nil, nil, false); err != nil {
-		return err
-	}
-	ddl := strings.Replace(schemaSQL, "__PARTITION__", store.cfg.LogPartition.PartitionExpr(), 1)
-	ddl = strings.Replace(ddl, "__TTL__", store.ttl(), 1)
-	if _, err := store.execute(ctx, ddl, nil, nil, false); err != nil {
-		return err
-	}
-	state, err := store.schema(ctx)
-	if err != nil {
-		return err
-	}
+func (store *Store) ttlChange(state schemaState) string {
 	ttl := store.ttl()
-	if ttl != "" {
-		_, err = store.execute(ctx, "ALTER TABLE tracepilot_logs MODIFY "+ttl, nil, nil, false)
-	} else if strings.Contains(state.DDL, "TTL ") {
-		_, err = store.execute(ctx, "ALTER TABLE tracepilot_logs REMOVE TTL", nil, nil, false)
+	if ttl != "" && !strings.Contains(state.DDL, ttl) {
+		return "MODIFY " + ttl
 	}
-	if err != nil {
-		return err
+	if ttl == "" && strings.Contains(state.DDL, "TTL ") {
+		return "REMOVE TTL"
 	}
-	return store.Ready(ctx)
+	return ""
 }
 
 func (store *Store) ttl() string {

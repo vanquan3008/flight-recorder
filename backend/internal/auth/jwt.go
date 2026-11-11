@@ -13,8 +13,6 @@ import (
 	"time"
 )
 
-// Token kinds. A token of one kind is never accepted where the other is expected, so an ingest
-// token cannot open the console and a console token cannot send telemetry.
 const (
 	TokenAccess = "access"
 	TokenIngest = "ingest"
@@ -136,8 +134,6 @@ func VerifyJWTWithIssuerAudience(secret []byte, token, wantKind, wantIssuer, wan
 	return claims, nil
 }
 
-// NewJWTSecret returns a random secret for runs that configure none; tokens signed with it
-// stop working when the process restarts.
 func NewJWTSecret() ([]byte, error) {
 	secret := make([]byte, MinJWTSecretBytes)
 	if _, readError := rand.Read(secret); readError != nil {

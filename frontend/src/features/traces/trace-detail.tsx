@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
-import { useAuth } from "../../app/auth";
+import { useAuth } from "../../shared/session";
 import { APIError, pageItems, usePagedQuery } from "../../shared/api";
 import type { LogRecord } from "../../shared/types";
 import { BackLink, DetailLink, ErrorState, Loading, PageHeader, Panel } from "../../shared/ui";

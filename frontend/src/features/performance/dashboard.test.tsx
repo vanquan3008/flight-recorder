@@ -2,7 +2,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
-import { AuthContext } from "../../app/auth";
+import { AuthContext } from "../../shared/session";
 import { PerformanceDashboard } from "./dashboard";
 import { emptyPerformance } from "./test-data";
 

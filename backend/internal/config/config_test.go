@@ -95,10 +95,11 @@ func TestLoadReadsBackendEnvironmentFile(t *testing.T) {
 		t.Fatal(writeError)
 	}
 	contents := "TRACEPILOT_DATABASE_URL=postgres://repository\n" +
+		"TRACEPILOT_DATABASE_AUTO_MIGRATE=true\n" +
+		"TRACEPILOT_CLICKHOUSE_AUTO_MIGRATE=true\n" +
 		"TRACEPILOT_CLICKHOUSE_URL=http://repository-ch\n" +
 		"TRACEPILOT_HTTP_READ_TIMEOUT=9s\n" +
-		"TRACEPILOT_HTTP_ALLOWED_ORIGINS=https://one.example, https://two.example\n" +
-		"TRACEPILOT_MIGRATIONS_PATH=/opt/tracepilot/migrations\n"
+		"TRACEPILOT_HTTP_ALLOWED_ORIGINS=https://one.example, https://two.example\n"
 	if writeError := os.WriteFile(filepath.Join(backendDirectory, ".env"), []byte(contents), 0o600); writeError != nil {
 		t.Fatal(writeError)
 	}
@@ -111,14 +112,14 @@ func TestLoadReadsBackendEnvironmentFile(t *testing.T) {
 	if configuration.Database.URL != "postgres://repository" {
 		t.Fatalf("database URL = %q", configuration.Database.URL)
 	}
+	if !configuration.Database.AutoMigrate || !configuration.ClickHouse.AutoMigrate {
+		t.Fatal("auto migration flag was not loaded from backend/.env")
+	}
 	if configuration.ClickHouse.URL != "http://repository-ch" {
 		t.Fatalf("clickhouse URL = %q", configuration.ClickHouse.URL)
 	}
 	if configuration.HTTP.ReadTimeout != 9*time.Second || len(configuration.HTTP.AllowedOrigins) != 2 {
 		t.Fatalf("typed .env values were not loaded: %+v", configuration.HTTP)
-	}
-	if configuration.Database.MigrationsPath != "/opt/tracepilot/migrations" {
-		t.Fatalf("legacy .env alias was not loaded: %q", configuration.Database.MigrationsPath)
 	}
 }
 

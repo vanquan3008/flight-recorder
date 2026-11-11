@@ -4,6 +4,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY cmd ./cmd
 COPY internal ./internal
+COPY db ./db
 
 FROM build-base AS build-server
 ARG VERSION=dev
@@ -17,8 +18,6 @@ FROM gcr.io/distroless/static-debian12:nonroot AS runtime
 
 FROM runtime AS server
 COPY --from=build-server /out/tracepilot /tracepilot
-COPY db/migrations /db/migrations
-ENV TRACEPILOT_MIGRATIONS_PATH=/db/migrations
 EXPOSE 8080 4317 4318
 USER nonroot:nonroot
 HEALTHCHECK --interval=10s --timeout=3s --retries=3 CMD ["/tracepilot", "healthcheck"]

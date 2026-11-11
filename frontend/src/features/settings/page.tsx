@@ -1,5 +1,5 @@
 import { useSearchParams } from "react-router-dom";
-import { useAuth } from "../../app/auth";
+import { useAuth } from "../../shared/session";
 import { canManageRole } from "../../shared/session";
 import { PageHeader } from "../../shared/ui";
 import { AccountsSection } from "./accounts";

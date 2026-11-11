@@ -1,9 +1,29 @@
 package config
 
 import (
+	"strconv"
 	"testing"
 	"time"
 )
+
+func TestDatabaseAutoMigrationDefaultsOffAndLoadsEnvironment(t *testing.T) {
+	setTestEnvironment(t)
+	cfg, err := Load()
+	if err != nil || cfg.Database.AutoMigrate {
+		t.Fatalf("auto migration must default off: enabled=%t error=%v", cfg.Database.AutoMigrate, err)
+	}
+	for _, enabled := range []bool{true, false} {
+		t.Setenv("TRACEPILOT_DATABASE_AUTO_MIGRATE", strconv.FormatBool(enabled))
+		cfg, err := Load()
+		if err != nil || cfg.Database.AutoMigrate != enabled {
+			t.Fatalf("auto migration enabled=%t, want=%t error=%v", cfg.Database.AutoMigrate, enabled, err)
+		}
+	}
+	t.Setenv("TRACEPILOT_DATABASE_AUTO_MIGRATE", "invalid")
+	if _, err := Load(); err == nil {
+		t.Fatal("invalid auto migration flag was accepted")
+	}
+}
 
 func TestDatabaseConnectionDefaultsAndEnvironment(t *testing.T) {
 	setTestEnvironment(t)

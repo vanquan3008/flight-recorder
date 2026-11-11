@@ -21,14 +21,6 @@ const (
 const seedSQLTemplate = `
 BEGIN;
 
-INSERT INTO projects (id, slug, name)
-VALUES ('{{project_id}}', '{{project_slug}}', '{{project_name}}')
-ON CONFLICT (id) DO NOTHING;
-
-INSERT INTO environments (id, project_id, name)
-VALUES ('{{environment_id}}', '{{project_id}}', '{{environment_name}}')
-ON CONFLICT (project_id, id) DO NOTHING;
-
 INSERT INTO users (id, email, display_name, password_hash, platform_admin)
 VALUES (
     '{{user_id}}',
@@ -38,12 +30,6 @@ VALUES (
     true
 )
 ON CONFLICT (email) DO NOTHING;
-
-INSERT INTO project_members (project_id, user_id, role)
-SELECT '{{project_id}}', id, 'owner'
-FROM users
-WHERE email = '{{admin_email}}'
-ON CONFLICT (project_id, user_id) DO NOTHING;
 
 COMMIT;
 `
@@ -63,23 +49,14 @@ func newSeedUUID() (string, error) {
 		s[12:16] + "-" + s[16:20] + "-" + s[20:], nil
 }
 
-func escapeSQLValue(value string) string {
-	return strings.ReplaceAll(value, "'", "''")
-}
-
-func renderSeedSQL(cfg config.IngestionConfig) (string, error) {
+func renderSeedSQL() (string, error) {
 	userID, err := newSeedUUID()
 	if err != nil {
 		return "", err
 	}
 
 	replacements := []string{
-		"{{project_id}}", escapeSQLValue(cfg.ProjectID),
-		"{{environment_id}}", escapeSQLValue(cfg.EnvironmentID),
-		"{{project_slug}}", escapeSQLValue(cfg.ProjectSlug),
-		"{{project_name}}", escapeSQLValue(cfg.ProjectName),
-		"{{environment_name}}", escapeSQLValue(cfg.EnvironmentName),
-		"{{admin_email}}", escapeSQLValue(adminEmail),
+		"{{admin_email}}", adminEmail,
 		"{{user_id}}", userID,
 	}
 
@@ -107,7 +84,7 @@ func runSeed(args []string) int {
 		return 1
 	}
 
-	seedSQL, err := renderSeedSQL(cfg.Ingestion)
+	seedSQL, err := renderSeedSQL()
 	if err != nil {
 		logger.Error("failed to prepare seed SQL", "error", err)
 		return 1
@@ -134,6 +111,6 @@ func runSeed(args []string) int {
 		return 1
 	}
 
-	logger.Info("development admin account seeded", "email", adminEmail)
+	logger.Info("development super admin account seeded", "email", adminEmail)
 	return 0
 }

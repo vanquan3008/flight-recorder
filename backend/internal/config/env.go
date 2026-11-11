@@ -67,16 +67,16 @@ func environmentValue(name string, fileValues map[string]string) (string, bool) 
 }
 
 // applyEnvironment binds environment values to Config.
-func applyEnvironment(configuration *Config, fileValues map[string]string) error {
+func applyEnvironment(configuration *Config, fileValues map[string]string, scopes ...string) error {
 	if configuration == nil {
 		return fmt.Errorf("configuration must not be nil")
 	}
 
-	return bindEnvironment(reflect.ValueOf(configuration).Elem(), nil, fileValues)
+	return bindEnvironment(reflect.ValueOf(configuration).Elem(), nil, fileValues, scopes...)
 }
 
 // bindEnvironment recursively binds exported configuration fields.
-func bindEnvironment(value reflect.Value, path []string, fileValues map[string]string) error {
+func bindEnvironment(value reflect.Value, path []string, fileValues map[string]string, scopes ...string) error {
 	if value.Kind() != reflect.Struct {
 		return fmt.Errorf("expected struct at %s", strings.Join(path, "."))
 	}
@@ -100,9 +100,12 @@ func bindEnvironment(value reflect.Value, path []string, fileValues map[string]s
 		}
 
 		fieldPath := appendPath(path, configName)
+		if !environmentScopeSelected(fieldPath, scopes) {
+			continue
+		}
 
 		if field.Kind() == reflect.Struct {
-			if err := bindEnvironment(field, fieldPath, fileValues); err != nil {
+			if err := bindEnvironment(field, fieldPath, fileValues, scopes...); err != nil {
 				return err
 			}
 			continue
@@ -136,6 +139,19 @@ func bindEnvironment(value reflect.Value, path []string, fileValues map[string]s
 	}
 
 	return nil
+}
+
+func environmentScopeSelected(path, scopes []string) bool {
+	if len(scopes) == 0 {
+		return true
+	}
+	field := strings.Join(path, ".")
+	for _, scope := range scopes {
+		if field == scope || strings.HasPrefix(field, scope+".") || strings.HasPrefix(scope, field+".") {
+			return true
+		}
+	}
+	return false
 }
 
 // appendPath creates a child path without modifying its parent.

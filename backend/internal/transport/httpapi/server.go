@@ -13,6 +13,7 @@ import (
 	"time"
 
 	incidentapp "github.com/vanquan3008/tracepilot/internal/application/incident"
+	"github.com/vanquan3008/tracepilot/internal/application/live"
 	"github.com/vanquan3008/tracepilot/internal/auth"
 	"github.com/vanquan3008/tracepilot/internal/config"
 	"github.com/vanquan3008/tracepilot/internal/observability/metrics"
@@ -67,7 +68,7 @@ type Server struct {
 	certificateFile         string
 	privateKeyFile          string
 	webhooksEnabled         bool
-	streamHub               *StreamHub
+	streamHub               *live.Hub
 }
 
 func New(configuration config.Config, logger *slog.Logger, readinessCheck func(context.Context) error, metricRegistry *metrics.Registry, backend Backend, replayRunner ReplayRunner) *Server {
@@ -169,7 +170,7 @@ func (server *Server) WithTokenInvalidator(invalidator TokenInvalidator) *Server
 	return server
 }
 
-func (server *Server) WithStreamHub(hub *StreamHub) *Server {
+func (server *Server) WithStreamHub(hub *live.Hub) *Server {
 	server.streamHub = hub
 	return server
 }

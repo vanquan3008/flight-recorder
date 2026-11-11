@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { ArrowDownRight, ArrowUpRight, ChevronDown, ChevronLeft, ChevronRight, FileSearch, GitBranch, Search, X } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
-import { useAuth } from "../../app/auth";
+import { useAuth } from "../../shared/session";
 import { api } from "../../shared/api";
 import type { IncidentAnalysis, IncidentEvidence } from "../../shared/types";
 import { CopyButton, DetailLink, Empty, ErrorState, Loading } from "../../shared/ui";

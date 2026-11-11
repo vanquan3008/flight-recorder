@@ -15,7 +15,7 @@ function resolve(from: string, specifier: string): string | undefined {
 
 const imports = new Map(Object.entries(sources).filter(([file]) => !/\.test\.tsx?$/.test(file)).map(([file, text]) => [
   file,
-  [...text.matchAll(/(?:from|import)\s+["'](\.[^"']*)["']/g)].map((match) => resolve(file, match[1])).filter((target): target is string => Boolean(target)),
+  [...text.matchAll(/(?:\bfrom\s*|\bimport\s*(?:\(\s*)?)["'](\.[^"']*)["']/g)].map((match) => resolve(file, match[1])).filter((target): target is string => Boolean(target)),
 ]));
 
 const area = (file: string) => file.split("/")[2];
@@ -27,8 +27,8 @@ describe("frontend module boundaries", () => {
     expect(violations).toEqual([]);
   });
 
-  it("lets features depend on shared code and only the session context from app", () => {
-    const violations = [...imports].flatMap(([file, targets]) => feature(file) ? targets.filter((target) => area(target) === "app" && target !== "/src/app/auth.tsx").map((target) => `${file} -> ${target}`) : []);
+  it("keeps features independent of app composition", () => {
+    const violations = [...imports].flatMap(([file, targets]) => feature(file) ? targets.filter((target) => area(target) === "app").map((target) => `${file} -> ${target}`) : []);
     expect(violations).toEqual([]);
   });
 
@@ -57,5 +57,6 @@ describe("frontend module boundaries", () => {
   it("finds the modules it is meant to guard", () => {
     expect(imports.size).toBeGreaterThan(20);
     expect([...imports.keys()].some((file) => file.startsWith("/src/features/logs/"))).toBe(true);
+    expect(imports.get("/src/app/routes.tsx")).toContain("/src/features/traces/page.tsx");
   });
 });

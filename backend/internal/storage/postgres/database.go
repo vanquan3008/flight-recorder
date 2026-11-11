@@ -11,12 +11,12 @@ import (
 	"github.com/vanquan3008/tracepilot/internal/config"
 	notificationdomain "github.com/vanquan3008/tracepilot/internal/domain/notification"
 	"github.com/vanquan3008/tracepilot/internal/observability/metrics"
-	"github.com/vanquan3008/tracepilot/internal/storage/migrations"
 	"github.com/vanquan3008/tracepilot/internal/storage/postgres/analytics"
 	"github.com/vanquan3008/tracepilot/internal/storage/postgres/explorer"
 	"github.com/vanquan3008/tracepilot/internal/storage/postgres/identity"
 	"github.com/vanquan3008/tracepilot/internal/storage/postgres/incidents"
 	"github.com/vanquan3008/tracepilot/internal/storage/postgres/maintenance"
+	"github.com/vanquan3008/tracepilot/internal/storage/postgres/migrations"
 	"github.com/vanquan3008/tracepilot/internal/storage/postgres/outbox"
 	"github.com/vanquan3008/tracepilot/internal/storage/postgres/replays"
 	"github.com/vanquan3008/tracepilot/internal/storage/postgres/signals"
@@ -98,8 +98,12 @@ func (database *Database) Ready(readinessContext context.Context) error {
 		}
 		return fmt.Errorf("read schema version: %w", queryError)
 	}
-	if state.Dirty || uint(state.Version) != migrations.CurrentVersion {
-		return fmt.Errorf("schema version is %d (dirty=%t), expected %d; repair the schema or run tracepilot migrate up", state.Version, state.Dirty, migrations.CurrentVersion)
+	expected, err := migrations.CurrentVersion()
+	if err != nil {
+		return fmt.Errorf("read embedded migration version: %w", err)
+	}
+	if state.Dirty || uint(state.Version) != expected {
+		return fmt.Errorf("schema version is %d (dirty=%t), expected %d; repair the schema or run tracepilot migrate up", state.Version, state.Dirty, expected)
 	}
 	return nil
 }

@@ -4,166 +4,27 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/vanquan3008/tracepilot/internal/application/live"
 	"github.com/vanquan3008/tracepilot/internal/auth"
-	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
 )
 
-func TestStreamHubSubscribeAndBroadcast(t *testing.T) {
-	hub := NewStreamHub()
-	projectID := "proj-1"
-	envID := "env-1"
-
-	events, unsubscribe, admitted := hub.Subscribe(projectID, envID)
-	if !admitted {
-		t.Fatal("stream subscription was rejected")
-	}
-	defer unsubscribe()
-
-	testEvent := StreamEvent{
-		Type:          "log",
-		ProjectID:     projectID,
-		EnvironmentID: envID,
-		Payload:       map[string]string{"message": "hello streaming"},
-	}
-
-	hub.Broadcast(testEvent)
-
-	select {
-	case received := <-events:
-		if received.Type != "log" {
-			t.Fatalf("expected log, got %s", received.Type)
-		}
-		if received.ProjectID != projectID {
-			t.Fatalf("expected project %s, got %s", projectID, received.ProjectID)
-		}
-	case <-time.After(500 * time.Millisecond):
-		t.Fatal("timed out waiting for stream event")
-	}
-}
-
-func TestStreamHubBroadcastEvents(t *testing.T) {
-	hub := NewStreamHub()
-	projectID := "proj-2"
-	envID := "env-2"
-
-	events, unsubscribe, admitted := hub.Subscribe(projectID, envID)
-	if !admitted {
-		t.Fatal("stream subscription was rejected")
-	}
-	defer unsubscribe()
-
-	hub.BroadcastEvents([]telemetry.Event{
-		{
-			ID:            "ev-1",
-			ProjectID:     projectID,
-			Environment:   "staging",
-			EnvironmentID: envID,
-			ServiceName:   "checkout",
-			Signal:        telemetry.SignalLog,
-			Timestamp:     time.Now(),
-			Severity:      "INFO",
-			LogBody:       "user clicked buy",
-		},
-		{
-			ID:            "ev-2",
-			ProjectID:     projectID,
-			Environment:   "staging",
-			EnvironmentID: envID,
-			ServiceName:   "payment",
-			Signal:        telemetry.SignalTrace,
-			Timestamp:     time.Now(),
-			Status:        "ERROR",
-			ErrorType:     "PaymentTimeout",
-		},
-	})
-
-	receivedCount := 0
-	for receivedCount < 2 {
-		select {
-		case ev := <-events:
-			receivedCount++
-			if ev.ProjectID != projectID {
-				t.Fatalf("expected project %s, got %s", projectID, ev.ProjectID)
-			}
-			if ev.EnvironmentID != envID {
-				t.Fatalf("expected environment ID %s, got %s", envID, ev.EnvironmentID)
-			}
-			if ev.Type == "log" {
-				payload, ok := ev.Payload.(map[string]any)
-				if !ok || payload["body"] != "user clicked buy" {
-					t.Fatalf("log body = %#v", ev.Payload)
-				}
-			}
-		case <-time.After(500 * time.Millisecond):
-			t.Fatalf("expected 2 events, got %d", receivedCount)
-		}
-	}
-}
-
-func TestStreamHubDoesNotCrossEnvironment(t *testing.T) {
-	hub := NewStreamHub()
-	events, unsubscribe, admitted := hub.Subscribe("project", "production-id")
-	if !admitted {
-		t.Fatal("stream subscription was rejected")
-	}
-	defer unsubscribe()
-
-	hub.Broadcast(StreamEvent{ProjectID: "project", EnvironmentID: "staging-id"})
-	hub.Broadcast(StreamEvent{ProjectID: "project"})
-	select {
-	case event := <-events:
-		t.Fatalf("received event from another or unknown environment: %+v", event)
-	default:
-	}
-}
-
-func TestStreamHubBoundsSubscribers(t *testing.T) {
-	hub := NewStreamHub()
-	unsubscribe := make([]func(), 0, maxStreamSubscribers)
-	for range maxStreamSubscribers {
-		_, stop, admitted := hub.Subscribe("project", "environment")
-		if !admitted {
-			t.Fatal("subscription was rejected before reaching the limit")
-		}
-		unsubscribe = append(unsubscribe, stop)
-	}
-	if _, _, admitted := hub.Subscribe("project", "environment"); admitted {
-		t.Fatal("subscription exceeded the configured limit")
-	}
-	for _, stop := range unsubscribe {
-		stop()
-	}
-}
-
-func TestStreamHubCloseRejectsNewSubscribers(t *testing.T) {
-	hub := NewStreamHub()
-	hub.Close()
-	if _, _, admitted := hub.Subscribe("project", "environment"); admitted {
-		t.Fatal("closed stream hub admitted a new subscriber")
-	}
-	select {
-	case <-hub.done:
-	default:
-		t.Fatal("closing the stream hub did not signal subscribers")
-	}
-}
-
 func TestStreamHandlerStopsWhenHubCloses(t *testing.T) {
-	hub := NewStreamHub()
+	hub := live.NewHub()
 	server := &Server{streamHub: hub}
 	ctx := context.Background()
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/live/stream", nil).WithContext(ctx)
-	recorder := &deadlineResponseRecorder{ResponseRecorder: httptest.NewRecorder()}
+	recorder := newStreamRecorder()
 	done := make(chan struct{})
 	go func() {
 		server.streamLiveTelemetry(recorder, request, auth.Principal{ProjectID: "project", EnvironmentID: "environment"})
 		close(done)
 	}()
 
-	time.Sleep(50 * time.Millisecond)
+	waitForStreamFrame(t, recorder)
 	hub.Close()
 	select {
 	case <-done:
@@ -174,12 +35,31 @@ func TestStreamHandlerStopsWhenHubCloses(t *testing.T) {
 
 type deadlineResponseRecorder struct {
 	*httptest.ResponseRecorder
+	frames chan struct{}
 }
 
 func (*deadlineResponseRecorder) SetWriteDeadline(time.Time) error { return nil }
 
+func newStreamRecorder() *deadlineResponseRecorder {
+	return &deadlineResponseRecorder{ResponseRecorder: httptest.NewRecorder(), frames: make(chan struct{}, 4)}
+}
+
+func (recorder *deadlineResponseRecorder) Flush() {
+	recorder.ResponseRecorder.Flush()
+	recorder.frames <- struct{}{}
+}
+
+func waitForStreamFrame(t *testing.T, recorder *deadlineResponseRecorder) {
+	t.Helper()
+	select {
+	case <-recorder.frames:
+	case <-time.After(time.Second):
+		t.Fatal("stream did not flush its frame")
+	}
+}
+
 func TestStreamLiveTelemetryHandler(t *testing.T) {
-	hub := NewStreamHub()
+	hub := live.NewHub()
 	server := &Server{
 		streamHub: hub,
 	}
@@ -191,7 +71,7 @@ func TestStreamLiveTelemetryHandler(t *testing.T) {
 	defer cancel()
 
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/live/stream", nil).WithContext(ctx)
-	recorder := &deadlineResponseRecorder{ResponseRecorder: httptest.NewRecorder()}
+	recorder := newStreamRecorder()
 
 	done := make(chan struct{})
 	go func() {
@@ -202,16 +82,16 @@ func TestStreamLiveTelemetryHandler(t *testing.T) {
 		close(done)
 	}()
 
-	time.Sleep(50 * time.Millisecond)
+	waitForStreamFrame(t, recorder)
 
-	hub.Broadcast(StreamEvent{
+	hub.Broadcast(live.Event{
 		Type:          "log",
 		ProjectID:     projectID,
 		EnvironmentID: envID,
 		Payload:       "test-payload",
 	})
 
-	time.Sleep(50 * time.Millisecond)
+	waitForStreamFrame(t, recorder)
 	cancel()
 
 	select {
@@ -226,7 +106,7 @@ func TestStreamLiveTelemetryHandler(t *testing.T) {
 	}
 
 	body := recorder.Body.String()
-	if len(body) == 0 {
-		t.Fatal("expected non-empty stream response")
+	if !strings.Contains(body, "event: connected\ndata: {}\n\n") || !strings.Contains(body, `"type":"log","project_id":"proj-test","environment_id":"env-test","payload":"test-payload"`) {
+		t.Fatalf("stream response contract changed: %s", body)
 	}
 }

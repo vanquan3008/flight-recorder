@@ -4,7 +4,7 @@ import { type FormEvent, useState } from "react";
 import { api, setAccessToken } from "../shared/api";
 import type { SessionView } from "../shared/session";
 import { FormAlert, FormField } from "../shared/ui";
-import { useAuth } from "./auth";
+import { useAuth } from "../shared/session";
 import { WelcomeSignal } from "./welcome-signal";
 
 type Mode = "signin" | "register";

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	sessionapp "github.com/vanquan3008/tracepilot/internal/application/session"
 	"github.com/vanquan3008/tracepilot/internal/auth"
 	"github.com/vanquan3008/tracepilot/internal/config"
 )
@@ -166,21 +167,16 @@ func (server *Server) authLogin(responseWriter http.ResponseWriter, request *htt
 		writeAPIError(responseWriter, http.StatusTooManyRequests, "RATE_LIMITED", "too many sign-in attempts; try again later")
 		return
 	}
-	credentials, lookupError := server.backend.GetCredentials(request.Context(), email)
-	hash := auth.DummyPasswordHash()
-	if lookupError == nil {
-		hash = credentials.PasswordHash
-	} else if !errors.Is(lookupError, auth.ErrUserNotFound) {
-		server.writeInternalError(responseWriter, "load credentials", lookupError)
-		return
-	}
-	// Verify even for an unknown email so the response time does not reveal which accounts exist.
-	valid := len(payload.Password) <= auth.MaxPasswordLength*4 && auth.VerifyPassword(payload.Password, hash)
-	if lookupError != nil || !valid || credentials.User.DisabledAt != nil {
+	user, loginError := sessionapp.Authenticate(request.Context(), server.backend, email, payload.Password)
+	if errors.Is(loginError, auth.ErrInvalidCredentials) {
 		writeAPIError(responseWriter, http.StatusUnauthorized, "INVALID_CREDENTIALS", auth.ErrInvalidCredentials.Error())
 		return
 	}
-	server.signInView(responseWriter, request, credentials.User, http.StatusOK)
+	if loginError != nil {
+		server.writeInternalError(responseWriter, "authenticate", loginError)
+		return
+	}
+	server.signInView(responseWriter, request, user, http.StatusOK)
 }
 
 // authRefresh trades the refresh cookie for a new one and a new access token. The console calls it when
@@ -237,21 +233,15 @@ func (server *Server) authChangePassword(responseWriter http.ResponseWriter, req
 		writeAPIError(responseWriter, http.StatusTooManyRequests, "RATE_LIMITED", "too many attempts; try again later")
 		return
 	}
-	credentials, loadError := server.backend.GetCredentialsByID(request.Context(), principal.UserID)
-	if server.writeIdentityError(responseWriter, "load credentials", loadError) {
-		return
-	}
-	if len(payload.CurrentPassword) > auth.MaxPasswordLength*4 || !auth.VerifyPassword(payload.CurrentPassword, credentials.PasswordHash) {
+	changeError := sessionapp.ChangePassword(request.Context(), server.backend, sessionapp.ChangePasswordCommand{
+		UserID: principal.UserID, CurrentPassword: payload.CurrentPassword, NewPassword: payload.NewPassword,
+		RefreshToken: refreshToken(request), Actor: principal.Actor(),
+	})
+	if errors.Is(changeError, auth.ErrInvalidCredentials) {
 		writeAPIError(responseWriter, http.StatusUnauthorized, "INVALID_CREDENTIALS", "current password is incorrect")
 		return
 	}
-	if payload.NewPassword == payload.CurrentPassword {
-		writeAPIError(responseWriter, http.StatusBadRequest, "INVALID_REQUEST", "choose a password different from the current one")
-		return
-	}
-	// The refresh cookie, when the console sends it, keeps this browser's session alive.
-	keep := refreshToken(request)
-	if setError := server.backend.SetPassword(request.Context(), principal.UserID, payload.NewPassword, false, keep, principal.Actor()); server.writeIdentityError(responseWriter, "set password", setError) {
+	if server.writeIdentityError(responseWriter, "change password", changeError) {
 		return
 	}
 	if server.identity != nil {

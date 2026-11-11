@@ -1,6 +1,6 @@
 import { ArrowRight, FileClock, Layers3, Radio } from "lucide-react";
 import { useState } from "react";
-import { useAuth } from "../../app/auth";
+import { useAuth } from "../../shared/session";
 import { usePagedQuery } from "../../shared/api";
 import type { IncidentEvent, IncidentOccurrence, StatusChange } from "../../shared/types";
 import { Badge, CopyButton, DetailLink, Empty, ErrorState, Loading, PaginationBar, TimeCell } from "../../shared/ui";

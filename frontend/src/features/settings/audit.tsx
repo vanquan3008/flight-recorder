@@ -1,4 +1,4 @@
-import { useAuth } from "../../app/auth";
+import { useAuth } from "../../shared/session";
 import type { AuditEvent } from "../../shared/session";
 import { pageItems, usePagedQuery } from "../../shared/api";
 import { PagedTable, Panel, formatTime } from "../../shared/ui";

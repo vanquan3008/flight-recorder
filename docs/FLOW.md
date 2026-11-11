@@ -6,6 +6,13 @@ Mô tả các luồng chính của hệ thống. Sơ đồ tương ứng ở [di
 Một ứng dụng Go (API quản trị + bộ thu OTLP + worker nền), PostgreSQL riêng,
 ClickHouse bắt buộc cho raw log và console React riêng.
 
+Ranh giới source: `cmd/tracepilot` nối dependency và quản lý vòng đời; `application` điều phối use case
+qua interface nhỏ; `domain` giữ quy tắc thuần; `ingest`, `transport/httpapi` và `storage` giữ chi tiết
+giao thức/lưu trữ. `application/session` xác minh credential và đổi mật khẩu; `application/live` quản lý
+hub telemetry trong bộ nhớ. Frontend lấy context đăng nhập từ `shared/session`; `app` quản lý vòng đời
+session và ghép route, các feature không import ngược vào `app`. Phạm vi MVP, điều kiện phát hành và
+kế hoạch tiếp theo nằm trong [README](../README.md#mvp-scope-and-release-criteria).
+
 ## 1. Tổng quan [1]
 
 - Ứng dụng của bạn gửi OTLP (gRPC `:4317`, HTTP `:4318`) kèm **ingest token**.
@@ -27,16 +34,70 @@ ClickHouse bắt buộc cho raw log và console React riêng.
 
 Khởi động theo thứ tự, bước nào lỗi thì thoát với mã 1:
 
+Trước khi chạy bản mới, bước cập nhật chạy `migrate all`: nâng PostgreSQL (khóa advisory riêng)
+→ nâng ClickHouse (nhật ký riêng, không cần kết nối PG khi chạy lệnh CH riêng) → kiểm readiness
+cả hai. Bước nào lỗi thì không khởi động app; không tự rollback bước đã xong vì hai DB không
+có transaction chung. `make start`/`make dev` nối bước này với `serve`, kể cả khi Make chạy song song.
+`serve` dùng hai cờ độc lập trong `backend/.env`: `TRACEPILOT_DATABASE_AUTO_MIGRATE`
+cho PostgreSQL, `TRACEPILOT_CLICKHOUSE_AUTO_MIGRATE` cho ClickHouse, cùng mặc định false.
+Cờ nào true thì chạy bộ migration tương ứng trước khi mở listener/worker; lỗi thì dừng khởi động.
+Không tự backfill log cũ. Runtime vẫn yêu cầu cả hai DB sẵn sàng.
+Lock PG chờ tối đa 10s; mỗi câu migration PG tối đa 5 phút;
+mỗi request CH dùng timeout cấu hình. Hủy PG giữa các file; câu đang chạy có thể đợi hết timeout.
+
+CLI có entry point riêng: `migrate_postgres.go` và `migrate_clickhouse.go`, mỗi bên kiểm lệnh và
+chỉ nạp/validate cấu hình của kho đó cùng chính sách TLS production. Giá trị thiếu hoặc sai định dạng
+của kho kia và cấu hình ứng dụng không chặn lệnh riêng. Cả hai vẫn dùng một file `backend/.env`.
+Auto-migrate gọi trực tiếp từng runner theo cờ của kho đó; không có dispatcher quản lý migration chung.
+`storage/postgres/migrations.Run` tự giữ advisory lock cho mọi `up`/`down`, kể cả lúc tạo journal mới;
+caller không tự khóa thêm. `status`/`version` chỉ đọc và không chờ khóa mutation này.
+Helper CLI chỉ dùng chung việc đọc cấu hình, tín hiệu dừng và log; helper status chỉ tính target/pending
+từ lịch sử được chọn, không giữ trạng thái hay version chung. Hai storage adapter không import nhau;
+architecture test bảo vệ ranh giới này. `migrate_logs.go` giữ workflow backfill chéo kho tường minh.
+`migrate all` là lệnh tiện ích gọi lần lượt hai bộ quản lý độc lập, không có journal/version riêng.
+Lệnh này dùng lại luồng mở client và readiness của runtime, chỉ cần credential database,
+không yêu cầu JWT secret hay khóa mã hóa webhook.
+
+CH kiểm engine/partition/dedup key trước khi đổi TTL, kiểm quyền đọc các cột rồi mới ghi version sạch.
+Migration bình thường và chạy lại chỉ kiểm schema/cột một lượt; chỉ đọc lại schema nếu đã ALTER TTL
+để xác minh thay đổi. Readiness dùng chung quy tắc layout và TTL; lỗi cuối migration vẫn giữ dirty.
+
+SQL được embed từ `backend/db/postgres/migrations` và `backend/db/clickhouse/migrations`,
+mỗi DB có dãy version/lịch sử riêng, version đích lấy từ file. PostgreSQL hiện chỉ có một file
+`000001_init.up.sql`: tạo bảng, constraint, index, partition và hàm trong cùng transaction.
+Baseline không có down SQL; lệnh rollback baseline bị từ chối trước khi đổi journal hoặc xóa bảng.
+Thay đổi bảng về sau thêm ID mới, bắt đầu từ `000002`, không sửa file đã áp dụng.
+`migrate postgres status` và
+`migrate clickhouse status` chỉ đọc version/target/dirty/pending, không tạo metadata.
+PG dùng `schema_migrations`; CH dùng nhật ký `tracepilot_schema_migrations`: ghi dirty
+trước DDL và clean sau khi thành công (clean thắng dirty của cùng version). Lỗi/đứt kết nối
+giữa chừng có thể để dirty; phải kiểm tra và sửa thủ công, không tự force hay chạy down.
+CH lần đầu tiếp nhận bảng log cũ sau khi kiểm schema/TTL, giữ nguyên dữ liệu.
+Backfill log cũ vẫn là lệnh riêng sau khi dừng ingest/drain. Lệnh từng DB chỉ yêu cầu cấu hình/kết nối
+của DB đó; `all` và backfill cần cả hai. CH không có khóa migration; DDL không idempotent cần một
+tiến trình cập nhật duy nhất. Baseline đã được gộp cho DB mới, không tự chuyển
+lịch sử cũ hay reset DB. Khi phát hành, chỉ thêm tiếp, không sửa/gộp/đánh số lại file đã áp dụng.
+Không còn cấu hình đường dẫn SQL runtime.
+
+Luồng database-first: thêm migration SQL → cập nhật named query ở `backend/db/queries` → sinh lại
+sqlc từ cùng lịch sử migration → cập nhật storage → chạy integration trên DB dùng một lần.
+`db/external` chỉ mô tả metadata của công cụ migration cho sqlc, không phải một schema runtime thứ hai.
+PostgreSQL tự kiểm trạng thái/severity incident và danh sách event webhook không rỗng, một chiều,
+chỉ chứa event hỗ trợ; import/ghi SQL trực tiếp cũng chịu các constraint này. Migration thêm constraint
+sẽ từ chối dữ liệu cũ sai quy tắc, không tự sửa/xóa dữ liệu hay bỏ dirty journal.
+
 1. Đọc cấu hình (mặc định → `backend/.env` → biến môi trường). Sai cấu hình → mã 2.
 2. Không có `TRACEPILOT_AUTH_JWT_SECRET` → sinh khóa ngẫu nhiên và cảnh báo (production
    thì cấu hình sai ngay từ bước 1).
-3. Mở một pool PostgreSQL dùng chung và một HTTP client ClickHouse dùng chung. Pool PG mặc định
+3. Chạy auto migration theo từng cờ (nếu bật), PostgreSQL trước rồi ClickHouse. Sau đó mở một
+   pool PostgreSQL dùng chung và một HTTP client ClickHouse dùng chung. Pool PG mặc định
    2–20 kết nối, connect timeout 5s (URL `connect_timeout` được ưu tiên); vòng đời kết nối có jitter
    10% để tránh thay đồng loạt. Ngân sách tối thiểu tính cả worker events và metrics, cộng hai kết nối.
 4. Kiểm tra đồng thời hai kho trong thời hạn lớn hơn giữa cấu hình `DATABASE_CONNECT_TIMEOUT` và `CLICKHOUSE_REQUEST_TIMEOUT`
-   (mặc định 10s): PG kiểm version 3/không dirty qua chính pool runtime; CH kiểm schema/TTL và quyền đọc.
-   Lỗi thì hủy kiểm tra còn lại và đóng cả hai client. Server **không tự migrate**; chạy
-   `migrate up` và `migrate clickhouse up` riêng. Sau đó tạo partition PG và scope mặc định.
+   (mặc định 10s): PG kiểm version đích từ SQL nhúng/không dirty qua chính pool runtime;
+   CH kiểm version/không dirty, schema/TTL và quyền đọc.
+   Lỗi thì hủy kiểm tra còn lại và đóng cả hai client. Nếu không bật auto migration cho DB nào,
+   cần migrate DB đó trước bằng lệnh riêng hoặc `migrate all`. Sau đó tạo partition PG; không tự tạo project/environment mặc định.
    Readiness cũng kiểm hai kho đồng thời trong cùng deadline 2s; truy vấn version PG đã kiểm luôn
    kết nối nên không thêm một lần ping riêng. Không tự fallback khi ClickHouse hỏng.
 5. Dựng replay (nếu bật), metrics, hai pipeline (events, metrics), bộ thu OTLP, API.
@@ -51,17 +112,23 @@ và pool PG. Đặt grace của container
 
 ## 3. Đăng ký, đăng nhập, refresh [3]
 
-- **Đăng ký:** super admin development được tạo qua seed (`tracepilot seed` với `admin@tracepilot.local` / `admin-password-123`). Các tài khoản khác đăng ký qua form/API khi `ALLOW_REGISTRATION=true` và khởi tạo ở quyền tài khoản thông thường. Sau đó super admin sẽ cấp quyền sử dụng: cấp cờ super admin (`platform_admin`) trong Settings → Accounts hoặc thêm vào project trong Settings → Members. Mật khẩu 12–256 ký tự. Khi `ALLOW_REGISTRATION=false`, đăng ký tự do bị đóng hoàn toàn.
+- **Đăng ký:** seed chỉ tạo tài khoản super admin development (`tracepilot seed` với `admin@tracepilot.local` / `admin-password-123`), không tạo project, environment, membership hay telemetry mẫu. Chạy lại seed giữ nguyên tài khoản và dữ liệu đã có. Sau khi đăng nhập, tạo project trong console. Các tài khoản khác đăng ký qua form/API khi `ALLOW_REGISTRATION=true` và khởi tạo ở quyền tài khoản thông thường. Sau đó super admin sẽ cấp quyền sử dụng: cấp cờ super admin (`platform_admin`) trong Settings → Accounts hoặc thêm vào project trong Settings → Members. Mật khẩu 12–256 ký tự. Khi `ALLOW_REGISTRATION=false`, đăng ký tự do bị đóng hoàn toàn.
 - **Đăng nhập:** giới hạn theo IP và 10 lần/email/cửa sổ. Email lạ hay sai mật khẩu đều tốn cùng
   thời gian và cùng một thông báo. Thành công → server tạo phiên refresh, đặt cookie
   `tp_refresh` (`HttpOnly`, `SameSite=Strict`, path `/api/v1/auth`) và trả **access token** (JWT HS256,
   15 phút) cùng danh sách project.
+- HTTP handler giải mã request, áp rate limit rồi gọi `application/session.Authenticate` qua port
+  đọc credential. Use case chuẩn hóa email, xác minh mật khẩu và từ chối tài khoản bị khóa; lỗi DB
+  được trả về riêng với sai credential. HTTP giữ việc cấp JWT, cookie và response contract.
 - **Access token** chỉ nằm trong bộ nhớ trình duyệt. Hết hạn → API trả `TOKEN_EXPIRED` → console
   gọi `/auth/refresh` (kèm header `X-TracePilot-Refresh`) rồi gửi lại request. Mỗi lần refresh đổi
   token mới; dùng lại token cũ bị từ chối. Phiên hết hạn sau 7 ngày không dùng hoặc 30 ngày tuyệt đối.
 - **Đổi mật khẩu / khóa tài khoản:** đặt `tokens_valid_after`, xóa các phiên khác, nên access token
   cấp trước đó mất hiệu lực ngay. Tài khoản do admin tạo có mật khẩu tạm: chỉ gọi được
   `/auth/me` và `/auth/password` cho tới khi đổi.
+- `application/session.ChangePassword` kiểm mật khẩu hiện tại, từ chối dùng lại mật khẩu và gọi
+  storage để đổi cùng việc thu hồi phiên/token trong transaction; giữ session của trình duyệt hiện tại
+  khi có refresh cookie. Handler xóa identity cache và trả session view cùng JWT mới.
 - Token mới sau đổi mật khẩu dùng cùng issuer, audience và TTL đã cấu hình như đăng nhập/refresh.
 
 ## 4. Xác thực và phân quyền một request API [4]
@@ -107,6 +174,8 @@ Router kiểm theo **scope** mà bảng route khai báo; handler không tự ki�
    ReplacingMergeTree và đọc `FINAL` để khử trùng, PostgreSQL giữ idempotency hiện có.
    Storage tạm lỗi → 503/Unavailable. Event có nội dung không thể lưu → chia đôi batch
    tách record hỏng, phần còn lại commit và trả partial success.
+   Mỗi batch event thử ghi tối đa 3 lần, chỉ backoff giữa hai lần thử; hủy trong lúc chờ
+   dừng ngay, không gọi storage thêm. Metric retry chỉ đếm lần thử lại thực sự bắt đầu.
 
 API ListLogs/GetLog và số đếm log trong TelemetryQuality đọc trực tiếp từ ClickHouse,
 giữ project/environment, filter, cursor và correlation trace/span. Không trộn hai kho khi phân trang.
@@ -151,7 +220,7 @@ duration và trạng thái lỗi đã chuẩn bị từ summary; vẫn tính per
 trung bình p95/p99 giữa các phút. Vì vậy cửa sổ bất kỳ, bucket biểu đồ và mẫu trace evidence giữ nguyên.
 OTLP metrics/counter reset, topology và trace/log explorer tiếp tục dùng các hàm hiện có.
 
-Migration `000003_span_rollups` chỉ lập danh sách phút của dữ liệu cũ; worker xử lý dần, không dựng
+Phần rollup trong baseline chỉ lập danh sách phút cần xử lý; worker xử lý dần, không dựng
 mảng latency trong migration. Khi worker chưa xử lý hết, query vẫn trả dữ liệu từ spans trên cùng
 snapshot với summary, nên không cần chờ backfill và không thêm cờ cấu hình hay tiến trình.
 
@@ -169,6 +238,8 @@ giúp xoay khóa tài khoản người dùng mà không gián đoạn OTLP inges
 Incident mở/mở lại → xếp delivery vào outbox **trong cùng transaction** ingest. Worker nhận việc bằng
 `FOR UPDATE SKIP LOCKED` (lease 6 phút nên crash được nhận lại), kiểm URL (HTTPS, chặn dải private/metadata,
 không theo redirect), ký HMAC và gửi. Thất bại → thử lại theo chính sách tới `failed`. Nhận ít nhất một lần.
+Mỗi lượt chỉ nhận tối đa `NOTIFICATIONS_WORKERS` delivery và chờ cả batch gửi/ghi kết quả xong
+trước lượt poll tiếp theo, nên endpoint chậm không làm các lượt poll cộng dồn worker hoặc lease.
 
 ## 10. Partition và retention [10]
 
@@ -185,13 +256,16 @@ ClickHouse raw log hỗ trợ cấu hình phân vùng thời gian qua `TRACEPILO
 log backfill từ PostgreSQL microsecond vẫn khử trùng với retry nanosecond; timestamp/cursor
 gốc giữ nanosecond. TTL lấy `RETENTION_MAX_AGE`, API luôn lọc tuổi log. `ttl_only_drop_parts=1`
 chỉ xóa part hết hạn toàn bộ nên vật lý có thể lưu thêm partition period cộng độ trễ merge.
-Đổi partition hoặc TTL phải chạy `migrate clickhouse up`; startup/readiness từ chối schema không hợp lệ.
+Đổi TTL phải chạy `migrate clickhouse up`, `migrate all` hoặc bật auto migration CH; readiness từ chối schema không hợp lệ.
+Cấu hình partition chọn khóa cho bảng mới; đổi khóa của bảng hiện có cần migration bảng/dữ liệu riêng.
 
 ## 11. Telemetry streaming thời gian thực (SSE) và tối ưu Waterfall
 
 - **Live Streaming qua SSE:** Tuyến `GET /api/v1/live/stream` (scope `read`) mở kênh Server-Sent Events (SSE)
   truyền trực tiếp log mới và sự cố phát sinh sau khi mọi bước persist của batch thành công. Stream chạy qua bộ nhớ
-  `StreamHub` độc lập, không chiếm slot truy vấn bounded concurrency (`admitQuery`), có giới hạn 256 kết nối đồng thời
+  `application/live.Hub` độc lập với HTTP và storage, được callback của pipeline gọi sau persist;
+  HTTP adapter đăng ký nhận event, serialize JSON và đóng kết nối khi hub dừng. Hub không chiếm slot
+  truy vấn bounded concurrency (`admitQuery`), có giới hạn 256 kết nối đồng thời
   và dùng deadline ghi 5 giây cho từng frame để client chậm không giữ tài nguyên vô hạn.
   Stream kết thúc khi JWT hết hạn; mỗi 15 giây kiểm tra tài khoản và membership trực tiếp ở PostgreSQL,
   không dùng role cache, với deadline kiểm tra 2 giây. Lỗi kiểm tra hoặc quyền bị thu hồi đóng stream.
@@ -222,5 +296,5 @@ chỉ xóa part hết hạn toàn bộ nên vật lý có thể lưu thêm parti
 - Chưa có SSO/MFA, đặt lại mật khẩu qua email, xóa project/environment.
 - Chưa đo tải/SLO production; test tích hợp PostgreSQL cần database dùng một lần (`TRACEPILOT_INTEGRATION_TEST=1`),
   ClickHouse dùng instance dùng một lần (`TRACEPILOT_CLICKHOUSE_INTEGRATION_TEST=1`, `TRACEPILOT_CLICKHOUSE_TEST_URL`).
-- DB tạo bằng lịch sử migration cũ trước khi gộp schema (version 1–5) cần kiểm tra schema thực tế trước
-  khi nâng cấp; số version có thể trùng với lịch sử hiện tại. Không tự đặt lại version trên database thật.
+- Bộ migration đã tách lại cho database mới trước khi phát hành; không tự nâng cấp lịch sử cũ
+  hay tự đặt lại version trên database thật.

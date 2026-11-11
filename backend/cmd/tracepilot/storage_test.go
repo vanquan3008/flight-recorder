@@ -68,8 +68,10 @@ func TestDatabaseReadinessCancelsPeerOnFailure(t *testing.T) {
 func TestStorageStartupHonorsCancellationBeforeOpeningClients(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	backend, err := openStorageBackend(ctx, config.Config{})
-	if backend != nil || !errors.Is(err, context.Canceled) {
-		t.Fatalf("canceled startup = %v, %v", backend, err)
+	for _, autoMigrate := range []bool{false, true} {
+		backend, err := openStorageBackend(ctx, config.Config{Database: config.DatabaseConfig{AutoMigrate: autoMigrate}})
+		if backend != nil || !errors.Is(err, context.Canceled) {
+			t.Fatalf("canceled startup (auto migration=%t) = %v, %v", autoMigrate, backend, err)
+		}
 	}
 }

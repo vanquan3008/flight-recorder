@@ -2,7 +2,7 @@ import { settingsFormClass } from "./form-styles";
 import { secondaryButtonClass } from "../../shared/ui/styles";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useState } from "react";
-import { useAuth } from "../../app/auth";
+import { useAuth } from "../../shared/session";
 import { api, pageItems, usePagedQuery } from "../../shared/api";
 import type { Account } from "../../shared/session";
 import { Badge, PagedTable, Panel, formatTime } from "../../shared/ui";

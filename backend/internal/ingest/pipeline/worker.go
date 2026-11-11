@@ -93,35 +93,37 @@ func (pipeline *Pipeline) persist(ctx context.Context, batch []item) {
 
 // storeWithRetry retries temporary failures only; invalid content fails the
 // same way on every attempt.
-func (pipeline *Pipeline) storeWithRetry(ctx context.Context, batch []item) error {
+func (pipeline *Pipeline) storeWithRetry(ctx context.Context, batch []item) (storeError error) {
 	events := make([]telemetry.Event, len(batch))
 	for index := range batch {
 		events[index] = batch[index].event
 	}
 
 	startedAt := time.Now()
-	var storeError error
+	defer func() { pipeline.observeBatch(time.Since(startedAt), storeError != nil) }()
 	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			retryDelay := time.NewTimer(retryBackoff(attempt - 1))
+			select {
+			case <-retryDelay.C:
+			case <-ctx.Done():
+				retryDelay.Stop()
+				return ctx.Err()
+			}
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if attempt > 0 {
+			pipeline.observeRetry()
+		}
 		batchContext, cancelBatch := context.WithTimeout(ctx, pipeline.batchTimeout)
 		storeError = pipeline.store(batchContext, events)
 		cancelBatch()
 		if storeError == nil || errors.Is(storeError, telemetry.ErrInvalidEvent) || ctx.Err() != nil {
 			break
 		}
-		pipeline.observeRetry()
-		retryDelay := time.NewTimer(retryBackoff(attempt))
-		select {
-		case <-retryDelay.C:
-		case <-ctx.Done():
-			if !retryDelay.Stop() {
-				select {
-				case <-retryDelay.C:
-				default:
-				}
-			}
-		}
 	}
-	pipeline.observeBatch(time.Since(startedAt), storeError != nil)
 	return storeError
 }
 

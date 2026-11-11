@@ -30,6 +30,7 @@ var storageFeatureImports = map[string][]string{
 	"webhooks":    {"pgvalue", "sqlc"},
 	"replays":     {"pgvalue", "sqlc"},
 	"maintenance": {"sqlc"},
+	"migrations":  {},
 }
 
 func TestStorageFeatureDependencies(t *testing.T) {

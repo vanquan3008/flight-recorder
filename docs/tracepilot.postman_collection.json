@@ -206,7 +206,7 @@
     },
     {
       "name": "2. Account, project and ingest token",
-      "description": "Registers (or signs in) and makes a project for this run. Everything after this folder works in that project, so a run never touches other people's data.\n\nA development-only super administrator is seeded via `tracepilot seed`; it does not load demo telemetry. On an installation, set accountEmail/accountPassword to yours or use the seeded admin, or leave them: a new account is registered when registration is open.",
+      "description": "Registers (or signs in) and makes a project for this run. Everything after this folder works in that project, so a run never touches other people's data.\n\nThe development-only `tracepilot seed` creates only a super administrator; it does not create projects, environments, memberships, or demo telemetry. Server startup does not create a default project. On an installation, set accountEmail/accountPassword to yours or use the seeded admin, or leave them: a new account is registered when registration is open.",
       "item": [
         {
           "name": "Auth status",
@@ -793,7 +793,7 @@
           ]
         }
       ],
-      "description": "Sends telemetry with the ingest token. It lands in this run's project, in its first environment (add `X-Environment: <name>` to choose another)."
+      "description": "Sends telemetry with the ingest token. It lands in this run's project, in its first environment (add `X-Environment: <name>` to choose another). Event batches wait for durable storage and make at most three storage attempts, with backoff only between attempts; cancelling the worker during backoff stops further writes. Transient storage failures still return 503/Unavailable for exporter retry."
     },
     {
       "name": "4. Verify what was stored (signed in as the owner)",

@@ -11,7 +11,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/vanquan3008/tracepilot/internal/config"
-	"github.com/vanquan3008/tracepilot/internal/storage/migrations"
+	"github.com/vanquan3008/tracepilot/internal/storage/postgres/migrations"
 )
 
 func TestReadyValidatesSchemaThroughRuntimePoolIntegration(t *testing.T) {
@@ -58,13 +58,17 @@ func TestReadyValidatesSchemaThroughRuntimePoolIntegration(t *testing.T) {
 	if err := database.Ready(ctx); err == nil || !strings.Contains(err.Error(), "not initialized") {
 		t.Fatalf("empty schema version was accepted: %v", err)
 	}
+	expected, err := migrations.CurrentVersion()
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, state := range []struct {
 		version          uint
 		dirty, wantError bool
 	}{
-		{migrations.CurrentVersion, false, false},
-		{migrations.CurrentVersion, true, true},
-		{migrations.CurrentVersion - 1, false, true},
+		{expected, false, false},
+		{expected, true, true},
+		{expected - 1, false, true},
 	} {
 		if _, err := database.pool.Exec(ctx, "DELETE FROM schema_migrations"); err != nil {
 			t.Fatal(err)

@@ -3,7 +3,7 @@ import { Search } from "lucide-react";
 import type { FormEvent } from "react";
 import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { useAuth } from "../../app/auth";
+import { useAuth } from "../../shared/session";
 import { compactSearchParams, queryString, usePagedQuery } from "../../shared/api";
 import type { TraceSummary } from "../../shared/types";
 import { Badge, DetailLink, ErrorState, PageHeader, PagedTable, Panel, TimeWindowFilter, formatDuration, formatTime, useTimeWindow } from "../../shared/ui";

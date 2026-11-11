@@ -4,10 +4,9 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { NavLink, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { api, APIError, onSessionRefreshed, refreshAccess, sessionCredential, setAccessToken, setProjectContext } from "../shared/api";
 import type { Page, TraceSummary } from "../shared/types";
-import { AuthContext } from "./auth";
 import { ChangePasswordGate, NoProject } from "./access-gates";
 import { AppRoutes } from "./routes";
-import { projectStorageKey, type SessionView, signedInHint } from "../shared/session";
+import { AuthContext, projectStorageKey, type SessionView, signedInHint } from "../shared/session";
 import { ThemeToggle } from "./theme";
 import { Navigation } from "./navigation";
 import { SessionControls } from "./session-controls";

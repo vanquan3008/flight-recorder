@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useAuth } from "../../app/auth";
+import { useAuth } from "../../shared/session";
 import { api, queryString } from "../../shared/api";
 import type { TelemetryQuality } from "../../shared/types";
 import { PageHeader, TimeWindowFilter, useTimeWindow } from "../../shared/ui";

@@ -3,7 +3,7 @@ import { Columns, Radio, Rows, Search, X } from "lucide-react";
 import type { FormEvent } from "react";
 import { useCallback, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { useAuth } from "../../app/auth";
+import { useAuth } from "../../shared/session";
 import { compactSearchParams, pageItems, queryString, useLiveStream, usePagedQuery } from "../../shared/api";
 import type { LogRecord } from "../../shared/types";
 import {

@@ -1,6 +1,6 @@
 SQLC_IMAGE := sqlc/sqlc:1.31.1
 
-.PHONY: build test test-race bench-pipeline bench-postgres vet staticcheck vulncheck fmt-check size-check sqlc-generate sqlc-vet sqlc-check web-install web-check web-test web-build web-dev web-ci ci run dev migrate migrate-version migration-roundtrip seed clean
+.PHONY: build test test-race bench-pipeline bench-postgres vet staticcheck vulncheck fmt-check size-check sqlc-generate sqlc-vet sqlc-check web-install web-check web-test web-build web-dev web-ci ci run dev start migrate migrate-postgres migrate-clickhouse migrate-all migrate-status migrate-version seed clean
 
 FRONTEND_NPM := npm --prefix frontend
 
@@ -75,18 +75,28 @@ size-check:
 run:
 	go -C backend run ./cmd/tracepilot serve
 
-dev: migrate run
+dev: start
 
-migrate:
-	go -C backend run ./cmd/tracepilot migrate up
+start: migrate-all
+	$(MAKE) run
+
+migrate: migrate-postgres
+
+migrate-postgres:
+	go -C backend run ./cmd/tracepilot migrate postgres up
+
+migrate-clickhouse:
+	go -C backend run ./cmd/tracepilot migrate clickhouse up
+
+migrate-all:
+	go -C backend run ./cmd/tracepilot migrate all
+
+migrate-status:
+	go -C backend run ./cmd/tracepilot migrate postgres status
+	go -C backend run ./cmd/tracepilot migrate clickhouse status
 
 migrate-version:
 	go -C backend run ./cmd/tracepilot migrate version
-
-migration-roundtrip:
-	go -C backend run ./cmd/tracepilot migrate up
-	go -C backend run ./cmd/tracepilot migrate down 1
-	go -C backend run ./cmd/tracepilot migrate up
 
 seed:
 	go -C backend run ./cmd/tracepilot seed

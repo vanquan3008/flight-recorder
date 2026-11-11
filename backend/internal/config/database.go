@@ -14,6 +14,7 @@ const (
 // DatabaseConfig configures PostgreSQL connection pooling, migrations, and session timeouts.
 type DatabaseConfig struct {
 	URL                   string        `config:"url"`
+	AutoMigrate           bool          `config:"auto_migrate"`
 	MaxConnections        int32         `config:"max_connections"`
 	MinConnections        int32         `config:"min_connections"`
 	ConnectTimeout        time.Duration `config:"connect_timeout"`
@@ -22,7 +23,6 @@ type DatabaseConfig struct {
 	HealthCheckPeriod     time.Duration `config:"health_check_period"`
 	ReadinessTimeout      time.Duration `config:"readiness_timeout"`
 
-	MigrationsPath           string        `config:"migrations_path" env:"TRACEPILOT_MIGRATIONS_PATH"`
 	StatementTimeout         time.Duration `config:"statement_timeout"`
 	LockTimeout              time.Duration `config:"lock_timeout"`
 	IdleInTransactionTimeout time.Duration `config:"idle_in_transaction_timeout"`
@@ -41,7 +41,6 @@ func (configuration Config) validateDatabase(validator *validator) {
 	if database.StatementTimeout > 0 && configuration.HTTP.RequestTimeout > 0 && database.StatementTimeout < configuration.HTTP.RequestTimeout {
 		validator.add("database.statement_timeout", "must not be below http.request_timeout, or queries are cut off before the API can answer")
 	}
-	database.validateMigrations(validator)
 	validateDatabaseURL(database.URL, configuration.Production, validator)
 }
 
@@ -87,13 +86,6 @@ func (database DatabaseConfig) validateSessionLimits(validator *validator) {
 	}
 	if database.IdleInTransactionTimeout < 0 {
 		validator.add("database.idle_in_transaction_timeout", "must not be negative")
-	}
-}
-
-// validateMigrations validates the migration directory configuration.
-func (database DatabaseConfig) validateMigrations(validator *validator) {
-	if strings.TrimSpace(database.MigrationsPath) == "" {
-		validator.add("database.migrations_path", "must not be empty")
 	}
 }
 
