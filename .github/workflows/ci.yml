@@ -118,6 +118,9 @@ jobs:
       - name: Browser smoke test
         env:
           TRACEPILOT_AUTH_JWT_SECRET: ci-only-jwt-secret-0123456789abcdef0123456789
+          # Browser tests share one IP and repeatedly open sessions and pages.
+          TRACEPILOT_HTTP_RATE_LIMIT_AUTH_REQUESTS: "200"
+          TRACEPILOT_HTTP_RATE_LIMIT_REQUESTS: "1000"
         run: |
           npm --prefix frontend ci
           npm --prefix frontend exec playwright -- install --with-deps chromium
