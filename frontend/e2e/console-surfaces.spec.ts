@@ -67,7 +67,7 @@ test("a newly registered person owns nothing yet and is offered a first project"
   await page.request.post("/api/v1/auth/register", { data: { email: stranger.email, display_name: "Stranger", password: stranger.password }, headers: { "X-TracePilot-Refresh": "1" } });
   await page.goto("/");
   await page.getByLabel("Email").fill(stranger.email);
-  await page.getByLabel("Password").fill(stranger.password);
+  await page.getByLabel("Password", { exact: true }).fill(stranger.password);
   await page.getByRole("button", { name: /^Sign in/ }).last().click();
   await expect(page.getByRole("heading", { name: "Create your first project" })).toBeVisible();
 });
