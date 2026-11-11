@@ -3,7 +3,7 @@ import { signIn } from "./session";
 
 async function connect(page: Page) {
   await signIn(page);
-  await expect(page.getByText("Connected")).toBeVisible();
+  await expect(page.getByRole("status")).toHaveAttribute("title", "Connected");
 }
 
 test("keeps the chosen theme across reloads without painting the other one first", async ({ page }) => {
@@ -21,7 +21,7 @@ test("keeps trace filters on an empty result list", async ({ page }) => {
   await connect(page);
   await page.getByRole("link", { name: "Trace explorer" }).click();
   await page.getByLabel("Filter by service").fill("checkout");
-  await page.getByLabel("Filter by status").fill("ERROR");
+  await page.getByLabel("Filter by status").selectOption("ERROR");
   await page.getByRole("button", { name: "Search traces" }).click();
   await expect(page.getByText("No traces match those filters.")).toBeVisible();
   await expect(page.getByLabel("Filter by service")).toHaveValue("checkout");

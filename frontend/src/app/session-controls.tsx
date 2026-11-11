@@ -60,7 +60,7 @@ export function SessionControls({
         {/* Status indicator */}
         <div className="flex items-center gap-1.5" role="status" title={status}>
           <i className={`size-2 shrink-0 rounded-full ${dot}`} aria-hidden="true" />
-          <span className="hidden text-[11px] font-medium text-slate-600 dark:text-slate-300 xl:inline whitespace-nowrap">
+          <span className="hidden text-[11px] font-medium text-slate-600 dark:text-slate-300 sm:inline whitespace-nowrap">
             {status}
           </span>
         </div>
