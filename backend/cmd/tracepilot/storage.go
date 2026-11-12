@@ -19,7 +19,7 @@ func openStorageBackend(ctx context.Context, cfg config.Config) (*storageBackend
 	}
 	if cfg.Database.AutoMigrate {
 		slog.Info("automatic PostgreSQL migration enabled")
-		if _, err := migrations.Run(ctx, cfg.Database.URL, "up", 0); err != nil {
+		if _, err := migrations.RunWith(ctx, cfg.Database.URL, "up", 0, postgresMigrationOptions(cfg.Database)); err != nil {
 			return nil, fmt.Errorf("automatic PostgreSQL migration: %w", err)
 		}
 	}

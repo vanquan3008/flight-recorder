@@ -118,6 +118,9 @@ jobs:
       - name: Browser smoke test
         env:
           TRACEPILOT_AUTH_JWT_SECRET: ci-only-jwt-secret-0123456789abcdef0123456789
+          # Browser tests share one IP and repeatedly open sessions and pages.
+          TRACEPILOT_HTTP_RATE_LIMIT_AUTH_REQUESTS: "200"
+          TRACEPILOT_HTTP_RATE_LIMIT_REQUESTS: "1000"
         run: |
           npm --prefix frontend ci
           npm --prefix frontend exec playwright -- install --with-deps chromium
@@ -125,7 +128,7 @@ jobs:
           go -C backend run ./cmd/tracepilot serve > tracepilot-e2e.log 2>&1 &
           server_pid=$!
           npm --prefix frontend run build
-          npm --prefix frontend exec vite -- preview --host 127.0.0.1 --port 4173 --strictPort > frontend-preview.log 2>&1 &
+          npm --prefix frontend exec vite -- preview frontend --host 127.0.0.1 --port 4173 --strictPort > frontend-preview.log 2>&1 &
           preview_pid=$!
           trap 'kill "$server_pid" "$preview_pid"' EXIT
           for _ in $(seq 1 30); do

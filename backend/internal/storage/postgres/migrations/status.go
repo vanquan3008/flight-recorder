@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net/url"
+	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -13,13 +15,18 @@ import (
 	migrationstate "github.com/vanquan3008/tracepilot/internal/storage/migrations"
 )
 
+// Inspect reads the migration state with the default timeouts.
 func Inspect(ctx context.Context, databaseURL string) (migrationstate.Status, error) {
+	return inspect(ctx, databaseURL, Options{}.withDefaults())
+}
+
+func inspect(ctx context.Context, databaseURL string, options Options) (migrationstate.Status, error) {
 	list, err := db.List(db.PostgresMigrations)
 	if err != nil {
 		return migrationstate.Status{}, err
 	}
 	state := migrationstate.NewStatus(list, 0, false)
-	connection, err := connect(ctx, databaseURL)
+	connection, err := connect(ctx, databaseURL, options)
 	if err != nil {
 		return state, err
 	}
@@ -36,7 +43,7 @@ func Inspect(ctx context.Context, databaseURL string) (migrationstate.Status, er
 	return migrationstate.NewStatus(list, state.Version, state.Dirty), nil
 }
 
-func connectionURL(databaseURL string) (*url.URL, error) {
+func connectionURL(databaseURL string, options Options) (*url.URL, error) {
 	endpoint, err := url.Parse(databaseURL)
 	if err != nil || (endpoint.Scheme != "postgres" && endpoint.Scheme != "postgresql" && endpoint.Scheme != "pgx5") {
 		return nil, errors.New("migration database URL must use postgres or postgresql scheme")
@@ -44,15 +51,15 @@ func connectionURL(databaseURL string) (*url.URL, error) {
 	endpoint.Scheme = "postgres"
 	query := endpoint.Query()
 	if !query.Has("connect_timeout") {
-		query.Set("connect_timeout", "5")
+		query.Set("connect_timeout", strconv.FormatInt(max(1, int64(math.Ceil(options.ConnectTimeout.Seconds()))), 10))
 	}
-	query.Set("lock_timeout", "10000")
+	query.Set("lock_timeout", strconv.FormatInt(max(1, options.LockTimeout.Milliseconds()), 10))
 	endpoint.RawQuery = query.Encode()
 	return endpoint, nil
 }
 
-func connect(ctx context.Context, databaseURL string) (*pgx.Conn, error) {
-	endpoint, err := connectionURL(databaseURL)
+func connect(ctx context.Context, databaseURL string, options Options) (*pgx.Conn, error) {
+	endpoint, err := connectionURL(databaseURL, options)
 	if err != nil {
 		return nil, err
 	}
@@ -70,8 +77,8 @@ func closeConnection(connection *pgx.Conn) {
 }
 
 // withLock also protects creation of the migration journal on a fresh database.
-func withLock(ctx context.Context, databaseURL string, apply func() error) error {
-	connection, err := connect(ctx, databaseURL)
+func withLock(ctx context.Context, databaseURL string, options Options, apply func() error) error {
+	connection, err := connect(ctx, databaseURL, options)
 	if err != nil {
 		return err
 	}

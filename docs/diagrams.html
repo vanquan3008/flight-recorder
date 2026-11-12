@@ -102,7 +102,7 @@ flowchart LR
   </pre></div>
   <div class="diagram"><pre class="mermaid">
 flowchart TD
-  Update(["Bước cập nhật / make start"]) --> Lock["migrate all: hai bộ version riêng<br/>SQL nhúng; PG chờ lock tối đa 10s"]
+  Update(["Bước cập nhật / make start"]) --> Lock["migrate all: hai bộ version riêng<br/>SQL nhúng; PG chờ lock MIGRATION_LOCK_TIMEOUT"]
   Lock --> Mpg["Gọi bộ quản lý PostgreSQL<br/>runner tự khóa; dirty hoặc lỗi: dừng"]
   Mpg --> Mch["Gọi bộ quản lý ClickHouse<br/>journal riêng; kiểm layout rồi TTL/cột trước clean"]
   Mch --> Check["Kiểm readiness cả hai schema"]
@@ -139,7 +139,7 @@ flowchart TD
   G --> H{"Tín hiệu dừng<br/>hoặc server cốt lõi lỗi?"}
   H -->|"chưa"| G
   H -->|"rồi"| I["Listener ngừng nhận,<br/>chờ request đang chạy"]
-  I --> J["Drain pipeline events rồi metrics<br/>trong shutdown_timeout"]
+  I --> J["Drain song song pipeline events và metrics<br/>trong shutdown_timeout"]
   J --> Close["Đóng HTTP client CH và pool PG"]
   Close --> K{"Có lỗi thật?"}
   K -->|"có"| X1
@@ -150,7 +150,7 @@ flowchart TD
 <section id="d3">
   <h2>3. Đăng ký, đăng nhập, refresh</h2>
   <p>tracepilot seed chỉ tạo super admin development, không tạo project, environment, membership hay telemetry mẫu; chạy lại giữ nguyên tài khoản và dữ liệu đã có. Sau khi đăng nhập, người dùng tạo project trong console.</p>
-  <p>application/session xác minh credential và đổi mật khẩu qua storage port. HTTP giữ rate limit, JWT, cookie và response contract. Đổi mật khẩu thu hồi phiên/token trong transaction rồi xóa identity cache và trả JWT mới. Access token (15 phút) nằm trong bộ nhớ; refresh token ngẫu nhiên nằm trong cookie HttpOnly và đổi mới mỗi lần dùng.</p>
+  <p>application/session xác minh credential và đổi mật khẩu qua storage port. HTTP giữ rate limit, JWT, cookie và response contract. Đổi mật khẩu thu hồi phiên/token trong transaction rồi đọc lại tài khoản từ DB và trả JWT mới. Access token (15 phút) nằm trong bộ nhớ; refresh token ngẫu nhiên nằm trong cookie HttpOnly và đổi mới mỗi lần dùng.</p>
   <div class="diagram"><pre class="mermaid">
 sequenceDiagram
   autonumber
@@ -239,9 +239,9 @@ flowchart TD
   SL -->|"không"| R3
   SL --> D["Giải mã, giới hạn kích thước,<br/>chuẩn hóa, che secret"]
   D -->|"record sai"| RJ["Đếm rejected, bỏ qua record đó"]
-  D --> Q{"Hàng đợi còn chỗ<br/>theo số event và byte?"}
+  D --> Q{"Giữ được slot và byte<br/>cho cả request?"}
   RJ --> Q
-  Q -->|"không"| R3
+  Q -->|"không: không event nào vào queue"| R3
   Q --> B["Worker gom batch, nhóm theo scope"]
   B --> CH["Raw log → ClickHouse bắt buộc, batch gzip<br/>async_insert=1, wait_for_async_insert=1<br/>đọc FINAL khử trùng ID khi retry"]
   CH -->|"lỗi tạm"| Retry{"Còn lượt thử?<br/>tối đa 3 lần ghi"}
@@ -366,11 +366,11 @@ flowchart TD
 
 <section id="d10">
   <h2>10. Partition và retention</h2>
-  <p>PG bảo trì partition mỗi giờ. ClickHouse phân vùng theo cấu hình (ngày/tháng/năm/tuần UTC), TTL riêng theo RETENTION_MAX_AGE (0s giữ mãi); API ẩn log hết hạn trước khi part được xóa vật lý.</p>
+  <p>PG bảo trì partition mỗi PARTITION_CHECK_INTERVAL (mặc định 1 giờ). ClickHouse phân vùng theo cấu hình (ngày/tháng/năm/tuần UTC), TTL riêng theo RETENTION_MAX_AGE (0s giữ mãi); API ẩn log hết hạn trước khi part được xóa vật lý.</p>
   <div class="diagram"><pre class="mermaid">
 flowchart TD
-  subgraph Part["Bảo trì partition - mỗi giờ"]
-    P1["Tạo partition ngày UTC cho 10 ngày<br/>từ hôm qua"] --> P2["Dữ liệu ngoài cửa sổ<br/>vào default partition"]
+  subgraph Part["Bảo trì partition - mỗi PARTITION_CHECK_INTERVAL"]
+    P1["Tạo partition ngày UTC cho<br/>PARTITION_WINDOW_DAYS ngày từ hôm qua"] --> P2["Dữ liệu ngoài cửa sổ<br/>vào default partition"]
   end
   subgraph Ret["Retention - mỗi RETENTION_CHECK_INTERVAL"]
     R1["Telemetry quá 7 ngày:<br/>drop partition hết cả ngày,<br/>xóa theo batch ở default"]

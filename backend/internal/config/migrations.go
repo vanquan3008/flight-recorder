@@ -20,6 +20,7 @@ func LoadMigrations(database string) (Config, error) {
 			cfg.Database.validateConnectionPool(&v)
 			cfg.Database.validateConnectionLifecycle(&v)
 			cfg.Database.validateSessionLimits(&v)
+			cfg.Database.validateMigrations(&v)
 			validateDatabaseURL(cfg.Database.URL, cfg.Production, &v)
 		}
 		if database == "clickhouse" || database == "all" {

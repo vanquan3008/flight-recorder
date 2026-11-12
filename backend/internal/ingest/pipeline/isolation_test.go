@@ -79,3 +79,28 @@ func TestEstimateEventBytesProducesProportionalEstimates(t *testing.T) {
 		t.Fatalf("large size estimate %d should account for 4KB payload", largeSize)
 	}
 }
+
+func TestEstimateEventBytesKeepsValidDeepAndUnknownValuesSmall(t *testing.T) {
+	nested := map[string]any{"leaf": "value"}
+	for depth := range 16 {
+		if depth%2 == 0 {
+			nested = map[string]any{"child": nested}
+		} else {
+			nested = map[string]any{"list": []any{nested}}
+		}
+	}
+	event := telemetry.Event{
+		ID:          "deep-id",
+		ServiceName: "checkout",
+		Attributes: map[string]any{
+			"nested":  nested,
+			"unknown": struct{ Value int }{Value: 1},
+			"floats":  []float64{1, 2, 3},
+		},
+		LogBody: struct{}{},
+	}
+
+	if size := estimateEventBytes(event); size <= 0 || size > 4096 {
+		t.Fatalf("estimate %d must stay within the queue budget for a valid event", size)
+	}
+}

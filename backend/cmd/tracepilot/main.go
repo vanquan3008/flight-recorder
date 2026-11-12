@@ -3,6 +3,8 @@ package main
 import (
 	"log/slog"
 	"os"
+
+	"github.com/vanquan3008/tracepilot/internal/observability/logging"
 )
 
 var (
@@ -16,6 +18,8 @@ func main() {
 }
 
 func run(args []string) int {
+	// Every sub-command logs JSON through slog; serve later applies the configured level.
+	slog.SetDefault(logging.NewLogger(os.Stdout, &logging.Options{ServiceName: "tracepilot", ServiceVersion: version}))
 	if len(args) == 0 {
 		slog.Error("missing sub-command", "usage", "tracepilot <serve|migrate|seed|healthcheck|version>")
 		return 2

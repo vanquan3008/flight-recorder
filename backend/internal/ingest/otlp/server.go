@@ -20,6 +20,7 @@ type Server struct {
 	httpServer      *http.Server
 	receiver        *Receiver
 	maxRequestBytes int64
+	maxStreams      int
 	shutdownTimeout time.Duration
 	certificateFile string
 	privateKeyFile  string
@@ -30,9 +31,10 @@ func NewServer(configuration config.Config, receiver *Receiver) *Server {
 	server := &Server{
 		grpcAddress:     configuration.Ingestion.GRPCAddress,
 		httpAddress:     configuration.Ingestion.HTTPAddress,
-		grpcServer:      newGRPCServer(receiver, int(configuration.Ingestion.MaxRequestBytes), nil),
+		grpcServer:      newGRPCServer(receiver, int(configuration.Ingestion.MaxRequestBytes), configuration.Ingestion.MaxConcurrentRequests, nil),
 		receiver:        receiver,
 		maxRequestBytes: configuration.Ingestion.MaxRequestBytes,
+		maxStreams:      configuration.Ingestion.MaxConcurrentRequests,
 		shutdownTimeout: configuration.ShutdownTimeout,
 		certificateFile: configuration.TLS.CertificateFile,
 		privateKeyFile:  configuration.TLS.PrivateKeyFile,
@@ -50,7 +52,7 @@ func (server *Server) Run(ctx context.Context) error {
 		if tlsError != nil {
 			return tlsError
 		}
-		server.grpcServer = newGRPCServer(server.receiver, int(server.maxRequestBytes), tlsConfig)
+		server.grpcServer = newGRPCServer(server.receiver, int(server.maxRequestBytes), server.maxStreams, tlsConfig)
 	}
 	grpcListener, grpcListenError := net.Listen("tcp", server.grpcAddress)
 	if grpcListenError != nil {

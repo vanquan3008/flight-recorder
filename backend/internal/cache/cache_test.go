@@ -58,8 +58,8 @@ func TestMemoryCache_GetSetDelete(t *testing.T) {
 	}
 
 	val, ok, err = c.Get(ctx, "k1")
-	if err != nil || ok {
-		t.Fatalf("expected miss after delete, got ok=%t", ok)
+	if err != nil || ok || val != nil {
+		t.Fatalf("expected miss after delete, got val=%v, ok=%t, err=%v", val, ok, err)
 	}
 }
 

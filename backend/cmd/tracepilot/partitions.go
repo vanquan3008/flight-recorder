@@ -6,29 +6,25 @@ import (
 	"time"
 )
 
-const (
-	partitionLookBackDays = 1
-	partitionWindowDays   = 10
-	partitionInterval     = time.Hour
-)
+const partitionLookBackDays = 1
 
 type partitionStore interface {
 	EnsurePartitions(context.Context, time.Time, int) error
 }
 
-func ensureTelemetryPartitions(ctx context.Context, store partitionStore) error {
-	return store.EnsurePartitions(ctx, time.Now().UTC().AddDate(0, 0, -partitionLookBackDays), partitionWindowDays)
+func ensureTelemetryPartitions(ctx context.Context, store partitionStore, windowDays int) error {
+	return store.EnsurePartitions(ctx, time.Now().UTC().AddDate(0, 0, -partitionLookBackDays), windowDays)
 }
 
-func runPartitionMaintenance(ctx context.Context, logger *slog.Logger, store partitionStore) error {
-	ticker := time.NewTicker(partitionInterval)
+func runPartitionMaintenance(ctx context.Context, logger *slog.Logger, store partitionStore, windowDays int, interval time.Duration) error {
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-			if err := ensureTelemetryPartitions(ctx, store); err != nil {
+			if err := ensureTelemetryPartitions(ctx, store, windowDays); err != nil {
 				logger.ErrorContext(ctx, "partition maintenance failed", "error", err)
 			}
 		}

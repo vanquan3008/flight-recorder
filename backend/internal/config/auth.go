@@ -84,6 +84,9 @@ func (configuration Config) validateAuth(validator *validator) {
 	if configuration.Production && configuration.Auth.JWTSecret == "" {
 		validator.add("auth.jwt_secret", "required in production")
 	}
+	if configuration.Production && configuration.Auth.IngestJWTSecret == "" {
+		validator.add("auth.ingest_jwt_secret", "required in production")
+	}
 	if configuration.Auth.JWTSecret != "" && len(configuration.Auth.JWTSecret) < 32 {
 		validator.add("auth.jwt_secret", "must contain at least 32 characters")
 	}

@@ -11,11 +11,6 @@ const (
 	defaultIdentityCacheLimit = 1024
 )
 
-type cachedUserEntry struct {
-	user     auth.User
-	loadedAt time.Time
-}
-
 type cachedProjectEntry struct {
 	project  auth.Project
 	loadedAt time.Time
@@ -28,7 +23,6 @@ type cachedRoleEntry struct {
 
 type identityCache struct {
 	mu       sync.Mutex
-	users    map[string]cachedUserEntry
 	projects map[string]cachedProjectEntry
 	roles    map[string]cachedRoleEntry
 	ttl      time.Duration
@@ -43,34 +37,11 @@ func newIdentityCache(ttl time.Duration, limit int) *identityCache {
 		limit = defaultIdentityCacheLimit
 	}
 	return &identityCache{
-		users:    make(map[string]cachedUserEntry),
 		projects: make(map[string]cachedProjectEntry),
 		roles:    make(map[string]cachedRoleEntry),
 		ttl:      ttl,
 		limit:    limit,
 	}
-}
-
-func (cache *identityCache) getUser(id string, now time.Time) (auth.User, bool) {
-	cache.mu.Lock()
-	defer cache.mu.Unlock()
-	entry, ok := cache.users[id]
-	return entry.user, ok && now.Sub(entry.loadedAt) < cache.ttl
-}
-
-func (cache *identityCache) putUser(id string, user auth.User, now time.Time) {
-	cache.mu.Lock()
-	defer cache.mu.Unlock()
-	if len(cache.users) >= cache.limit {
-		cache.users = make(map[string]cachedUserEntry)
-	}
-	cache.users[id] = cachedUserEntry{user: user, loadedAt: now}
-}
-
-func (cache *identityCache) forgetUser(id string) {
-	cache.mu.Lock()
-	defer cache.mu.Unlock()
-	delete(cache.users, id)
 }
 
 func (cache *identityCache) getProject(ref string, now time.Time) (auth.Project, bool) {

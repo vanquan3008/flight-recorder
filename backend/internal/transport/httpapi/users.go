@@ -84,9 +84,6 @@ func (server *Server) updateUser(responseWriter http.ResponseWriter, request *ht
 	if server.writeIdentityError(responseWriter, "update user", updateError) {
 		return
 	}
-	if server.identity != nil {
-		server.identity.forgetUser(userID)
-	}
 	writeJSONValue(responseWriter, http.StatusOK, map[string]any{"user": user})
 }
 
@@ -103,9 +100,6 @@ func (server *Server) resetUserPassword(responseWriter http.ResponseWriter, requ
 	}
 	if setError := server.backend.SetPassword(request.Context(), userID, password, true, "", principal.Actor()); server.writeIdentityError(responseWriter, "reset password", setError) {
 		return
-	}
-	if server.identity != nil {
-		server.identity.forgetUser(userID)
 	}
 	writeJSONValue(responseWriter, http.StatusOK, map[string]any{"temporary_password": password})
 }

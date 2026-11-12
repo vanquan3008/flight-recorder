@@ -51,8 +51,6 @@ func readEnvironmentFileAt(path string) (map[string]string, error) {
 	if os.IsNotExist(err) {
 		return nil, nil
 	}
-
-	slog.Error("failed to read environment file", "path", path, "error", err)
 	return nil, fmt.Errorf("read environment file %q: invalid or unreadable file", path)
 }
 

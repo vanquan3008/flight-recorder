@@ -18,7 +18,6 @@ const (
 )
 
 var (
-	newRequestID      = middleware.NewRequestID
 	metricMethod      = middleware.MetricMethod
 	allowsCORSMethod  = middleware.AllowsCORSMethod
 	retryAfterSeconds = middleware.RetryAfterSeconds

@@ -45,6 +45,7 @@ func TestValidateProductionRequiresAuthButAllowsPlaintextListeners(t *testing.T)
 		t.Fatal("expected production authentication to be required")
 	}
 	configuration.Auth.JWTSecret = "production-jwt-secret-000000000000000000000000000000"
+	configuration.Auth.IngestJWTSecret = "production-ingest-secret-0000000000000000000000000000"
 	// Production also requires HTTPS for ClickHouse; update URL.
 	configuration.ClickHouse.URL = "https://ch.example.com:8443"
 	if err := configuration.Validate(); err != nil {
@@ -79,6 +80,7 @@ func TestValidateProductionRequiresVerifiedDatabaseTransport(t *testing.T) {
 			configuration.Production = true
 			configuration.Database.URL = testCase.url
 			configuration.Auth.JWTSecret = "production-jwt-secret-000000000000000000000000000000"
+			configuration.Auth.IngestJWTSecret = "production-ingest-secret-0000000000000000000000000000"
 			configuration.TLS.CertificateFile = "certificate.pem"
 			configuration.TLS.PrivateKeyFile = "private-key.pem"
 			if err := configuration.Validate(); (err != nil) != testCase.wantErr {
@@ -157,6 +159,7 @@ func TestValidateProductionRejectsSampleSecrets(t *testing.T) {
 		configuration.Production = true
 		configuration.Database.URL = "postgres://tracepilot:s3cure-random-pw@db.internal/tracepilot?sslmode=verify-full"
 		configuration.Auth.JWTSecret = "b0f3a1c9e7d24a6f8c15e2d97a40b3c6f1e8d205"
+		configuration.Auth.IngestJWTSecret = "c1a4e2d97a40b3c6f1e8d205b0f3a1c9e7d24a6f"
 		configuration.TLS.CertificateFile = "certificate.pem"
 		configuration.TLS.PrivateKeyFile = "private-key.pem"
 		// ClickHouse must use HTTPS in production.

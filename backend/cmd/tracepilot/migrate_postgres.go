@@ -31,6 +31,15 @@ func runPostgresMigrations(arguments []string) int {
 		return invalidMigrationArguments(err)
 	}
 	return runMigrationCommand("postgres", operation, func(ctx context.Context, cfg config.Config) (string, error) {
-		return migrations.Run(ctx, cfg.Database.URL, operation, steps)
+		return migrations.RunWith(ctx, cfg.Database.URL, operation, steps, postgresMigrationOptions(cfg.Database))
 	})
+}
+
+// postgresMigrationOptions maps the configured database timeouts onto the migration runner.
+func postgresMigrationOptions(database config.DatabaseConfig) migrations.Options {
+	return migrations.Options{
+		ConnectTimeout:   database.ConnectTimeout,
+		LockTimeout:      database.MigrationLockTimeout,
+		StatementTimeout: database.MigrationStatementTimeout,
+	}
 }

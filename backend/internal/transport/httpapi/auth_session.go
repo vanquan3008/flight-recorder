@@ -244,9 +244,6 @@ func (server *Server) authChangePassword(responseWriter http.ResponseWriter, req
 	if server.writeIdentityError(responseWriter, "change password", changeError) {
 		return
 	}
-	if server.identity != nil {
-		server.identity.forgetUser(principal.UserID)
-	}
 	user, userError := server.backend.GetUser(request.Context(), principal.UserID)
 	if server.writeIdentityError(responseWriter, "get user", userError) {
 		return

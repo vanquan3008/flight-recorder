@@ -133,9 +133,6 @@ func (server *Server) observeHTTPRequest(signal, outcome string, duration time.D
 	}
 }
 
-// authorizeHTTP authenticates the request. On success it returns the request carrying the scope its
-// telemetry belongs to; otherwise it has answered and returns the outcome to record. The
-// environment comes from the X-Environment header.
 func (server *Server) authorizeHTTP(responseWriter http.ResponseWriter, request *http.Request) (*http.Request, string) {
 	scoped, err := server.receiver.authorizeScope(request.Context(), httpToken(request), strings.TrimSpace(request.Header.Get("X-Environment")), server.receiver.clientAddress(request.RemoteAddr, request.Header.Values("X-Forwarded-For")))
 	if err == nil {

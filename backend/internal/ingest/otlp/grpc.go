@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/vanquan3008/tracepilot/internal/auth"
 	collectorlogspb "go.opentelemetry.io/proto/otlp/collector/logs/v1"
@@ -13,13 +14,39 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 )
 
-func newGRPCServer(receiver *Receiver, maxRecvMsgSize int, tlsConfig *tls.Config) *grpc.Server {
-	options := []grpc.ServerOption{grpc.MaxRecvMsgSize(maxRecvMsgSize)}
+const (
+	grpcConnectionTimeout     = 10 * time.Second
+	grpcKeepaliveMinTime      = 10 * time.Second
+	grpcKeepaliveTime         = 2 * time.Minute
+	grpcKeepaliveTimeout      = 20 * time.Second
+	grpcMaxConnectionIdle     = 5 * time.Minute
+	grpcMaxConnectionAge      = 30 * time.Minute
+	grpcMaxConnectionAgeGrace = time.Minute
+)
+
+func newGRPCServer(receiver *Receiver, maxRecvMsgSize, maxConcurrentStreams int, tlsConfig *tls.Config) *grpc.Server {
+	options := []grpc.ServerOption{
+		grpc.MaxRecvMsgSize(maxRecvMsgSize),
+		grpc.MaxConcurrentStreams(uint32(max(maxConcurrentStreams, 1))),
+		grpc.ConnectionTimeout(grpcConnectionTimeout),
+		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
+			MinTime:             grpcKeepaliveMinTime,
+			PermitWithoutStream: true,
+		}),
+		grpc.KeepaliveParams(keepalive.ServerParameters{
+			MaxConnectionIdle:     grpcMaxConnectionIdle,
+			MaxConnectionAge:      grpcMaxConnectionAge,
+			MaxConnectionAgeGrace: grpcMaxConnectionAgeGrace,
+			Time:                  grpcKeepaliveTime,
+			Timeout:               grpcKeepaliveTimeout,
+		}),
+	}
 	if tlsConfig != nil {
 		options = append(options, grpc.Creds(credentials.NewTLS(tlsConfig)))
 	}
@@ -30,8 +57,6 @@ func newGRPCServer(receiver *Receiver, maxRecvMsgSize int, tlsConfig *tls.Config
 	return grpcServer
 }
 
-// authorizeGRPC authenticates the caller and returns a context carrying the scope its telemetry
-// belongs to. The environment comes from the x-environment metadata entry.
 func (receiver *Receiver) authorizeGRPC(ctx context.Context) (context.Context, error) {
 	scoped, err := receiver.authorizeScope(ctx, grpcToken(ctx), grpcEnvironment(ctx), receiver.grpcClient(ctx))
 	switch {
@@ -68,10 +93,6 @@ func (receiver *Receiver) grpcClient(ctx context.Context) string {
 	}
 	return receiver.clientAddress(remote, forwarded)
 }
-
-// admitGRPC runs after authentication so unauthenticated callers cannot occupy
-// slots. gRPC decodes the message before the handler runs, so this bounds
-// normalization and pipeline work, not the framework's own receive buffers.
 func (receiver *Receiver) admitGRPC() (func(), error) {
 	release, admitted := receiver.admit()
 	if !admitted {
