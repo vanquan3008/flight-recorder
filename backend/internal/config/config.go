@@ -40,14 +40,12 @@ func Load() (Config, error) {
 func loadConfiguration(validate func(Config) error, scopes ...string) (Config, error) {
 	fileValues, err := readEnvironmentFile()
 	if err != nil {
-		slog.Error("failed to read environment file", "error", err)
 		return Config{}, err
 	}
 
 	cfg := defaultConfig()
 
 	if err := applyEnvironment(&cfg, fileValues, scopes...); err != nil {
-		slog.Error("failed to apply environment configuration", "error", err)
 		return Config{}, err
 	}
 

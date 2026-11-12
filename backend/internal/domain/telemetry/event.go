@@ -1,3 +1,4 @@
+// Package telemetry provides core data structures and validation logic for distributed tracing, logging, and metrics telemetry events.
 package telemetry
 
 import (
@@ -8,9 +9,6 @@ import (
 	"time"
 )
 
-// ErrInvalidEvent marks events that storage rejected because of their content.
-// Retrying the same event cannot succeed, so it is reported to the client as a
-// rejected record instead of a temporary failure.
 var ErrInvalidEvent = errors.New("telemetry event cannot be stored")
 
 type EventType string
@@ -95,9 +93,12 @@ type SpanLink struct {
 	DroppedAttributes uint32
 }
 
-func (event Event) Validate() error {
+func (event *Event) Validate() error {
+	if event == nil {
+		return errors.New("event cannot be nil")
+	}
 	if event.ID == "" || event.ProjectID == "" || event.ServiceName == "" {
-		return errors.New("Event ID, project ID, and service name are required")
+		return errors.New("event ID, project ID, and service name are required")
 	}
 	if event.Timestamp.IsZero() {
 		return errors.New("event timestamp is required")
@@ -123,8 +124,6 @@ func (event Event) Validate() error {
 	return nil
 }
 
-// DeterministicID returns a UUIDv7 identifier whose timestamp preserves
-// event ordering and whose entropy is stable across delivery retries.
 func DeterministicID(timestamp time.Time, identity ...string) string {
 	milliseconds := timestamp.UnixMilli()
 	hash := sha256.Sum256([]byte(strings.Join(identity, "\x00")))

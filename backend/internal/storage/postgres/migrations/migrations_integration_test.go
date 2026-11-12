@@ -122,7 +122,7 @@ func TestMigrationLockHonorsCancellationAndReleasesIntegration(t *testing.T) {
 	ctx, endpoint, connection := migrationDatabase(t)
 	entered, release, finished := make(chan struct{}), make(chan struct{}), make(chan error, 1)
 	go func() {
-		finished <- withLock(ctx, endpoint, func() error {
+		finished <- withLock(ctx, endpoint, Options{}.withDefaults(), func() error {
 			close(entered)
 			<-release
 			return nil
@@ -133,7 +133,7 @@ func TestMigrationLockHonorsCancellationAndReleasesIntegration(t *testing.T) {
 		if err := <-finished; err != nil {
 			t.Error(err)
 		}
-		if err := withLock(ctx, endpoint, func() error { return nil }); err != nil {
+		if err := withLock(ctx, endpoint, Options{}.withDefaults(), func() error { return nil }); err != nil {
 			t.Errorf("migration lock was not released: %v", err)
 		}
 	}()
@@ -145,7 +145,7 @@ func TestMigrationLockHonorsCancellationAndReleasesIntegration(t *testing.T) {
 	wait, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
 	defer cancel()
 	called := false
-	err := withLock(wait, endpoint, func() error { called = true; return nil })
+	err := withLock(wait, endpoint, Options{}.withDefaults(), func() error { called = true; return nil })
 	if err == nil || called {
 		t.Fatalf("concurrent migration bypassed lock: called=%t error=%v", called, err)
 	}

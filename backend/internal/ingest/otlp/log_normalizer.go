@@ -107,8 +107,6 @@ func (normalizer *normalizer) logRecord(resource *resourcepb.Resource, resourceS
 		LogEventName:       record.GetEventName(),
 	}
 	identityAttributes, _ := json.Marshal([]any{resourceAttributes, scopeAttributes, recordAttributes, body})
-	// ponytail: OTLP logs have no universal source ID, so exact duplicates at
-	// one timestamp collapse; include a source ID here if the protocol adds one.
 	event.ID = telemetry.DeterministicID(
 		timestamp,
 		normalizer.configuration.ProjectID,

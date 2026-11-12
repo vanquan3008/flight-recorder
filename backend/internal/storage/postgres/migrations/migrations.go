@@ -16,8 +16,41 @@ import (
 
 func CurrentVersion() (uint, error) { return db.LatestVersion(db.PostgresMigrations) }
 
-// Run owns locking for mutations; callers use the same entry point for CLI and startup.
+// Options bounds how long migration commands wait on PostgreSQL. Zero fields
+// use the defaults below.
+type Options struct {
+	ConnectTimeout   time.Duration
+	LockTimeout      time.Duration
+	StatementTimeout time.Duration
+}
+
+const (
+	defaultConnectTimeout   = 5 * time.Second
+	defaultLockTimeout      = 10 * time.Second
+	defaultStatementTimeout = 5 * time.Minute
+)
+
+func (options Options) withDefaults() Options {
+	if options.ConnectTimeout <= 0 {
+		options.ConnectTimeout = defaultConnectTimeout
+	}
+	if options.LockTimeout <= 0 {
+		options.LockTimeout = defaultLockTimeout
+	}
+	if options.StatementTimeout <= 0 {
+		options.StatementTimeout = defaultStatementTimeout
+	}
+	return options
+}
+
+// Run applies an operation with the default timeouts.
 func Run(ctx context.Context, databaseURL, operation string, steps int) (string, error) {
+	return RunWith(ctx, databaseURL, operation, steps, Options{})
+}
+
+// RunWith owns locking for mutations; callers use the same entry point for CLI and startup.
+func RunWith(ctx context.Context, databaseURL, operation string, steps int, options Options) (string, error) {
+	options = options.withDefaults()
 	if operation != "up" && operation != "down" && operation != "version" && operation != "status" {
 		return "", fmt.Errorf("unsupported migration operation %q", operation)
 	}
@@ -25,7 +58,7 @@ func Run(ctx context.Context, databaseURL, operation string, steps int) (string,
 		return "", errors.New("down requires a positive step count")
 	}
 	if operation == "version" || operation == "status" {
-		state, err := Inspect(ctx, databaseURL)
+		state, err := inspect(ctx, databaseURL, options)
 		if err != nil {
 			return "", err
 		}
@@ -41,19 +74,19 @@ func Run(ctx context.Context, databaseURL, operation string, steps int) (string,
 		return "", err
 	}
 	var result string
-	err := withLock(ctx, databaseURL, func() error {
+	err := withLock(ctx, databaseURL, options, func() error {
 		var err error
-		result, err = apply(ctx, databaseURL, operation, steps)
+		result, err = apply(ctx, databaseURL, operation, steps, options)
 		return err
 	})
 	return result, err
 }
 
-func apply(ctx context.Context, databaseURL, operation string, steps int) (result string, runError error) {
+func apply(ctx context.Context, databaseURL, operation string, steps int, options Options) (result string, runError error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	runner, err := open(ctx, databaseURL)
+	runner, err := open(ctx, databaseURL, options)
 	if err != nil {
 		return "", err
 	}
@@ -109,19 +142,19 @@ func checkRollback(version uint, steps int) error {
 	return errors.New("rollback exceeds applied migration history")
 }
 
-func open(ctx context.Context, databaseURL string) (*migrate.Migrate, error) {
+func open(ctx context.Context, databaseURL string, options Options) (*migrate.Migrate, error) {
 	source, err := iofs.New(db.SQL, db.PostgresMigrations)
 	if err != nil {
 		return nil, err
 	}
-	endpoint, err := connectionURL(databaseURL)
+	endpoint, err := connectionURL(databaseURL, options)
 	if err != nil {
 		_ = source.Close()
 		return nil, err
 	}
 	endpoint.Scheme = "pgx5"
 	query := endpoint.Query()
-	timeout := 5 * time.Minute
+	timeout := options.StatementTimeout
 	if deadline, ok := ctx.Deadline(); ok {
 		timeout = min(timeout, time.Until(deadline))
 	}

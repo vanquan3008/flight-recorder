@@ -1,6 +1,7 @@
 package config
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -117,5 +118,11 @@ func TestValidateProductionSecretsPrivilegeIsolation(t *testing.T) {
 	c.Auth.IngestJWTSecret = c.Auth.JWTSecret
 	if err := c.Validate(); err == nil {
 		t.Fatal("expected identical JWTSecret and IngestJWTSecret to be rejected in production")
+	}
+
+	c = production()
+	c.Auth.IngestJWTSecret = ""
+	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "auth.ingest_jwt_secret: required in production") {
+		t.Fatalf("expected a missing IngestJWTSecret to be rejected in production, got %v", err)
 	}
 }

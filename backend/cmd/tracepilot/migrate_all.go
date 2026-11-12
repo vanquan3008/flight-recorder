@@ -23,7 +23,7 @@ func runAllMigrations(arguments []string) int {
 
 // migrateAll is an explicit batch command; it owns no shared version or journal.
 func migrateAll(ctx context.Context, cfg config.Config) error {
-	if _, err := migrations.Run(ctx, cfg.Database.URL, "up", 0); err != nil {
+	if _, err := migrations.RunWith(ctx, cfg.Database.URL, "up", 0, postgresMigrationOptions(cfg.Database)); err != nil {
 		return fmt.Errorf("PostgreSQL migration: %w", err)
 	}
 	if _, err := migrateClickHouse(ctx, cfg.ClickHouse, cfg.Retention.MaxAge, "up"); err != nil {

@@ -26,6 +26,11 @@ type DatabaseConfig struct {
 	StatementTimeout         time.Duration `config:"statement_timeout"`
 	LockTimeout              time.Duration `config:"lock_timeout"`
 	IdleInTransactionTimeout time.Duration `config:"idle_in_transaction_timeout"`
+
+	MigrationLockTimeout      time.Duration `config:"migration_lock_timeout"`
+	MigrationStatementTimeout time.Duration `config:"migration_statement_timeout"`
+	PartitionWindowDays       int           `config:"partition_window_days"`
+	PartitionCheckInterval    time.Duration `config:"partition_check_interval"`
 }
 
 // validateDatabase validates the PostgreSQL configuration.
@@ -38,6 +43,8 @@ func (configuration Config) validateDatabase(validator *validator) {
 	}
 	database.validateConnectionLifecycle(validator)
 	database.validateSessionLimits(validator)
+	database.validateMigrations(validator)
+	database.validatePartitions(validator)
 	if database.StatementTimeout > 0 && configuration.HTTP.RequestTimeout > 0 && database.StatementTimeout < configuration.HTTP.RequestTimeout {
 		validator.add("database.statement_timeout", "must not be below http.request_timeout, or queries are cut off before the API can answer")
 	}
@@ -86,6 +93,26 @@ func (database DatabaseConfig) validateSessionLimits(validator *validator) {
 	}
 	if database.IdleInTransactionTimeout < 0 {
 		validator.add("database.idle_in_transaction_timeout", "must not be negative")
+	}
+}
+
+// validateMigrations bounds how long migration commands wait for the lock and each statement.
+func (database DatabaseConfig) validateMigrations(validator *validator) {
+	if database.MigrationLockTimeout <= 0 || database.MigrationLockTimeout > time.Hour {
+		validator.add("database.migration_lock_timeout", "must be between 1ms and 1h")
+	}
+	if database.MigrationStatementTimeout <= 0 || database.MigrationStatementTimeout > 24*time.Hour {
+		validator.add("database.migration_statement_timeout", "must be between 1ms and 24h")
+	}
+}
+
+// validatePartitions keeps daily partitions created ahead of incoming telemetry.
+func (database DatabaseConfig) validatePartitions(validator *validator) {
+	if database.PartitionWindowDays < 3 || database.PartitionWindowDays > 90 {
+		validator.add("database.partition_window_days", "must be between 3 and 90 so yesterday, today and tomorrow exist")
+	}
+	if database.PartitionCheckInterval < time.Minute || database.PartitionCheckInterval > 24*time.Hour {
+		validator.add("database.partition_check_interval", "must be between 1m and 24h")
 	}
 }
 

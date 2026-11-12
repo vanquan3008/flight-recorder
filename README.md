@@ -37,7 +37,7 @@ if (-not (Test-Path backend/.env)) { Copy-Item backend/.env.example backend/.env
 
 Edit `backend/.env`: set `TRACEPILOT_DATABASE_URL`, `TRACEPILOT_CLICKHOUSE_URL`, and the database credentials for your local services. All backend settings belong in this file; process environment variables take precedence.
 
-Each backend shares one PostgreSQL pool (2–20 connections, 5s connect timeout) and one ClickHouse HTTP client (up to 8 connections). Startup validation has a shared deadline (10s by default); readiness probes run concurrently under a shared 2s deadline. Tune pool limits for your workload and total replica count in [backend/.env.example](backend/.env.example).
+Each backend shares one PostgreSQL pool (2–20 connections, 5s connect timeout) and one ClickHouse HTTP client (up to 8 connections). Startup validation has a shared deadline (10s by default); readiness probes run concurrently under a shared 2s deadline. Every database setting, including migration timeouts and the partition window, is listed with its default in [backend/.env.example](backend/.env.example); tune pool limits for your workload and total replica count there. All commands log JSON through `log/slog`.
 
 Initialize each schema independently, optionally create a development account, and start the server:
 
@@ -179,6 +179,47 @@ MVP acceptance requires the unit/architecture suites, Go vet/build, frontend typ
 - Run a representative telemetry workload and record its shape, sustained events/second, queue occupancy/rejections, query p95, memory, storage growth and drain time. Set the supported deployment envelope from those measurements.
 - Exercise the complete browser journey with real disposable stores: setup → ingest → trace/log investigation → incident transition; repeat with a regular member and a second project/environment to verify isolation.
 
+### Measured capacity
+
+First measurement, 2026-11-12, on Docker Desktop (Windows, 8 shared vCPU; the load generator ran on the same host). Each container had fixed limits: backend 2 vCPU / 1 GiB, PostgreSQL 17 2 vCPU / 2 GiB, ClickHouse 26.7 2 vCPU / 2 GiB. Workload: OTLP/HTTP JSON, half spans and half logs, 512 records per request, 8 spans per trace, 2% errors, 10s warm-up then 60s measured, a fresh database for each configuration. Treat these numbers as a lower bound for this shape, not an SLO.
+
+| Setting | Offered records/s | Result |
+| --- | --- | --- |
+| Defaults (`INGESTION_WORKERS=2`) | 1,000 | 0 failures, p95 ≤ 1s |
+| Defaults | 2,000 | ~6% 503 (queue full), p95 ~3s |
+| `INGESTION_WORKERS=8` | 1,500 | 0–3% 503 across two runs, p95 1.7–6.4s |
+| `INGESTION_WORKERS=8` | 3,000–4,000 | PostgreSQL CPU saturated; 1,100–1,300 records/s accepted |
+
+- Backend memory stayed below 100 MiB; PostgreSQL grew about 1.4 KB per span with indexes, ClickHouse under 100 bytes per log.
+- Before requests were admitted as a whole, overload persisted 46–51% of records for requests that still returned 503; goodput at 3,000 records/s rose from 674 to 1,263 records/s after the change.
+- Console reads compete with ingestion for PostgreSQL: with 1,000 records/s ingested, 17–36% of reads returned 503 because `GET /api/v1/traces` aggregates every span in its window (about 4.4 µs per span) and holds the 4 query slots.
+- `docker stop` under 1,500 records/s exited cleanly in about 1.2s without failing in-flight requests. With ClickHouse stopped, readiness returned 503 and login kept working; readiness recovered about 30s after ClickHouse returned, without restarting the backend.
+
+Supported envelope until the trace list query is reworked: per replica with 2 vCPU PostgreSQL, plan for at most 1,000 records/s sustained, set `TRACEPILOT_INGESTION_WORKERS=8` (keep `DATABASE_MAX_CONNECTIONS` ≥ 2 × workers + 2), and expect console trace lists to slow down during heavy ingestion. Repeat the measurement with `backend/cmd/loadgen` after changing the workload shape or hardware:
+
+```powershell
+go -C backend run ./cmd/loadgen -spans-per-second 500 -logs-per-second 500 -spans-per-request 512 -logs-per-request 512 -reads-per-second 5 -duration 60s
+```
+
+The tool signs in (`-email`, `-password`), creates its own project, environment and ingest token, and prints latency percentiles, failures by status, per-endpoint read latency and the server's queue and pool readings from `/metrics` (`-metrics-token` in production).
+
+### Backup, restore and migration recovery
+
+PostgreSQL and ClickHouse are backed up separately, so a pair taken while ingesting can differ by the records written in between. For a consistent pair, stop ingestion and let the pipeline drain first; otherwise restore both from the same window and let exporters resend. Rehearsed on 2026-11-12 with 264 MB PostgreSQL and 180k logs: `pg_dump` took 12s (22 MB), `pg_restore -j 2` 25s, ClickHouse backup 1s and restore 2s; a backend on the restored pair passed readiness and served traces and logs.
+
+```bash
+# PostgreSQL
+pg_dump -Fc -d "$TRACEPILOT_DATABASE_URL" -f tracepilot.dump
+createdb tracepilot_restore && pg_restore --no-owner -j 2 -d tracepilot_restore tracepilot.dump
+# ClickHouse: the server needs <backups><allowed_path>/backups/</allowed_path></backups> and a directory owned by the clickhouse user
+clickhouse-client --query "BACKUP DATABASE tracepilot TO File('/backups/tracepilot-2026-11-12')"
+clickhouse-client --query "RESTORE DATABASE tracepilot AS tracepilot_restore FROM File('/backups/tracepilot-2026-11-12')"
+```
+
+Point `TRACEPILOT_DATABASE_URL` and `TRACEPILOT_CLICKHOUSE_DATABASE` at the restored pair and check `migrate postgres status`, `migrate clickhouse status` and `/health/ready` before routing traffic.
+
+A failed migration can leave a journal dirty. Then `migrate ... status` reports `dirty: true`, `migrate up` refuses, and `serve` exits before opening listeners. To recover PostgreSQL, compare `pg_dump --schema-only` of the dirty database with a reference database at the same version. If they match, the migration finished and only the journal is stale: `UPDATE schema_migrations SET dirty = false WHERE version = <version>`. If they differ, restore from backup, or reverse the partial change by hand, set the previous version clean and run `migrate up` again. ClickHouse keeps the clean row of a version over its dirty row; after verifying the table, insert a clean row for that version into `tracepilot_schema_migrations` (the PostgreSQL path was rehearsed; this ClickHouse step was not). Never force a version you have not verified.
+
 ## Development roadmap
 
 Work in this order. Each stage produces a releasable increment; the exit criteria determine when to move on.
@@ -310,7 +351,7 @@ Plain `go run ./cmd/tracepilot version` from `backend` reports `dev`; release bu
 
 Keep contributions focused and add regression tests for behavior changes. Never commit credentials or real telemetry. Report vulnerabilities privately through the repository's security reporting channel.
 
-For production, set `TRACEPILOT_PRODUCTION=true`, replace sample secrets with persistent random values, use HTTPS and PostgreSQL `sslmode=verify-full`, and keep replay disabled unless its destination allowlist has been reviewed. See [backend/.env.example](backend/.env.example) for configuration options.
+For production, set `TRACEPILOT_PRODUCTION=true`, replace sample secrets with persistent random values (including a separate `TRACEPILOT_AUTH_INGEST_JWT_SECRET`, which production requires), use HTTPS and PostgreSQL `sslmode=verify-full`, and keep replay disabled unless its destination allowlist has been reviewed. See [backend/.env.example](backend/.env.example) for configuration options.
 
 ## Reference
 

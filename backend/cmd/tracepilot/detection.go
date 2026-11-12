@@ -13,8 +13,6 @@ import (
 	"github.com/vanquan3008/tracepilot/internal/storage/postgres"
 )
 
-// incidentStore binds the configured ingestion scope to the storage adapter so
-// the application workflow stays free of configuration types.
 type incidentStore struct {
 	database  *postgres.Database
 	ingestion config.IngestionConfig
@@ -23,8 +21,6 @@ type incidentStore struct {
 func (store incidentStore) PersistObservabilityIncident(ctx context.Context, service string, end time.Time, evidence []analysis.Evidence) error {
 	return store.database.PersistObservabilityIncident(ctx, store.ingestion, service, end, evidence)
 }
-
-// detectionServiceFor wires the detectors and the incident store to one project environment.
 func detectionServiceFor(database *postgres.Database, scope config.IngestionConfig) *detection.Service {
 	bind := func(detect func(context.Context, config.IngestionConfig, time.Time) ([]analysis.DetectedEvidence, error)) detection.Detector {
 		return detection.DetectorFunc(func(ctx context.Context, end time.Time) ([]analysis.DetectedEvidence, error) {
@@ -37,8 +33,6 @@ func detectionServiceFor(database *postgres.Database, scope config.IngestionConf
 
 const maxConcurrentDetection = 4
 
-// buildObservabilityDetectionFunc runs detection in project environments with bounded concurrency.
-// One that fails does not stop the rest: its error is reported after the others have been evaluated.
 func buildObservabilityDetectionFunc(scopes *scopeCatalog, database *postgres.Database, selfMetrics *metrics.Registry) func(context.Context) (int, error) {
 	return func(ctx context.Context) (int, error) {
 		startedAt := time.Now()

@@ -90,6 +90,11 @@ func defaultConfig() Config {
 		StatementTimeout:         30 * time.Second,
 		LockTimeout:              10 * time.Second,
 		IdleInTransactionTimeout: 30 * time.Second,
+
+		MigrationLockTimeout:      10 * time.Second,
+		MigrationStatementTimeout: 5 * time.Minute,
+		PartitionWindowDays:       10,
+		PartitionCheckInterval:    time.Hour,
 	}
 
 	replayDefaults := ReplayConfig{

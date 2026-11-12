@@ -68,7 +68,7 @@ func runServer(arguments []string) int {
 	defer backend.Close()
 	database := backend.Database
 
-	if err := ensureTelemetryPartitions(appCtx, database); err != nil {
+	if err := ensureTelemetryPartitions(appCtx, database, cfg.Database.PartitionWindowDays); err != nil {
 		logger.Error("telemetry partition initialization failed", "error", err)
 		return 1
 	}
@@ -147,7 +147,7 @@ func runServer(arguments []string) int {
 			return intelligence.Run(ctx, logger, buildObservabilityDetectionFunc(scopes, database, selfMetrics), intelligence.DefaultInterval)
 		}},
 		{"partition-maintenance", false, func(ctx context.Context) error {
-			return runPartitionMaintenance(ctx, logger, database)
+			return runPartitionMaintenance(ctx, logger, database, cfg.Database.PartitionWindowDays, cfg.Database.PartitionCheckInterval)
 		}},
 	}
 

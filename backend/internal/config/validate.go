@@ -2,7 +2,6 @@ package config
 
 import (
 	"errors"
-	"log/slog"
 	"strings"
 )
 
@@ -11,7 +10,6 @@ type validator struct {
 }
 
 func (validator *validator) add(field, reason string) {
-	slog.Error("invalid configuration", "field", field, "reason", reason)
 	validator.errs = append(validator.errs, field+": "+reason)
 }
 

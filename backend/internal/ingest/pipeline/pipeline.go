@@ -36,6 +36,8 @@ type item struct {
 
 type Pipeline struct {
 	queue              chan item
+	slotBudget         *semaphore.Weighted
+	slotCapacity       int64
 	byteBudget         *semaphore.Weighted
 	maxBytes           int64
 	inflightBytes      atomic.Int64
@@ -58,9 +60,15 @@ type Pipeline struct {
 	closed             bool
 }
 
+// New sizes the queue for QueueSize waiting events plus the batches workers hold
+// while persisting. A queue slot stays reserved until its event is acknowledged,
+// so admitted events never block on the channel.
 func New(configuration Config, store StoreFunc, metricRegistry *metrics.Registry) *Pipeline {
+	slotCapacity := int64(max(configuration.QueueSize, 1) + max(configuration.Workers, 0)*max(configuration.BatchSize, 0))
 	return &Pipeline{
-		queue:          make(chan item, configuration.QueueSize),
+		queue:          make(chan item, slotCapacity),
+		slotBudget:     semaphore.NewWeighted(slotCapacity),
+		slotCapacity:   slotCapacity,
 		byteBudget:     semaphore.NewWeighted(configuration.QueueMaxBytes),
 		maxBytes:       configuration.QueueMaxBytes,
 		enqueueTimeout: configuration.EnqueueTimeout,
@@ -102,6 +110,11 @@ func (pipeline *Pipeline) Ready() bool {
 // durability boundary: returning success never means "only queued in memory".
 // It reports committed events, events storage rejected as invalid (retrying
 // them cannot help), and an error for temporary failures that must be retried.
+//
+// A request is admitted as a whole: queue slots and bytes for all of its events
+// are reserved before any event is queued, so an overloaded pipeline rejects it
+// without persisting work the client will send again. Only a request larger
+// than the whole queue is admitted in parts.
 func (pipeline *Pipeline) Submit(ctx context.Context, events []telemetry.Event) (persisted, rejected int, err error) {
 	if len(events) == 0 {
 		return 0, 0, nil
@@ -109,8 +122,6 @@ func (pipeline *Pipeline) Submit(ctx context.Context, events []telemetry.Event) 
 	admissionContext, cancelAdmission := context.WithTimeout(ctx, pipeline.enqueueTimeout)
 	defer cancelAdmission()
 
-	// One buffered result channel per request avoids allocating one channel for
-	// every event while still allowing workers to finish batches independently.
 	ack := make(chan error, len(events))
 	accepted := 0
 	// Events that can never fit the byte budget are rejected like events storage
@@ -125,37 +136,68 @@ func (pipeline *Pipeline) Submit(ctx context.Context, events []telemetry.Event) 
 		pipeline.submitMutex.RUnlock()
 		return 0, 0, ErrUnavailable
 	}
+	part := make([]item, 0, min(len(events), int(pipeline.slotCapacity)))
+	var partBytes int64
+	admit := func() error {
+		if len(part) == 0 {
+			return nil
+		}
+		if reserveError := pipeline.reserve(admissionContext, int64(len(part)), partBytes); reserveError != nil {
+			return reserveError
+		}
+		for _, queued := range part {
+			pipeline.queue <- queued
+		}
+		accepted += len(part)
+		pipeline.setQueueDepth(len(pipeline.queue))
+		part, partBytes = part[:0], 0
+		return nil
+	}
 	for _, event := range events {
 		eventBytes := estimateBytes(event)
 		if eventBytes > pipeline.maxBytes {
 			oversized++
 			continue
 		}
-		if acquireError := pipeline.byteBudget.Acquire(admissionContext, eventBytes); acquireError != nil {
-			if errors.Is(acquireError, context.DeadlineExceeded) {
-				pipeline.observeAdmissionTimeout()
+		if int64(len(part)) == pipeline.slotCapacity || partBytes+eventBytes > pipeline.maxBytes {
+			if admitError := admit(); admitError != nil {
+				pipeline.submitMutex.RUnlock()
+				return wait(errors.Join(ErrUnavailable, admitError))
 			}
-			pipeline.submitMutex.RUnlock()
-			return wait(errors.Join(ErrUnavailable, acquireError))
 		}
-		pipeline.setIngestionBytes(pipeline.inflightBytes.Add(eventBytes))
-		pipeline.setIngestionInflight(pipeline.inflightEvents.Add(1))
-		queued := item{event: event, ack: ack, bytes: eventBytes}
-		select {
-		case pipeline.queue <- queued:
-			accepted++
-			pipeline.setQueueDepth(len(pipeline.queue))
-		case <-admissionContext.Done():
-			if errors.Is(admissionContext.Err(), context.DeadlineExceeded) {
-				pipeline.observeAdmissionTimeout()
-			}
-			pipeline.releaseBytes(queued.bytes)
-			pipeline.submitMutex.RUnlock()
-			return wait(errors.Join(ErrUnavailable, admissionContext.Err()))
-		}
+		part = append(part, item{event: event, ack: ack, bytes: eventBytes})
+		partBytes += eventBytes
 	}
+	admitError := admit()
 	pipeline.submitMutex.RUnlock()
+	if admitError != nil {
+		return wait(errors.Join(ErrUnavailable, admitError))
+	}
 	return wait(nil)
+}
+
+// reserve takes queue slots and bytes for a whole part of a request, or
+// neither. Slots are always taken before bytes, so two requests cannot each
+// hold what the other is waiting for.
+func (pipeline *Pipeline) reserve(ctx context.Context, events, bytes int64) error {
+	if acquireError := pipeline.slotBudget.Acquire(ctx, events); acquireError != nil {
+		pipeline.observeReserveFailure(acquireError)
+		return acquireError
+	}
+	if acquireError := pipeline.byteBudget.Acquire(ctx, bytes); acquireError != nil {
+		pipeline.slotBudget.Release(events)
+		pipeline.observeReserveFailure(acquireError)
+		return acquireError
+	}
+	pipeline.setIngestionBytes(pipeline.inflightBytes.Add(bytes))
+	pipeline.setIngestionInflight(pipeline.inflightEvents.Add(events))
+	return nil
+}
+
+func (pipeline *Pipeline) observeReserveFailure(reason error) {
+	if errors.Is(reason, context.DeadlineExceeded) {
+		pipeline.observeAdmissionTimeout()
+	}
 }
 
 func (pipeline *Pipeline) waitForAcks(ctx context.Context, ack <-chan error, accepted int, admissionError error) (persisted, rejected int, err error) {

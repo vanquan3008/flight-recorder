@@ -152,6 +152,7 @@ func (pipeline *Pipeline) rejectRemaining(reason error) {
 
 func (pipeline *Pipeline) releaseBytes(count int64) {
 	pipeline.byteBudget.Release(count)
+	pipeline.slotBudget.Release(1)
 	pipeline.setIngestionBytes(pipeline.inflightBytes.Add(-count))
 	pipeline.setIngestionInflight(pipeline.inflightEvents.Add(-1))
 }

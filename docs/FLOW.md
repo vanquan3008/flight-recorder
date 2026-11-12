@@ -42,7 +42,8 @@ có transaction chung. `make start`/`make dev` nối bước này với `serve`,
 cho PostgreSQL, `TRACEPILOT_CLICKHOUSE_AUTO_MIGRATE` cho ClickHouse, cùng mặc định false.
 Cờ nào true thì chạy bộ migration tương ứng trước khi mở listener/worker; lỗi thì dừng khởi động.
 Không tự backfill log cũ. Runtime vẫn yêu cầu cả hai DB sẵn sàng.
-Lock PG chờ tối đa 10s; mỗi câu migration PG tối đa 5 phút;
+Lock PG chờ tối đa `DATABASE_MIGRATION_LOCK_TIMEOUT` (10s); mỗi câu migration PG tối đa
+`DATABASE_MIGRATION_STATEMENT_TIMEOUT` (5 phút); kết nối migration dùng `DATABASE_CONNECT_TIMEOUT` nếu URL không có `connect_timeout`;
 mỗi request CH dùng timeout cấu hình. Hủy PG giữa các file; câu đang chạy có thể đợi hết timeout.
 
 CLI có entry point riêng: `migrate_postgres.go` và `migrate_clickhouse.go`, mỗi bên kiểm lệnh và
@@ -55,6 +56,8 @@ Helper CLI chỉ dùng chung việc đọc cấu hình, tín hiệu dừng và l
 từ lịch sử được chọn, không giữ trạng thái hay version chung. Hai storage adapter không import nhau;
 architecture test bảo vệ ranh giới này. `migrate_logs.go` giữ workflow backfill chéo kho tường minh.
 `migrate all` là lệnh tiện ích gọi lần lượt hai bộ quản lý độc lập, không có journal/version riêng.
+Mọi lệnh ghi log JSON qua `log/slog` (kèm `service.name`, `service.version`); `serve` áp mức `LOG_LEVEL`.
+Package `config` chỉ trả lỗi, lệnh gọi log đúng một lần.
 Lệnh này dùng lại luồng mở client và readiness của runtime, chỉ cần credential database,
 không yêu cầu JWT secret hay khóa mã hóa webhook.
 
@@ -106,7 +109,7 @@ sẽ từ chối dữ liệu cũ sai quy tắc, không tự sửa/xóa dữ li�
    được giám sát phục hồi tự động (restart with backoff) để đảm bảo tính sẵn sàng cao.
 
 Tắt (SIGINT/SIGTERM hoặc một thành phần lỗi): listener ngừng nhận và chờ request, rồi pipeline
-events và pipeline metrics drain lần lượt trong `shutdown_timeout` (15s), rồi đóng HTTP client CH
+events và pipeline metrics drain song song trong `shutdown_timeout` (15s), rồi đóng HTTP client CH
 và pool PG. Đặt grace của container
 ≥ 35s. Exporter gửi lại phần chưa ACK.
 
@@ -160,9 +163,14 @@ Router kiểm theo **scope** mà bảng route khai báo; handler không tự ki�
 3. Xác thực: chữ ký, issuer/audience, loại `ingest`, hạn; sau đó tra `ingest_tokens` qua bộ đệm
    bộ nhớ (cache 30s, thu hồi xóa tức thì). Token sai → 401; DB lỗi → 503 để exporter retry.
 4. Phân giải scope (project + environment) qua `scopeCatalog` (cache 30 s). Environment lạ → từ chối.
-5. Lấy slot xử lý (hết slot → 503), giải mã (giới hạn cả body nén và giải nén), chuẩn hóa, che key
+5. gRPC giới hạn mỗi kết nối tối đa `MAX_CONCURRENT_REQUESTS` stream (stream vượt mức chờ ở client thay vì
+   nhận lỗi), handshake 10s, keepalive và tuổi kết nối 30 phút để cân bằng lại giữa replica.
+   Lấy slot xử lý (hết slot → 503), giải mã (giới hạn cả body nén và giải nén), chuẩn hóa, che key
    nhạy cảm và pattern secret trong văn bản tự do. Record sai → đếm `rejected`, vẫn xử lý phần còn lại.
-6. Đưa vào pipeline: giới hạn số event và byte; đầy → 503 + `Retry-After`.
+6. Đưa vào pipeline theo kiểu được cả hoặc không: giữ slot và byte cho cả request một lần, rồi mới đưa event
+   vào queue. Không đủ chỗ trong `ENQUEUE_TIMEOUT` → 503 + `Retry-After`, không event nào của request được ghi,
+   nên exporter gửi lại không làm PG ghi trùng phần đã nhận. Chỉ request lớn hơn cả queue mới được nhận theo phần.
+   Sức chứa = `QUEUE_SIZE` + `WORKERS` × `BATCH_SIZE`; slot giữ tới khi event được ACK.
 7. Worker gom batch theo scope, dùng pipeline cũ. `application/logs.Persist`
    ghi raw log bằng HTTP/gzip JSONEachRow (`async_insert=1`, `wait_for_async_insert=1`),
    rồi gọi `StoreEvents` cũ cho trace, `StoreLogIncidents` cho lỗi log. Hàm sau chỉ giữ
@@ -227,7 +235,8 @@ snapshot với summary, nên không cần chờ backfill và không thêm cờ c
 ## 8. Ingest token [8]
 
 Owner tạo token (tên duy nhất trong project, mặc định hết hạn sau 1 năm, tối đa 3 năm). JWT chỉ hiện **một lần**;
-DB chỉ lưu dòng metadata. Token được ký bằng khóa riêng biệt `INGEST_JWT_SECRET` (hoặc fallback `JWT_SECRET` nếu chưa cấu hình).
+DB chỉ lưu dòng metadata. Token được ký bằng khóa riêng biệt `INGEST_JWT_SECRET`. Production bắt buộc khóa này và phải khác `JWT_SECRET`;
+ngoài production, thiếu khóa thì dùng tạm `JWT_SECRET` kèm cảnh báo.
 Dùng token: bộ thu tra dòng đó qua cache với TTL cấu hình; khi chủ project thu hồi token qua API,
 cache local của tiến trình xử lý yêu cầu và entry shared cache được xóa. Replica khác có thể còn
 giữ entry local tới khi hết TTL; chưa cam kết thu hồi tức thì trên toàn cụm. Tách riêng khóa ký
@@ -243,7 +252,8 @@ trước lượt poll tiếp theo, nên endpoint chậm không làm các lượt
 
 ## 10. Partition và retention [10]
 
-Bảng telemetry PostgreSQL chia partition theo ngày UTC. Khởi động tạo 10 ngày từ hôm qua, bảo trì mỗi giờ. Retention
+Bảng telemetry PostgreSQL chia partition theo ngày UTC. Khởi động tạo `DATABASE_PARTITION_WINDOW_DAYS` (10) ngày từ hôm qua,
+bảo trì mỗi `DATABASE_PARTITION_CHECK_INTERVAL` (1 giờ). Retention
 chạy theo chu kỳ, mỗi nhóm một `max_age` (`0s` = giữ mãi): telemetry 7 ngày (drop partition cũ), incident đã
 đóng 90 ngày (kéo theo evidence, occurrence, lịch sử), audit 180 ngày, webhook delivery 30 ngày. Incident đang
 mở và delivery đang xử lý không bao giờ bị xóa.
@@ -292,9 +302,14 @@ Cấu hình partition chọn khóa cho bảng mới; đổi khóa của bảng h
 
 - Rate limit tính theo từng tiến trình; nhiều replica thì đặt thêm ở reverse proxy.
 - Live Tail là best effort từ bộ nhớ của tiến trình đang phục vụ kết nối; chưa fan-out giữa replica.
-- Ngân sách byte của queue là ước lượng, không phải giới hạn RSS (gRPC giải mã trước khi vào hàng đợi).
+- Ngân sách byte của queue là ước lượng, không phải giới hạn RSS (gRPC giải mã trước khi vào hàng đợi;
+  giới hạn stream chỉ tính theo từng kết nối).
 - Chưa có SSO/MFA, đặt lại mật khẩu qua email, xóa project/environment.
-- Chưa đo tải/SLO production; test tích hợp PostgreSQL cần database dùng một lần (`TRACEPILOT_INTEGRATION_TEST=1`),
+- Số đo tải đầu tiên và giới hạn triển khai nằm trong README (Measured capacity). `ListTraces` gom mọi span trong khung
+  thời gian trước khi lấy `limit`, nên chi phí tăng theo số span (khoảng 4,4µs/span); console còn gọi
+  `/traces?limit=1` không kèm khung thời gian. Đọc console bị 503 khi ingest đồng thời từ khoảng 1k bản ghi/giây.
+- ClickHouse sập làm readiness trả 503 trên mọi replica (đăng nhập vẫn chạy); sau khi CH lên lại cần khoảng 30s.
+- Test tích hợp PostgreSQL cần database dùng một lần (`TRACEPILOT_INTEGRATION_TEST=1`),
   ClickHouse dùng instance dùng một lần (`TRACEPILOT_CLICKHOUSE_INTEGRATION_TEST=1`, `TRACEPILOT_CLICKHOUSE_TEST_URL`).
 - Bộ migration đã tách lại cho database mới trước khi phát hành; không tự nâng cấp lịch sử cũ
   hay tự đặt lại version trên database thật.
