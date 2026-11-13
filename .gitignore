@@ -1,8 +1,17 @@
 /bin/
 /data/
-/.env
+.env
+.env.*
+!.env.example
 *.local.yaml
+*.exe
 coverage.out
+/frontend/node_modules/
+/frontend/dist/
+/frontend/.vite/
+/frontend/coverage/
+/frontend/test-results/
+/frontend/playwright-report/
 
 # Logs
 *.log

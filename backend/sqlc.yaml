@@ -1,0 +1,53 @@
+
+version: "2"
+
+# SQL safety rules (sqlc vet)
+rules:
+  - name: mutation-needs-where
+    message: "UPDATE/DELETE must include a WHERE clause"
+    rule: |
+      query.sql.matches("(?is).*\\b(UPDATE\\s+\\S+(?:\\s+(?:AS\\s+)?\\S+)?\\s+SET|DELETE\\s+FROM)\\b.*") &&
+      !query.sql.matches("(?is).*\\bWHERE\\b.*")
+
+# PostgreSQL code generation
+sql:
+  - engine: postgresql
+    schema:
+      - db/postgres/migrations
+      - db/external
+    queries: db/queries
+    rules:
+      - mutation-needs-where
+
+    gen:
+      go:
+        package: sqlc
+        out: internal/storage/postgres/sqlc
+        sql_package: pgx/v5
+        emit_empty_slices: true
+        emit_pointers_for_null_types: true
+        rename:
+          duration_ns: DurationNS
+          event_ids: EventIDs
+          http_status: HTTPStatus
+          resource_schema_url: ResourceSchemaURL
+          scope_schema_url: ScopeSchemaURL
+          trace_ids: TraceIDs
+          url: URL
+        overrides:
+          - db_type: uuid
+            go_type: string
+          - db_type: uuid
+            nullable: true
+            go_type:
+              type: string
+              pointer: true
+
+          - db_type: timestamptz
+            go_type: time.Time
+          - db_type: timestamptz
+            nullable: true
+            go_type:
+              import: time
+              type: Time
+              pointer: true

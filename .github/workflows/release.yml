@@ -12,6 +12,8 @@ concurrency:
 permissions:
   contents: write
   packages: write
+  id-token: write
+  attestations: write
 
 env:
   REGISTRY: ghcr.io
@@ -39,30 +41,57 @@ jobs:
           fi
           tag="${GITHUB_REF_NAME#v}"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "build_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
 
       - name: Build release binaries
         run: |
           tag="${{ steps.version.outputs.tag }}"
           commit="${{ github.sha }}"
-          build_time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          build_time="${{ steps.version.outputs.build_time }}"
           mkdir -p dist
           for target in linux/amd64 linux/arm64; do
-            GOOS=${target%/*} GOARCH=${target#*/} CGO_ENABLED=0 go build -trimpath \
+            suffix="${target//\//-}"
+            GOOS=${target%/*} GOARCH=${target#*/} CGO_ENABLED=0 go -C backend build -trimpath \
               -ldflags="-s -w -X main.version=${tag} -X main.commit=${commit} -X main.buildTime=${build_time}" \
-              -o "dist/flight-${target//\//-}" ./cmd/flight
+              -o "../dist/tracepilot-${suffix}" ./cmd/tracepilot
           done
-          (cd dist && sha256sum flight-* > SHA256SUMS)
+
+      - name: Smoke test release binary
+        run: ./dist/tracepilot-linux-amd64 version
+
+      - name: Generate binary SBOM
+        uses: anchore/sbom-action@cee1b8e05ae5b2593a75e197229729eabaa9f8ec # v0.20.2
+        with:
+          path: dist
+          format: spdx-json
+          output-file: dist/tracepilot-binaries.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Generate release checksums
+        run: |
+          cd dist
+          sha256sum \
+            tracepilot-linux-amd64 \
+            tracepilot-linux-arm64 \
+            tracepilot-binaries.spdx.json > SHA256SUMS
 
       - name: Log in to GHCR
-        uses: docker/login-action@9780b0c442788bb1491be57a9eaabd0f3bfaa5de # v3.3.0
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract Docker metadata
-        id: meta
-        uses: docker/metadata-action@8e5442c4ef58f5d8a5ca663f5351477c5a81992d # v5.5.1
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v3.6.0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+
+      - name: Extract server image metadata
+        id: server_meta
+        uses: docker/metadata-action@8e5442c4ef9f78752691e2d8f8d19755c6f78e81 # v5.5.1
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
@@ -71,23 +100,53 @@ jobs:
             type=semver,pattern={{major}}
             type=sha
 
-      - name: Build and push image
-        uses: docker/build-push-action@14487c7820662c4b682a9a2c082f975cb161722 # v6.7.0
+      - name: Build and push server image
+        id: server_image
+        uses: docker/build-push-action@5cd11c3a4ced054e52742c5fd54dca954e0edd85 # v6.7.0
         with:
-          context: .
+          context: backend
+          target: server
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.server_meta.outputs.tags }}
+          labels: ${{ steps.server_meta.outputs.labels }}
+          sbom: true
+          provenance: mode=max
           build-args: |
             VERSION=${{ steps.version.outputs.tag }}
             COMMIT=${{ github.sha }}
-            BUILD_TIME=${{ github.run_started_at }}
+            BUILD_TIME=${{ steps.version.outputs.build_time }}
+
+      - name: Sign immutable image digest
+        uses: sigstore/cosign-installer@1aa8e0f2454b781fbf0fbf306a4c9533a0c57409 # v3.7.0
+
+      - name: Sign server image with keyless OIDC
+        env:
+          IMAGE_DIGEST: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.server_image.outputs.digest }}
+        run: cosign sign --yes "$IMAGE_DIGEST"
+
+      - name: Verify server image signature
+        env:
+          IMAGE_DIGEST: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.server_image.outputs.digest }}
+        run: |
+          cosign verify \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            --certificate-identity-regexp "^https://github.com/${{ github.repository }}/.github/workflows/" \
+            "$IMAGE_DIGEST"
+
+      - name: Smoke test immutable server image
+        env:
+          IMAGE_DIGEST: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.server_image.outputs.digest }}
+        run: |
+          docker pull "$IMAGE_DIGEST"
+          docker run --rm "$IMAGE_DIGEST" version
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@a8a982cfeaa6a0a072aaaf7e905cec274a285e16 # v2.0.8
+        uses: softprops/action-gh-release@c062e08bd532815e2082a85e87e3ef29c3e6d191 # v2.0.8
         with:
           generate_release_notes: true
           files: |
-            dist/flight-linux-amd64
-            dist/flight-linux-arm64
+            dist/tracepilot-linux-amd64
+            dist/tracepilot-linux-arm64
             dist/SHA256SUMS
+            dist/tracepilot-binaries.spdx.json
