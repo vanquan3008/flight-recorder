@@ -104,11 +104,16 @@ export function AppShell() {
     if (!current) return;
     localStorage.setItem(projectStorageKey, current.project.id);
     localStorage.setItem(environmentStorageKey, environment);
+    // Router navigations commit as transitions, so right after `navigate()` this render can still hold the
+    // previous location. `setParams` would then rewrite the URL from that stale path and query (sign-in would
+    // end on "/?project=…" instead of "/overview"; a just-picked time range would be dropped). Wait for the
+    // router to catch up with the browser URL; `location.pathname` and `location.search` re-run this effect.
+    if (location.pathname !== window.location.pathname || location.search !== window.location.search) return;
     const next = new URLSearchParams(params);
     next.set("project", current.project.id);
     if (environment) next.set("environment", environment); else next.delete("environment");
     if (next.toString() !== params.toString()) setParams(next, { replace: true });
-  }, [current, environment, environmentStorageKey, params, setParams]);
+  }, [current, environment, environmentStorageKey, location.pathname, location.search, params, setParams]);
 
   const credential = session ? sessionCredential : "";
   const mustChangePassword = Boolean(session?.user.must_change_password);

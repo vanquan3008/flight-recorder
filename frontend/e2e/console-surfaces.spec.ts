@@ -3,7 +3,21 @@ import { signIn } from "./session";
 
 async function connect(page: Page) {
   await signIn(page);
-  await expect(page.getByRole("status")).toHaveAttribute("title", "Connected");
+  // Pages render their own role="status" loading indicators, so address the connection badge by its name.
+  await expect(page.getByRole("status", { name: "Connected" })).toBeVisible();
+}
+
+/**
+ * Picks a time range on the page titled `heading`. Router navigations commit as transitions, so the previous
+ * page (which has the same radios) stays on screen for a moment after a sidebar click: wait for the target page,
+ * or the click lands on the old one and then navigates back to it. The radios are controlled by the URL, so
+ * the input is also briefly reverted after the click: `.check()` would read that and fail. Click, then wait.
+ */
+async function chooseRange(page: Page, heading: string, name: string) {
+  await expect(page.getByRole("heading", { name: heading, level: 1 })).toBeVisible();
+  const range = page.getByRole("radio", { name });
+  await range.click({ force: true });
+  await expect(range).toBeChecked();
 }
 
 test("keeps the chosen theme across reloads without painting the other one first", async ({ page }) => {
@@ -34,15 +48,14 @@ test("keeps trace filters on an empty result list", async ({ page }) => {
 test("shows an empty log explorer before telemetry arrives", async ({ page }) => {
   await connect(page);
   await page.getByRole("link", { name: "Log explorer" }).click();
-  await page.getByRole("radio", { name: "Last 24 hours" }).check({ force: true });
-  await expect(page.getByRole("heading", { name: "Log explorer" })).toBeVisible();
+  await chooseRange(page, "Log explorer", "Last 24 hours");
   await expect(page.getByText("No logs match these filters in the selected time range.")).toBeVisible();
 });
 
 test("shows an empty service topology before telemetry arrives", async ({ page }) => {
   await connect(page);
   await page.getByRole("link", { name: "Service topology" }).click();
-  await page.getByRole("radio", { name: "Last 24 hours" }).check({ force: true });
+  await chooseRange(page, "Service and dependency topology", "Last 24 hours");
   await expect(page.getByText("No services were observed in the selected time range.")).toBeVisible();
 });
 
@@ -50,6 +63,8 @@ test("manages ingest tokens with a one-time secret and a confirmed revoke", asyn
   await connect(page);
   await page.getByRole("link", { name: "Settings" }).click();
   await page.getByRole("button", { name: "Ingest tokens" }).click();
+  // The tab is URL state and commits as a transition; the Projects tab also has "Name" fields until it does.
+  await expect(page.getByRole("heading", { name: "New ingest token" })).toBeVisible();
   const name = `e2e-${Date.now().toString(36)}`;
   await page.getByLabel("Name").fill(name);
   await page.getByRole("button", { name: "Create token" }).click();
