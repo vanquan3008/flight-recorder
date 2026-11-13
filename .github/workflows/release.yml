@@ -60,7 +60,7 @@ jobs:
         run: ./dist/tracepilot-linux-amd64 version
 
       - name: Generate binary SBOM
-        uses: anchore/sbom-action@cee1b8e05ae5b2593a75e197229729eabaa9f8ec # v0.20.2
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
         with:
           path: dist
           format: spdx-json
