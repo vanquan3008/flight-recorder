@@ -31,7 +31,8 @@ func TestOpenAPIOmitsDisabledReplayRoutes(t *testing.T) {
 }
 
 func TestOpenAPIUsesHandlerSuccessStatusCodes(t *testing.T) {
-	paths := openAPISpec()["paths"].(map[string]any)
+	spec := openAPISpec()
+	paths := spec["paths"].(map[string]any)
 	assertStatus := func(path, method, want string) {
 		t.Helper()
 		responses := paths[path].(map[string]any)[method].(map[string]any)["responses"].(map[string]any)
@@ -44,7 +45,7 @@ func TestOpenAPIUsesHandlerSuccessStatusCodes(t *testing.T) {
 	assertStatus("/api/v1/traces/{traceID}", "get", "200")
 
 	// A trace is read in pages so one request never loads a whole large trace.
-	parameters := paths["/api/v1/traces/{traceID}"].(map[string]any)["get"].(map[string]any)["parameters"].([]map[string]any)
+	parameters := operationParameters(spec, "/api/v1/traces/{traceID}", "get")
 	advertised := map[string]bool{}
 	for _, parameter := range parameters {
 		if parameter["in"] == "query" {
@@ -60,11 +61,10 @@ func TestOpenAPIUsesHandlerSuccessStatusCodes(t *testing.T) {
 }
 
 func TestOpenAPIQueryParametersMatchHandlerFilters(t *testing.T) {
-	paths := openAPISpec()["paths"].(map[string]any)
+	spec := openAPISpec()
 	assertParameters := func(path, method string, want ...string) {
 		t.Helper()
-		operation := paths[path].(map[string]any)[method].(map[string]any)
-		parameters := operation["parameters"].([]map[string]any)
+		parameters := operationParameters(spec, path, method)
 		got := make(map[string]bool, len(parameters))
 		for _, parameter := range parameters {
 			if parameter["in"] == "query" {
@@ -152,4 +152,19 @@ func countOpenAPIOperations(paths map[string]any) int {
 
 func openAPISpec() map[string]any {
 	return openAPISpecForRoutes(apiRouteDefinitions)
+}
+
+// operationParameters returns an operation's parameters with references to
+// components/parameters replaced by their definitions.
+func operationParameters(spec map[string]any, path, method string) []map[string]any {
+	operation := spec["paths"].(map[string]any)[path].(map[string]any)[method].(map[string]any)
+	shared := spec["components"].(map[string]any)["parameters"].(map[string]any)
+	var resolved []map[string]any
+	for _, parameter := range operation["parameters"].([]map[string]any) {
+		if reference, ok := parameter["$ref"].(string); ok {
+			parameter = shared[strings.TrimPrefix(reference, "#/components/parameters/")].(map[string]any)
+		}
+		resolved = append(resolved, parameter)
+	}
+	return resolved
 }

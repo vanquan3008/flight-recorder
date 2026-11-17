@@ -6,22 +6,23 @@ import (
 	"time"
 
 	"github.com/vanquan3008/tracepilot/internal/auth"
+	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/openapi"
 )
 
 var projectRoutes = []apiRouteDefinition{
-	{path: "/api/v1/projects", method: http.MethodGet, scope: auth.ScopeSession, tags: []string{"projects"}, operationID: "listProjects", handler: (*Server).listProjects},
-	{path: "/api/v1/projects", method: http.MethodPost, scope: auth.ScopeSession, tags: []string{"projects"}, operationID: "createProject", requestBody: true, handler: (*Server).createProject},
-	{path: "/api/v1/projects/{projectID}", method: http.MethodGet, scope: "read", tags: []string{"projects"}, operationID: "getProject", handler: (*Server).getProject},
-	{path: "/api/v1/projects/{projectID}", method: http.MethodPatch, scope: "admin", tags: []string{"projects"}, operationID: "updateProject", requestBody: true, successStatus: http.StatusOK, handler: (*Server).renameProject},
-	{path: "/api/v1/projects/{projectID}/environments", method: http.MethodPost, scope: "admin", tags: []string{"projects"}, operationID: "createEnvironment", requestBody: true, handler: (*Server).createEnvironment},
-	{path: "/api/v1/projects/{projectID}/members", method: http.MethodGet, scope: "admin", tags: []string{"projects", "members"}, operationID: "listProjectMembers", handler: (*Server).listMembers},
-	{path: "/api/v1/projects/{projectID}/members", method: http.MethodPost, scope: "admin", tags: []string{"projects", "members"}, operationID: "addProjectMember", requestBody: true, handler: (*Server).addMember},
-	{path: "/api/v1/projects/{projectID}/members/{userID}", method: http.MethodPatch, scope: "admin", tags: []string{"projects", "members"}, operationID: "changeProjectMemberRole", requestBody: true, successStatus: http.StatusOK, handler: (*Server).changeMemberRole},
-	{path: "/api/v1/projects/{projectID}/members/{userID}", method: http.MethodDelete, scope: "write", tags: []string{"projects", "members"}, operationID: "removeProjectMember", handler: (*Server).removeMember},
-	{path: "/api/v1/projects/{projectID}/ingest-tokens", method: http.MethodGet, scope: "admin", tags: []string{"projects", "ingest-tokens"}, operationID: "listIngestTokens", handler: (*Server).listIngestTokens},
-	{path: "/api/v1/projects/{projectID}/ingest-tokens", method: http.MethodPost, scope: "admin", tags: []string{"projects", "ingest-tokens"}, operationID: "createIngestToken", requestBody: true, handler: (*Server).createIngestToken},
-	{path: "/api/v1/projects/{projectID}/ingest-tokens/{tokenID}", method: http.MethodDelete, scope: "admin", tags: []string{"projects", "ingest-tokens"}, operationID: "revokeIngestToken", handler: (*Server).revokeIngestToken},
-	{path: "/api/v1/audit-events", method: http.MethodGet, scope: "admin", tags: []string{"audit"}, operationID: "listAuditEvents", handler: (*Server).listAuditEvents},
+	{path: "/api/v1/projects", method: http.MethodGet, scope: auth.ScopeSession, tags: []string{"projects"}, operationID: "listProjects", handler: (*Server).listProjects, response: openapi.List[auth.Membership]()},
+	{path: "/api/v1/projects", method: http.MethodPost, scope: auth.ScopeSession, tags: []string{"projects"}, operationID: "createProject", requestBody: true, handler: (*Server).createProject, request: openapi.TypeOf[createProjectRequest](), response: openapi.Object[createProjectResponse]()},
+	{path: "/api/v1/projects/{projectID}", method: http.MethodGet, scope: "read", tags: []string{"projects"}, operationID: "getProject", handler: (*Server).getProject, response: openapi.Object[projectDetailResponse]()},
+	{path: "/api/v1/projects/{projectID}", method: http.MethodPatch, scope: "admin", tags: []string{"projects"}, operationID: "updateProject", requestBody: true, successStatus: http.StatusOK, handler: (*Server).renameProject, request: openapi.TypeOf[renameProjectRequest](), response: openapi.Object[projectResponse]()},
+	{path: "/api/v1/projects/{projectID}/environments", method: http.MethodPost, scope: "admin", tags: []string{"projects"}, operationID: "createEnvironment", requestBody: true, handler: (*Server).createEnvironment, request: openapi.TypeOf[createEnvironmentRequest](), response: openapi.Object[environmentResponse]()},
+	{path: "/api/v1/projects/{projectID}/members", method: http.MethodGet, scope: "admin", tags: []string{"projects", "members"}, operationID: "listProjectMembers", handler: (*Server).listMembers, response: openapi.List[auth.Member]()},
+	{path: "/api/v1/projects/{projectID}/members", method: http.MethodPost, scope: "admin", tags: []string{"projects", "members"}, operationID: "addProjectMember", requestBody: true, handler: (*Server).addMember, request: openapi.TypeOf[addMemberRequest](), response: openapi.Object[auth.Member]()},
+	{path: "/api/v1/projects/{projectID}/members/{userID}", method: http.MethodPatch, scope: "admin", tags: []string{"projects", "members"}, operationID: "changeProjectMemberRole", requestBody: true, successStatus: http.StatusOK, handler: (*Server).changeMemberRole, request: openapi.TypeOf[changeMemberRoleRequest](), response: openapi.Object[memberRoleResponse]()},
+	{path: "/api/v1/projects/{projectID}/members/{userID}", method: http.MethodDelete, scope: "write", tags: []string{"projects", "members"}, operationID: "removeProjectMember", handler: (*Server).removeMember, response: openapi.Empty()},
+	{path: "/api/v1/projects/{projectID}/ingest-tokens", method: http.MethodGet, scope: "admin", tags: []string{"projects", "ingest-tokens"}, operationID: "listIngestTokens", query: []string{"Limit", "Cursor"}, handler: (*Server).listIngestTokens, response: openapi.Page[auth.IngestToken]()},
+	{path: "/api/v1/projects/{projectID}/ingest-tokens", method: http.MethodPost, scope: "admin", tags: []string{"projects", "ingest-tokens"}, operationID: "createIngestToken", requestBody: true, handler: (*Server).createIngestToken, request: openapi.TypeOf[createIngestTokenRequest](), response: openapi.Object[issuedIngestTokenResponse]()},
+	{path: "/api/v1/projects/{projectID}/ingest-tokens/{tokenID}", method: http.MethodDelete, scope: "admin", tags: []string{"projects", "ingest-tokens"}, operationID: "revokeIngestToken", handler: (*Server).revokeIngestToken, response: openapi.Empty()},
+	{path: "/api/v1/audit-events", method: http.MethodGet, scope: "admin", tags: []string{"audit"}, operationID: "listAuditEvents", query: []string{"Limit", "Cursor"}, handler: (*Server).listAuditEvents, response: openapi.Page[auth.AuditEvent]()},
 }
 
 func (server *Server) listProjects(responseWriter http.ResponseWriter, request *http.Request, principal auth.Principal) {
@@ -37,11 +38,7 @@ func (server *Server) listProjects(responseWriter http.ResponseWriter, request *
 }
 
 func (server *Server) createProject(responseWriter http.ResponseWriter, request *http.Request, principal auth.Principal) {
-	var payload struct {
-		Slug        string `json:"slug"`
-		Name        string `json:"name"`
-		Environment string `json:"environment"`
-	}
+	var payload createProjectRequest
 	if decodeError := decodeIdentityBody(request, &payload); decodeError != nil {
 		writeAPIError(responseWriter, http.StatusBadRequest, "INVALID_REQUEST", decodeError.Error())
 		return
@@ -57,7 +54,7 @@ func (server *Server) createProject(responseWriter http.ResponseWriter, request 
 	if server.writeIdentityError(responseWriter, "create project", createError) {
 		return
 	}
-	writeJSONValue(responseWriter, http.StatusCreated, map[string]any{"project": project, "environment": environment})
+	writeJSONValue(responseWriter, http.StatusCreated, createProjectResponse{Project: project, Environment: environment})
 }
 
 func (server *Server) getProject(responseWriter http.ResponseWriter, request *http.Request, principal auth.Principal) {
@@ -72,16 +69,14 @@ func (server *Server) getProject(responseWriter http.ResponseWriter, request *ht
 	if server.writeIdentityError(responseWriter, "list environments", listError) {
 		return
 	}
-	writeJSONValue(responseWriter, http.StatusOK, map[string]any{"project": project, "role": principal.Role, "environments": environments})
+	writeJSONValue(responseWriter, http.StatusOK, projectDetailResponse{Project: project, Role: principal.Role, Environments: environments})
 }
 
 func (server *Server) renameProject(responseWriter http.ResponseWriter, request *http.Request, principal auth.Principal) {
 	if !requireProjectAccess(responseWriter, request, principal) {
 		return
 	}
-	var payload struct {
-		Name string `json:"name"`
-	}
+	var payload renameProjectRequest
 	if decodeError := decodeIdentityBody(request, &payload); decodeError != nil {
 		writeAPIError(responseWriter, http.StatusBadRequest, "INVALID_REQUEST", decodeError.Error())
 		return
@@ -93,16 +88,14 @@ func (server *Server) renameProject(responseWriter http.ResponseWriter, request 
 	if server.identity != nil {
 		server.identity.forgetProject(principal.ProjectID, "")
 	}
-	writeJSONValue(responseWriter, http.StatusOK, map[string]any{"project": project})
+	writeJSONValue(responseWriter, http.StatusOK, projectResponse{Project: project})
 }
 
 func (server *Server) createEnvironment(responseWriter http.ResponseWriter, request *http.Request, principal auth.Principal) {
 	if !requireProjectAccess(responseWriter, request, principal) {
 		return
 	}
-	var payload struct {
-		Name string `json:"name"`
-	}
+	var payload createEnvironmentRequest
 	if decodeError := decodeIdentityBody(request, &payload); decodeError != nil {
 		writeAPIError(responseWriter, http.StatusBadRequest, "INVALID_REQUEST", decodeError.Error())
 		return
@@ -113,7 +106,7 @@ func (server *Server) createEnvironment(responseWriter http.ResponseWriter, requ
 	}
 	// Readers cache a project's environments briefly; this server sees the new one at once.
 	server.environments.forget(principal.ProjectID)
-	writeJSONValue(responseWriter, http.StatusCreated, map[string]any{"environment": environment})
+	writeJSONValue(responseWriter, http.StatusCreated, environmentResponse{Environment: environment})
 }
 
 func (server *Server) listMembers(responseWriter http.ResponseWriter, request *http.Request, principal auth.Principal) {
@@ -131,10 +124,7 @@ func (server *Server) addMember(responseWriter http.ResponseWriter, request *htt
 	if !requireProjectAccess(responseWriter, request, principal) {
 		return
 	}
-	var payload struct {
-		Email string `json:"email"`
-		Role  string `json:"role"`
-	}
+	var payload addMemberRequest
 	if decodeError := decodeIdentityBody(request, &payload); decodeError != nil {
 		writeAPIError(responseWriter, http.StatusBadRequest, "INVALID_REQUEST", decodeError.Error())
 		return
@@ -169,9 +159,7 @@ func (server *Server) changeMemberRole(responseWriter http.ResponseWriter, reque
 	if !requireProjectAccess(responseWriter, request, principal) || !requireUUID(responseWriter, userID) {
 		return
 	}
-	var payload struct {
-		Role string `json:"role"`
-	}
+	var payload changeMemberRoleRequest
 	if decodeError := decodeIdentityBody(request, &payload); decodeError != nil {
 		writeAPIError(responseWriter, http.StatusBadRequest, "INVALID_REQUEST", decodeError.Error())
 		return
@@ -192,7 +180,7 @@ func (server *Server) changeMemberRole(responseWriter http.ResponseWriter, reque
 	if server.identity != nil {
 		server.identity.forgetRole(principal.ProjectID, userID)
 	}
-	writeJSONValue(responseWriter, http.StatusOK, map[string]any{"user_id": userID, "role": payload.Role})
+	writeJSONValue(responseWriter, http.StatusOK, memberRoleResponse{UserID: userID, Role: payload.Role})
 }
 
 func (server *Server) removeMember(responseWriter http.ResponseWriter, request *http.Request, principal auth.Principal) {
@@ -236,10 +224,7 @@ func (server *Server) listAuditEvents(responseWriter http.ResponseWriter, reques
 // createIngestToken issues the credential a telemetry sender uses for this project's OTLP endpoint. The
 // JWT is returned once; the owner can list and revoke the token afterwards.
 func (server *Server) createIngestToken(responseWriter http.ResponseWriter, request *http.Request, principal auth.Principal) {
-	var payload struct {
-		Name      string     `json:"name"`
-		ExpiresAt *time.Time `json:"expires_at"`
-	}
+	var payload createIngestTokenRequest
 	if decodeError := decodeIdentityBody(request, &payload); decodeError != nil {
 		writeAPIError(responseWriter, http.StatusBadRequest, "INVALID_REQUEST", decodeError.Error())
 		return
@@ -255,7 +240,7 @@ func (server *Server) createIngestToken(responseWriter http.ResponseWriter, requ
 	if server.writeIdentityError(responseWriter, "create ingest token", createError) {
 		return
 	}
-	writeJSONValue(responseWriter, http.StatusCreated, map[string]any{"token": issued.Token, "jwt": issued.JWT})
+	writeJSONValue(responseWriter, http.StatusCreated, issuedIngestTokenResponse{Token: issued.Token, JWT: issued.JWT})
 }
 
 func (server *Server) listIngestTokens(responseWriter http.ResponseWriter, request *http.Request, principal auth.Principal) {

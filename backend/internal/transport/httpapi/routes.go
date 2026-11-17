@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"reflect"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/vanquan3008/tracepilot/internal/auth"
+	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/openapi"
 )
 
 // apiHandler serves one API route for a caller the router has already
@@ -28,6 +30,11 @@ type apiRouteDefinition struct {
 	// public routes need no credentials; they authenticate the request themselves.
 	public    bool
 	streaming bool
+	// OpenAPI metadata: reusable query and header parameter names, the request body type and the success body.
+	query    []string
+	headers  []string
+	request  reflect.Type
+	response openapi.Body
 }
 
 var streamRoutes = []apiRouteDefinition{
