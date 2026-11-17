@@ -3,6 +3,15 @@
 TracePilot là một ứng dụng Go (API quản trị, bộ thu OTLP và worker nền chạy chung một tiến trình) cùng một console React.
 PostgreSQL lưu dữ liệu quản trị, trace, metric và incident; ClickHouse là kho duy nhất cho raw log.
 Luồng hoạt động chi tiết nằm ở [FLOW.md](FLOW.md); cách chạy và phát triển nằm ở [README](../README.md).
+Tra cứu file, chữ ký hàm và ví dụ gọi ở [tài liệu HTML](diagrams.html#source-map).
+
+## Mục lục
+
+- [Gốc repo](#gốc-repo)
+- [Backend](#backend-backend)
+- [Frontend](#frontend-frontend)
+- [Build và triển khai](#build-và-triển-khai)
+- [Hướng phụ thuộc](#hướng-phụ-thuộc)
 
 ## Gốc repo
 
@@ -12,7 +21,8 @@ Luồng hoạt động chi tiết nằm ở [FLOW.md](FLOW.md); cách chạy và
 | `frontend/` | Console React (Vite, Tailwind) cho người dùng. |
 | `docs/` | `FLOW.md` (mô tả luồng), `diagrams.html` (sơ đồ Mermaid), bộ Postman kiểm tra API và tài liệu này. |
 | `.github/` | CI (`ci.yml`), phát hành khi gắn tag (`release.yml`) và action dùng chung `setup-go`. |
-| `docker-compose/` | File Compose chạy database trên máy local. AGENTS.md ghi repo không có Compose, nên thư mục này cần được xác nhận giữ hay bỏ. |
+| `deploy/` | Triển khai production: `compose.yaml` (migrate chạy một lần, backend, console; database có sẵn bên ngoài) và `nginx.conf.example` cho HTTPS trên host. |
+| `docker-compose/` | Chỉ dựng ClickHouse (và giao diện xem dữ liệu) trên máy dev. |
 
 ## Backend (`backend/`)
 
@@ -20,7 +30,7 @@ Luồng hoạt động chi tiết nằm ở [FLOW.md](FLOW.md); cách chạy và
 
 | Thư mục | Vai trò |
 | --- | --- |
-| `cmd/tracepilot/` | Binary chính với các lệnh `serve`, `migrate`, `seed`, `healthcheck`. Đọc cấu hình, nối dependency, quản lý vòng đời khởi động và tắt. |
+| `cmd/tracepilot/` | Binary chính: `serve`, `migrate`, `create-admin`, `seed`, `healthcheck`, `version`. Đọc cấu hình, nối dependency và quản lý vòng đời tiến trình. |
 | `cmd/loadgen/` | Công cụ bắn tải giả lập (OTLP và đọc API) để đo sức chứa. |
 
 ### `db/`: SQL embed vào binary
@@ -115,6 +125,26 @@ Luồng hoạt động chi tiết nằm ở [FLOW.md](FLOW.md); cách chạy và
 | `settings/` | Project, thành viên, ingest token, webhook, tài khoản. |
 | `onboarding/` | Tạo project và token đầu tiên. |
 | `flow/` | Trang giới thiệu luồng sản phẩm. |
+
+## Build và triển khai
+
+| File | Trách nhiệm |
+| --- | --- |
+| `backend/Dockerfile` | Build native trên host, cross-compile binary tĩnh cho kiến trúc đích; runtime distroless non-root, có readiness healthcheck. |
+| `frontend/Dockerfile` | Cache npm, typecheck/build static assets; runtime nginx non-root, có healthcheck `/healthz`. |
+| `backend/.dockerignore`, `frontend/.dockerignore` | Thu hẹp build context; không gửi env thật, output và file không cần tới builder. |
+| `deploy/compose.yaml` | Production: migration chạy một lần → backend healthy → console. Đọc hai file env hiện có; database bên ngoài, filesystem read-only, port loopback. |
+| `deploy/nginx.conf.example` | HTTPS trên host, API/SSE và OTLP/HTTP; cấu hình hostname/chứng chỉ trước khi dùng. |
+| `docker-compose/docker-compose.yaml` | Database ClickHouse và UI cho development; không thuộc stack production. |
+| `scripts/package-release.ps1` | Build và smoke-test image, đóng gói offline theo đúng layout repo, metadata và checksum. |
+| `backend/.env.example` | Mẫu cấu hình backend duy nhất; sao chép thành `backend/.env`. |
+| `frontend/.env.example` | Phân biệt biến build `VITE_*` và upstream nginx lúc chạy; sao chép thành `frontend/.env`. |
+
+Compose gán tên container/network theo project; các service liên lạc bằng DNS nội bộ. Network mặc định
+`172.30.90.0/24` dùng IP cố định để xác định trusted proxy. Đổi subnet phải đổi đồng thời IP service và
+`TRACEPILOT_HTTP_TRUSTED_PROXIES`. Stack buộc production validation và tắt auto-migrate ở `serve`;
+chỉ service `migrate` cập nhật schema. Tài liệu vận hành, cập nhật và khôi phục nằm ở
+[Production deployment](../README.md#production-deployment).
 
 ## Hướng phụ thuộc
 

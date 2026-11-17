@@ -19,9 +19,11 @@
 - `frontend/src/features`: giao diện theo chức năng; phần dùng chung ở `shared`.
 - Cấu hình backend duy nhất: `backend/.env`, mẫu `backend/.env.example`. Console có file riêng
   `frontend/.env.example` (biến build `VITE_*` và địa chỉ backend của nginx). PostgreSQL
-  là dịch vụ ngoài, repo không có Compose; chạy backend bằng `go run` hoặc image build
-  từ `backend/Dockerfile`, console bằng `npm run dev` hoặc image từ `frontend/Dockerfile`.
-  Không thêm env riêng cho dev/prod.
+  và ClickHouse là dịch vụ ngoài; Compose không dựng database cho production. Chạy backend
+  bằng `go run` hoặc image build từ `backend/Dockerfile`, console bằng `npm run dev` hoặc
+  image từ `frontend/Dockerfile`. Production dùng `deploy/compose.yaml` (migrate, backend,
+  console; đọc thẳng `backend/.env` và `frontend/.env`). `docker-compose/` chỉ dựng
+  ClickHouse cho máy dev. Không thêm env riêng cho dev/prod.
 
 # Kiểm tra
 

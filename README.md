@@ -15,13 +15,25 @@ TracePilot is a self-hosted observability platform for OpenTelemetry traces, log
 
 **Status: Beta.** PostgreSQL stores traces, metrics, incidents, and management data. ClickHouse is required for raw logs. Redis is optional for caching.
 
+## Contents
+
+- [Requirements](#requirements)
+- [Quick start](#quick-start)
+- [Send telemetry](#send-telemetry)
+- [Container images](#container-images)
+- [Production deployment](#production-deployment)
+- [Project structure](#project-structure)
+- [MVP scope and release criteria](#mvp-scope-and-release-criteria)
+- [Development](#development)
+- [Reference](#reference)
+
 ## Requirements
 
 - Go matching [backend/go.mod](backend/go.mod).
 - Node.js 24 and npm, matching [frontend/.nvmrc](frontend/.nvmrc).
 - An existing PostgreSQL database and a reachable ClickHouse service.
 
-Databases run separately; this repository does not include Docker Compose.
+Databases run separately. [deploy/compose.yaml](deploy/compose.yaml) runs the production backend and console against existing databases (see [Production deployment](#production-deployment)); [docker-compose/](docker-compose/docker-compose.yaml) only starts ClickHouse on a development machine.
 
 ## Quick start
 
@@ -94,46 +106,116 @@ Replace `<ingest-token>` and `development` with your token and environment name.
 
 Health checks are available at `/health/live` and `/health/ready` on port `8080`. Readiness checks both databases.
 
-## Docker
+## Container images
 
-Build the backend and console images independently:
+Use Docker Engine 25+ with BuildKit and Docker Compose 2.24+ for the container workflow.
 
-```powershell
-docker build -t tracepilot ./backend
-docker build -t tracepilot-console ./frontend
-```
+| Image | Build target | Runtime | Container ports |
+| --- | --- | --- | --- |
+| Backend | `backend/Dockerfile`, target `server` | Static Go binary, distroless, UID 65532 | 8080 API; 4317 OTLP/gRPC; 4318 OTLP/HTTP |
+| Console | `frontend/Dockerfile`, target `console` | Unprivileged nginx, UID 101 | 8080 UI and same-origin API proxy |
 
-Use database hostnames reachable from the backend container in `backend/.env`, then initialize the schemas and start the backend:
-
-```powershell
-docker run --rm --env-file backend/.env tracepilot migrate postgres up
-if ($LASTEXITCODE -ne 0) { throw "PostgreSQL migration failed; server was not started." }
-docker run --rm --env-file backend/.env tracepilot migrate clickhouse up
-if ($LASTEXITCODE -ne 0) { throw "ClickHouse migration failed; server was not started." }
-docker run --rm --env-file backend/.env tracepilot seed  # Optional, development only
-if ($LASTEXITCODE -ne 0) { throw "Seed failed; server was not started." }
-docker run -d --name tracepilot --env-file backend/.env -p 8080:8080 -p 4317:4317 -p 4318:4318 tracepilot
-```
-
-Start the console with a backend address reachable from its container:
-
-```powershell
-docker run -d --name tracepilot-console -p 8081:8080 -e "TRACEPILOT_API_UPSTREAM=http://<backend-host>:8080" tracepilot-console
-```
-
-Replace `<backend-host>` with a reachable hostname or IP, then open [localhost:8081](http://localhost:8081). The console image serves the UI through nginx and proxies API requests to `TRACEPILOT_API_UPSTREAM`.
-
-## Production bundle
-
-Package the current working tree without committing, publishing or connecting to a database:
+Build from the repository root:
 
 ~~~powershell
-powershell -ExecutionPolicy Bypass -File scripts/package-release.ps1
+docker build --target server -t tracepilot:local backend
+docker build --target console -t tracepilot-console:local frontend
 ~~~
 
-The default target is Linux amd64; use -Platform linux/arm64 for an ARM server with Docker emulation on the build host. Output is under bin/releases: a tar.gz archive and its .sha256 file. The bundle contains both Docker images, their IDs and build metadata in release.json, input hashes, SHA256SUMS, this README, the existing flow/API docs, nginx.conf.example and the same backend/frontend configuration templates. Actual .env files, certificates, passwords and telemetry are excluded. An uncommitted build is marked dirty; its input hashes identify the working-tree content. The generated backend template enables production, closes registration, requires TLS databases and distinct secrets, and keeps automatic migration disabled.
+Both builders run on the build host's architecture. Go cross-compiles using `TARGETOS`/`TARGETARCH`; the console produces static assets for either runtime architecture. Go module/compiler and npm download caches survive source rebuilds. Contexts exclude secrets/generated output; the backend also excludes tests and loadgen. See Docker's [cache](https://docs.docker.com/build/cache/optimize/) and [multi-platform](https://docs.docker.com/build/building/multi-platform/) guidance.
 
-On a Linux host with Docker and an HTTPS reverse proxy, copy the archive and checksum file, then:
+Pass `--platform linux/arm64` for an ARM image. Running it on amd64 still needs emulation. Both images accept `VERSION`, `COMMIT` and `BUILD_TIME` build arguments for OCI metadata; the backend embeds them in `tracepilot version` too.
+
+`VITE_API_BASE_URL` is a console **build argument**. Leave it empty for the recommended same-origin proxy. `TRACEPILOT_API_UPSTREAM` is the nginx **runtime** URL, normally `http://tracepilot:8080`. A separate API origin also requires appropriate backend CORS and console CSP policies.
+
+## Production deployment
+
+### Stack and configuration
+
+[deploy/compose.yaml](deploy/compose.yaml) runs the application against **external PostgreSQL and ClickHouse**:
+
+| Service | Purpose | Startup condition |
+| --- | --- | --- |
+| `migrate` | Run `migrate all` once using the backend image | Must exit successfully |
+| `tracepilot` | API, OTLP and background workers in one process | Migration completed |
+| `tracepilot-console` | Serve UI and proxy `/api/` | Backend healthy |
+
+Compose enforces production validation and disables server auto-migration; `migrate` owns schema updates. Containers run non-root with read-only filesystems, writable tmpfs mounts, bounded logs and CPU/memory limits. Ports bind to loopback for the host HTTPS proxy. Container/network names are scoped to the project; service DNS remains `tracepilot`.
+
+On the deployment host, run these Bash commands from the repository or extracted bundle root. Existing configuration is preserved:
+
+~~~bash
+umask 077
+test -e backend/.env || cp backend/.env.example backend/.env
+test -e frontend/.env || cp frontend/.env.example frontend/.env
+mkdir -p certs
+chmod 755 certs
+~~~
+
+| File / setting | Required content |
+| --- | --- |
+| `backend/.env` | Database URLs/credentials reachable **from containers**, persistent secrets, console origin and resource settings |
+| `frontend/.env` | `TRACEPILOT_API_UPSTREAM=http://tracepilot:8080`; `VITE_*` here does not rebuild an image |
+| `certs/` | Public CA certificates only; mounted read-only at `/etc/tracepilot`. Create the directory before starting |
+| `TRACEPILOT_DATABASE_URL` | PostgreSQL with `sslmode=verify-full`; URL-encode password characters |
+| `TRACEPILOT_CLICKHOUSE_URL` | HTTPS endpoint with valid server certificates |
+| `TRACEPILOT_HTTP_TRUSTED_PROXIES` | `172.30.90.1/32,172.30.90.3/32` for the host gateway and console |
+| `TRACEPILOT_HTTP_ALLOWED_ORIGINS` | Actual HTTPS console origin |
+| `TRACEPILOT_AUTH_ALLOW_REGISTRATION` | `false`; create the first operator with the CLI |
+
+Generate three independent persistent secrets with `openssl rand -hex 32` for access JWT, ingest JWT and metrics. Single-quote literal `$` values in Compose env files. Set the PostgreSQL CA path to `/etc/tracepilot/postgres-ca.pem`; public CA files need mode `644` so UID 65532 can read them. For a private ClickHouse CA, provide a public CA bundle and set `SSL_CERT_FILE=/etc/tracepilot/ca-bundle.pem`. TLS private keys stay in the host proxy's certificate directory.
+
+The network uses `172.30.90.0/24`: gateway `.1`, backend `.2`, console `.3`. If this subnet is already allocated/routed, change the subnet, static addresses and trusted proxy CIDRs together. The 60-second stop grace must exceed configured request-shutdown and pipeline-drain deadlines. Keep listener addresses at the ports above, or update mappings and healthcheck URL together.
+
+### Start and verify
+
+Choose explicit image tags from your build/registry, or use the offline bundle's tags:
+
+~~~bash
+export TRACEPILOT_BACKEND_IMAGE=tracepilot:local
+export TRACEPILOT_CONSOLE_IMAGE=tracepilot-console:local
+docker compose -f deploy/compose.yaml config --quiet
+docker compose -f deploy/compose.yaml up --wait --wait-timeout 180
+docker compose -f deploy/compose.yaml ps -a
+~~~
+
+Expected: `migrate` exited with code 0, backend and console healthy. `--wait` checks readiness before returning; `depends_on` controls initial startup, not recovery from later database outages. Increase the timeout for a reviewed long migration. On failure, inspect `docker compose -f deploy/compose.yaml logs migrate tracepilot`; do not reset migration journals.
+
+For a fresh database, create an operator with a password from stdin:
+
+~~~bash
+read -r -s -p 'Administrator password: ' ADMIN_PASSWORD
+printf '\n'
+printf '%s' "$ADMIN_PASSWORD" | docker compose -f deploy/compose.yaml run --rm -T migrate \
+  create-admin --email operator@your-domain.com --name "Administrator" --password-stdin
+unset ADMIN_PASSWORD
+~~~
+
+The command needs PostgreSQL, records an audit event and refuses an existing email. Never use the development seed account in production.
+
+Install [deploy/nginx.conf.example](deploy/nginx.conf.example) in the host nginx configuration, replace DNS names/certificate paths, validate with `sudo nginx -t` and reload. It terminates HTTPS, normalizes proxy headers, disables SSE buffering and exposes OTLP/HTTP on its own hostname. Only 80/443 need public access. OTLP/gRPC stays unpublished until a TLS/h2 ingress is configured.
+
+Verify HTTPS sign-in/refresh, an OTLP export with a new ingest token, correlated trace/log reads and Live Tail before switching exporters. Inspect resource use with `docker stats`; Compose limits are starting values, and [measured capacity](#measured-capacity) describes their practical limits.
+
+### Offline release bundle
+
+Package without committing, pushing or connecting to a database:
+
+~~~powershell
+powershell -ExecutionPolicy Bypass -File scripts/package-release.ps1 -Version 0.1.0-rc.1
+~~~
+
+Use a new version for each archive. Default: Linux amd64; `-Platform linux/arm64` creates an ARM bundle. The script builds and smoke-tests both images, so cross-architecture smoke checks need Docker emulation.
+
+Output under `bin/releases/` includes the archive and its SHA-256 file. The archive contains:
+
+- `images.tar`, `images.txt`, IDs/build metadata in `release.json`, source hashes and `SHA256SUMS`;
+- `backend/.env.example` and `frontend/.env.example`, with a production backend template;
+- `deploy/compose.yaml`, `deploy/nginx.conf.example`, README, flow/structure/diagram docs and Postman collection.
+
+Actual `.env` files, certificates, credentials and telemetry are excluded. Uncommitted builds are marked dirty and identified by input hashes. Relative paths are the same in the repository and archive.
+
+On the target Linux host:
 
 ~~~bash
 set -euo pipefail
@@ -142,101 +224,45 @@ tar -xzf tracepilot-<version>-linux-amd64.tar.gz
 cd tracepilot-<version>-linux-amd64
 sha256sum -c SHA256SUMS
 docker load -i images.tar
-BACKEND_IMAGE="$(sed -n '1p' images.txt)"
-CONSOLE_IMAGE="$(sed -n '2p' images.txt)"
-docker run --rm "$BACKEND_IMAGE" version
-umask 077
-cp backend/.env.example backend/.env
-cp frontend/.env.example frontend/.env
-mkdir -p certs
-chmod 755 certs
+export TRACEPILOT_BACKEND_IMAGE="$(sed -n '1p' images.txt)"
+export TRACEPILOT_CONSOLE_IMAGE="$(sed -n '2p' images.txt)"
+docker run --rm "$TRACEPILOT_BACKEND_IMAGE" version
 ~~~
 
-Edit backend/.env on the server: replace every changeme value, database hostname/credential and console origin. Generate three independent persistent secrets with openssl rand -hex 32 for access JWT, ingest JWT and metrics. URL-encode PostgreSQL password characters. Install the PostgreSQL public CA at certs/postgres-ca.pem and set its mode to 644 so container UID 65532 can read it. For a private ClickHouse CA, supply a public CA bundle with the same permissions and set SSL_CERT_FILE=/etc/tracepilot/ca-bundle.pem in the same backend/.env. Do not put server TLS private keys in this bundle. Leave registration closed and replay disabled. The template uses 8 ingestion workers and a 20-connection pool; see **Measured capacity** for the 4 vCPU PostgreSQL sizing result.
+Continue with [configuration](#stack-and-configuration) and [startup](#start-and-verify) using these exported tags.
 
-The following is the **fresh database** installation path. Existing installations must first back up both databases and rehearse the upgrade on restored copies. Older PostgreSQL migration histories are incompatible with the rebuilt baseline; migration 000002 also drops the old PostgreSQL logs table. Export legacy logs using the previous release before that migration. See **Schema migrations** and the upgrade notes below.
+### Updates and recovery
 
-Create an isolated application network; change its subnet and trusted proxy addresses together if this range conflicts with an existing network:
+Back up **both databases**, retain previous images/configuration and rehearse the upgrade on restored copies. Older histories may be incompatible with the rebuilt baseline. Migration `000002` drops legacy PostgreSQL logs; copy them using the previous release's backfill command before applying it. See [Schema migrations](#schema-migrations).
+
+Pause exporters and stop the app to drain accepted work before changing schemas:
 
 ~~~bash
-docker network create --subnet 172.30.90.0/24 tracepilot-app
-docker run --rm --network tracepilot-app --env-file backend/.env \
-  --mount "type=bind,src=$PWD/certs,dst=/etc/tracepilot,readonly" \
-  "$BACKEND_IMAGE" migrate all
+docker compose -f deploy/compose.yaml stop tracepilot-console tracepilot
+# Set TRACEPILOT_BACKEND_IMAGE and TRACEPILOT_CONSOLE_IMAGE to new immutable tags.
+docker compose -f deploy/compose.yaml config --quiet
+docker compose -f deploy/compose.yaml up --wait --wait-timeout 180
 ~~~
 
-Stop if migration fails. Create an operator using a password read from stdin; this works with registration closed, needs only PostgreSQL, records an audit event, and refuses to overwrite an existing email. Never run the development seed command on production.
+Repeat readiness/user-journey checks before resuming exporters. Do not remove database volumes or reset migration journals. Roll back only to an application compatible with the current schema; incompatible/destructive changes need the reviewed restore procedure. Image archives do not back up database content.
 
-~~~bash
-read -r -s -p 'Administrator password: ' ADMIN_PASSWORD
-printf '\n'
-printf '%s' "$ADMIN_PASSWORD" | docker run --rm -i --network tracepilot-app \
-  --env-file backend/.env \
-  --mount "type=bind,src=$PWD/certs,dst=/etc/tracepilot,readonly" \
-  "$BACKEND_IMAGE" create-admin --email operator@your-domain.com \
-  --name "Administrator" --password-stdin
-unset ADMIN_PASSWORD
-~~~
 
-Start the two application containers. Database services remain external. The backend and console run as non-root users, with read-only filesystems, bounded logs and no added Linux capabilities. The backend's 60-second stop grace exceeds its shutdown deadline.
-
-~~~bash
-docker run -d --name tracepilot --network tracepilot-app --ip 172.30.90.2 \
-  --restart unless-stopped --stop-timeout 60 --cpus 2 --memory 1g \
-  --read-only --tmpfs /tmp:rw,noexec,nosuid,size=16m \
-  --cap-drop ALL --security-opt no-new-privileges:true \
-  --log-opt max-size=10m --log-opt max-file=3 \
-  --env-file backend/.env \
-  --mount "type=bind,src=$PWD/certs,dst=/etc/tracepilot,readonly" \
-  -p 127.0.0.1:8080:8080 -p 127.0.0.1:4318:4318 \
-  "$BACKEND_IMAGE"
-docker run -d --name tracepilot-console --network tracepilot-app --ip 172.30.90.3 \
-  --restart unless-stopped --cpus 1 --memory 128m \
-  --read-only --tmpfs /tmp:rw,noexec,nosuid,size=32m \
-  --tmpfs /etc/nginx/conf.d:rw,noexec,nosuid,size=1m,uid=101,gid=101,mode=0700 \
-  --cap-drop ALL --security-opt no-new-privileges:true \
-  --log-opt max-size=10m --log-opt max-file=3 \
-  --env-file frontend/.env -p 127.0.0.1:8081:8080 \
-  "$CONSOLE_IMAGE"
-docker exec tracepilot healthcheck
-docker inspect --format '{{.State.Health.Status}}' tracepilot tracepilot-console
-~~~
-
-Install nginx.conf.example into the host nginx configuration after replacing both DNS names and certificate paths. It terminates HTTPS, sends /api directly to the backend with normalized proxy headers and SSE buffering disabled, serves the console, and exposes OTLP/HTTP only through the dedicated HTTPS hostname. Validate with sudo nginx -t before reloading nginx. Only ports 80/443 need public access; do not expose PostgreSQL, ClickHouse, metrics or the loopback container ports publicly. This recipe exposes OTLP/HTTP; OTLP/gRPC needs a separately configured TLS/h2 ingress when required.
-
-Verify HTTPS sign-in/refresh, readiness, an OTLP export using a new ingest token, correlated logs/traces and Live Tail before switching application exporters. Back up both databases regularly and test restoring them into separate instances; a copied Docker image does not back up data.
-
-For an update, retain the previous images and configuration, stop exporters and drain the backend, take database backups, review and apply migrations with the **new** image, then recreate the containers with that image and rerun readiness/smoke checks. Do not remove database volumes or reset migration journals. Roll back only to an application version compatible with the current schema; a destructive or incompatible schema change needs the reviewed database restore procedure, not an automatic down migration.
 
 ## Project structure
 
-```text
-backend/
-  cmd/tracepilot/          CLI, dependency wiring, process lifecycle
-  db/
-    postgres/migrations/  PostgreSQL SQL files and version sequence
-    clickhouse/migrations/ ClickHouse SQL files and independent version sequence
-    embed.go              SQL embedded in every backend binary
-    queries/              SQL queries used by sqlc
-  internal/
-    application/          Use cases and background workflows
-    domain/               Pure models and business rules
-    ingest/               OTLP receivers, normalization, bounded queues
-    transport/httpapi/    REST handlers, authentication boundary, responses
-    storage/              PostgreSQL, ClickHouse, migrations, partitions
-    config/               Configuration loading and validation
-    auth/                 Tokens, passwords, access rules
-    cache/                Memory and Redis cache implementations
-    query/                Query contracts and read models
-    observability/        Internal logging and metrics
-frontend/
-  src/
-    app/                  App shell, routing, authentication
-    features/             Feature pages and components
-    shared/               Shared API client, types, UI, charts
-    styles/               Base styles, themes, self-hosted fonts
-docs/                     Flow reference, diagrams, Postman collection
-```
+| Path | Responsibility |
+| --- | --- |
+| `backend/cmd/tracepilot/` | CLI, dependency wiring and process lifecycle |
+| `backend/internal/` | Use cases, pure rules, protocols, storage, configuration and observability |
+| `backend/db/` | Embedded migrations and named SQLC queries |
+| `backend/cmd/loadgen/` | Telemetry/API test workloads and capacity reports |
+| `frontend/src/{app,features,shared}/` | App shell, feature screens, shared client/UI/types |
+| `deploy/` | Production application Compose and host nginx; external databases |
+| `docker-compose/` | Development ClickHouse and its UI |
+| `scripts/` | Offline release packaging |
+| `docs/` | Flow, source/function reference, structure and API collection |
+
+See [docs/STRUCTURE.md](docs/STRUCTURE.md) for the module map and [docs/diagrams.html](docs/diagrams.html#source-map) for searchable files/functions.
 
 The backend runs as one process. Keep business rules in `domain`, workflows in `application`, and protocol or database details in their adapters.
 
@@ -456,6 +482,7 @@ When upgrading from access tokens without the `tp_ver` claim, accounts that have
 ## Reference
 
 - [Application flow](docs/FLOW.md)
-- [Architecture diagrams](docs/diagrams.html) (open in a browser)
+- [Source/function reference and diagrams](docs/diagrams.html) (open in a browser)
+- [Repository structure](docs/STRUCTURE.md)
 - [Postman API collection](docs/tracepilot.postman_collection.json)
 - [MIT license](LICENSE)
