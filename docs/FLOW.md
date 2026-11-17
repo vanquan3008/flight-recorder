@@ -41,7 +41,7 @@ có transaction chung. `make start`/`make dev` nối bước này với `serve`,
 `serve` dùng hai cờ độc lập trong `backend/.env`: `TRACEPILOT_DATABASE_AUTO_MIGRATE`
 cho PostgreSQL, `TRACEPILOT_CLICKHOUSE_AUTO_MIGRATE` cho ClickHouse, cùng mặc định false.
 Cờ nào true thì chạy bộ migration tương ứng trước khi mở listener/worker; lỗi thì dừng khởi động.
-Không tự backfill log cũ. Runtime vẫn yêu cầu cả hai DB sẵn sàng.
+Log chỉ nằm ở ClickHouse, không có fallback sang PostgreSQL. Runtime vẫn yêu cầu cả hai DB sẵn sàng.
 Lock PG chờ tối đa `DATABASE_MIGRATION_LOCK_TIMEOUT` (10s); mỗi câu migration PG tối đa
 `DATABASE_MIGRATION_STATEMENT_TIMEOUT` (5 phút); kết nối migration dùng `DATABASE_CONNECT_TIMEOUT` nếu URL không có `connect_timeout`;
 mỗi request CH dùng timeout cấu hình. Hủy PG giữa các file; câu đang chạy có thể đợi hết timeout.
@@ -54,7 +54,7 @@ Auto-migrate gọi trực tiếp từng runner theo cờ của kho đó; không 
 caller không tự khóa thêm. `status`/`version` chỉ đọc và không chờ khóa mutation này.
 Helper CLI chỉ dùng chung việc đọc cấu hình, tín hiệu dừng và log; helper status chỉ tính target/pending
 từ lịch sử được chọn, không giữ trạng thái hay version chung. Hai storage adapter không import nhau;
-architecture test bảo vệ ranh giới này. `migrate_logs.go` giữ workflow backfill chéo kho tường minh.
+architecture test bảo vệ ranh giới này. Không có lệnh chuyển dữ liệu chéo kho.
 `migrate all` là lệnh tiện ích gọi lần lượt hai bộ quản lý độc lập, không có journal/version riêng.
 Mọi lệnh ghi log JSON qua `log/slog` (kèm `service.name`, `service.version`); `serve` áp mức `LOG_LEVEL`.
 Package `config` chỉ trả lỗi, lệnh gọi log đúng một lần.
@@ -66,18 +66,19 @@ Migration bình thường và chạy lại chỉ kiểm schema/cột một lư�
 để xác minh thay đổi. Readiness dùng chung quy tắc layout và TTL; lỗi cuối migration vẫn giữ dirty.
 
 SQL được embed từ `backend/db/postgres/migrations` và `backend/db/clickhouse/migrations`,
-mỗi DB có dãy version/lịch sử riêng, version đích lấy từ file. PostgreSQL hiện chỉ có một file
-`000001_init.up.sql`: tạo bảng, constraint, index, partition và hàm trong cùng transaction.
+mỗi DB có dãy version/lịch sử riêng, version đích lấy từ file. PostgreSQL có baseline
+`000001_init.up.sql` (tạo bảng, constraint, index, partition và hàm trong cùng transaction) và
+`000002_drop_postgres_logs` xóa bảng `logs` cũ; down của nó chỉ tạo lại bảng rỗng, không khôi phục dữ liệu.
 Baseline không có down SQL; lệnh rollback baseline bị từ chối trước khi đổi journal hoặc xóa bảng.
-Thay đổi bảng về sau thêm ID mới, bắt đầu từ `000002`, không sửa file đã áp dụng.
+Thay đổi bảng về sau thêm ID mới, tiếp theo là `000003`, không sửa file đã áp dụng.
 `migrate postgres status` và
 `migrate clickhouse status` chỉ đọc version/target/dirty/pending, không tạo metadata.
 PG dùng `schema_migrations`; CH dùng nhật ký `tracepilot_schema_migrations`: ghi dirty
 trước DDL và clean sau khi thành công (clean thắng dirty của cùng version). Lỗi/đứt kết nối
 giữa chừng có thể để dirty; phải kiểm tra và sửa thủ công, không tự force hay chạy down.
 CH lần đầu tiếp nhận bảng log cũ sau khi kiểm schema/TTL, giữ nguyên dữ liệu.
-Backfill log cũ vẫn là lệnh riêng sau khi dừng ingest/drain. Lệnh từng DB chỉ yêu cầu cấu hình/kết nối
-của DB đó; `all` và backfill cần cả hai. CH không có khóa migration; DDL không idempotent cần một
+Lệnh từng DB chỉ yêu cầu cấu hình/kết nối
+của DB đó; `all` cần cả hai. CH không có khóa migration; DDL không idempotent cần một
 tiến trình cập nhật duy nhất. Baseline đã được gộp cho DB mới, không tự chuyển
 lịch sử cũ hay reset DB. Khi phát hành, chỉ thêm tiếp, không sửa/gộp/đánh số lại file đã áp dụng.
 Không còn cấu hình đường dẫn SQL runtime.
@@ -115,6 +116,11 @@ và pool PG. Đặt grace của container
 
 ## 3. Đăng ký, đăng nhập, refresh [3]
 
+- Production cài mới dùng CLI `create-admin --email ... --name ... --password-stdin` sau migration.
+  Lệnh chỉ cần PostgreSQL và vẫn kiểm TLS production/schema readiness; dùng cùng quy tắc mật khẩu
+  và transaction tạo user + audit. Mật khẩu đọc một dòng từ stdin, không qua argument hay log;
+  email đã có làm lệnh thất bại, không đổi quyền hoặc mật khẩu của tài khoản đó.
+
 - **Đăng ký:** seed chỉ tạo tài khoản super admin development (`tracepilot seed` với `admin@tracepilot.local` / `admin-password-123`), không tạo project, environment, membership hay telemetry mẫu. Chạy lại seed giữ nguyên tài khoản và dữ liệu đã có. Sau khi đăng nhập, tạo project trong console. Các tài khoản khác đăng ký qua form/API khi `ALLOW_REGISTRATION=true` và khởi tạo ở quyền tài khoản thông thường. Sau đó super admin sẽ cấp quyền sử dụng: cấp cờ super admin (`platform_admin`) trong Settings → Accounts hoặc thêm vào project trong Settings → Members. Mật khẩu 12–256 ký tự. Khi `ALLOW_REGISTRATION=false`, đăng ký tự do bị đóng hoàn toàn.
 - **Đăng nhập:** giới hạn theo IP và 10 lần/email/cửa sổ. Email lạ hay sai mật khẩu đều tốn cùng
   thời gian và cùng một thông báo. Thành công → server tạo phiên refresh, đặt cookie
@@ -126,8 +132,11 @@ và pool PG. Đặt grace của container
 - **Access token** chỉ nằm trong bộ nhớ trình duyệt. Hết hạn → API trả `TOKEN_EXPIRED` → console
   gọi `/auth/refresh` (kèm header `X-TracePilot-Refresh`) rồi gửi lại request. Mỗi lần refresh đổi
   token mới; dùng lại token cũ bị từ chối. Phiên hết hạn sau 7 ngày không dùng hoặc 30 ngày tuyệt đối.
-- **Đổi mật khẩu / khóa tài khoản:** đặt `tokens_valid_after`, xóa các phiên khác, nên access token
-  cấp trước đó mất hiệu lực ngay. Tài khoản do admin tạo có mật khẩu tạm: chỉ gọi được
+- **Đổi mật khẩu / khóa tài khoản:** tăng `tokens_valid_after` ít nhất một microsecond trong transaction,
+  dùng mốc này làm phiên bản `tp_ver` trong access JWT và đối chiếu bằng nhau ở REST/SSE. Token cũ
+  mất hiệu lực cả khi cấp và thu hồi trong cùng giây hoặc đồng hồ ứng dụng chạy chậm. Refresh/đăng nhập
+  đọc phiên bản hiện tại; JWT cũ thiếu `tp_ver` chỉ hợp lệ với tài khoản chưa từng thu hồi token.
+  Tài khoản do admin tạo có mật khẩu tạm: chỉ gọi được
   `/auth/me` và `/auth/password` cho tới khi đổi.
 - `application/session.ChangePassword` kiểm mật khẩu hiện tại, từ chối dùng lại mật khẩu và gọi
   storage để đổi cùng việc thu hồi phiên/token trong transaction; giữ session của trình duyệt hiện tại
@@ -187,8 +196,10 @@ Router kiểm theo **scope** mà bảng route khai báo; handler không tự ki�
 
 API ListLogs/GetLog và số đếm log trong TelemetryQuality đọc trực tiếp từ ClickHouse,
 giữ project/environment, filter, cursor và correlation trace/span. Không trộn hai kho khi phân trang.
-Chuyển dữ liệu cũ: dừng ingest/drain → `migrate clickhouse up` → `migrate clickhouse backfill`
-→ khởi động mọi replica với cùng cấu hình → mở ingest. Backfill có thể chạy lại, không xóa log PG.
+PostgreSQL không lưu log và không đọc dự phòng: ClickHouse lỗi thì ingest log trả 503, đọc log trả lỗi.
+`Database.StoreEvents` từ chối event log như lỗi storage (không chia batch rồi bỏ như dữ liệu hỏng).
+Bản cài cũ còn log trong PG phải chép sang ClickHouse bằng `migrate clickhouse backfill` của bản trước
+rồi mới nâng cấp; migration `000002` xóa bảng `logs`.
 
 ## 6. Vòng đời incident [6]
 
@@ -228,6 +239,12 @@ duration và trạng thái lỗi đã chuẩn bị từ summary; vẫn tính per
 trung bình p95/p99 giữa các phút. Vì vậy cửa sổ bất kỳ, bucket biểu đồ và mẫu trace evidence giữ nguyên.
 OTLP metrics/counter reset, topology và trace/log explorer tiếp tục dùng các hàm hiện có.
 
+Topology giới hạn parent trong cùng project/environment và từ một giờ trước cửa sổ con.
+SQL dùng LATERAL và OFFSET 0 để tra parent theo trace/span ID; danh sách trace cũng tra span theo
+từng trace ID. Cách này giữ lookup dùng index khi project mới chưa có trong thống kê, tránh quét
+lặp mọi cặp span. Test tích hợp ANALYZE partition con của scope cũ rồi thêm 16.000 spans vào scope
+mới, kiểm tra cả topology và danh sách trace trong ngân sách 5 giây mỗi truy vấn.
+
 Phần rollup trong baseline chỉ lập danh sách phút cần xử lý; worker xử lý dần, không dựng
 mảng latency trong migration. Khi worker chưa xử lý hết, query vẫn trả dữ liệu từ spans trên cùng
 snapshot với summary, nên không cần chờ backfill và không thêm cờ cấu hình hay tiến trình.
@@ -263,11 +280,15 @@ span sống sót được đọc từ dữ liệu gốc cho tới khi có ingest
 
 ClickHouse raw log hỗ trợ cấu hình phân vùng thời gian qua `TRACEPILOT_CLICKHOUSE_LOG_PARTITION`: ngày (`toYYYYMMDD`), tháng (`toYYYYMM`), năm (`toYear`), hoặc tuần (`toStartOfWeek`, mặc định).
 `ReplacingMergeTree` đọc `FINAL`, khóa scope/service + timestamp millisecond + event ID để
-log backfill từ PostgreSQL microsecond vẫn khử trùng với retry nanosecond; timestamp/cursor
-gốc giữ nanosecond. TTL lấy `RETENTION_MAX_AGE`, API luôn lọc tuổi log. `ttl_only_drop_parts=1`
+exporter retry cùng event ID được khử trùng. Hash ID bao gồm timestamp đầy đủ tới nanosecond, nên hai log cùng nội dung trong cùng millisecond vẫn khác nhau; timestamp/cursor gốc giữ nanosecond. TTL lấy `RETENTION_MAX_AGE`, API luôn lọc tuổi log. `ttl_only_drop_parts=1`
 chỉ xóa part hết hạn toàn bộ nên vật lý có thể lưu thêm partition period cộng độ trễ merge.
 Đổi TTL phải chạy `migrate clickhouse up`, `migrate all` hoặc bật auto migration CH; readiness từ chối schema không hợp lệ.
 Cấu hình partition chọn khóa cho bảng mới; đổi khóa của bảng hiện có cần migration bảng/dữ liệu riêng.
+
+Log explorer và Live Tail lọc cùng nhóm severity TRACE/DEBUG/INFO/WARN/ERROR/FATAL. Số OTLP 1–24
+được ưu tiên (mỗi nhóm bốn mức); số unspecified dùng text không phân biệt hoa thường, nhận cả
+WARNING/INFORMATION và hậu tố 1–4. Text trống mặc định INFO; text riêng vẫn có thể lọc không phân biệt
+hoa thường. Kho dữ liệu và response giữ nguyên text exporter, SSE gửi thêm `severity_number`.
 
 ## 11. Telemetry streaming thời gian thực (SSE) và tối ưu Waterfall
 
@@ -305,9 +326,13 @@ Cấu hình partition chọn khóa cho bảng mới; đổi khóa của bảng h
 - Ngân sách byte của queue là ước lượng, không phải giới hạn RSS (gRPC giải mã trước khi vào hàng đợi;
   giới hạn stream chỉ tính theo từng kết nối).
 - Chưa có SSO/MFA, đặt lại mật khẩu qua email, xóa project/environment.
-- Số đo tải đầu tiên và giới hạn triển khai nằm trong README (Measured capacity). `ListTraces` gom mọi span trong khung
-  thời gian trước khi lấy `limit`, nên chi phí tăng theo số span (khoảng 4,4µs/span); console còn gọi
-  `/traces?limit=1` không kèm khung thời gian. Đọc console bị 503 khi ingest đồng thời từ khoảng 1k bản ghi/giây.
+- Số đo tải và giới hạn triển khai nằm trong README (Measured capacity). `ListTraces` tổng hợp các trace khớp bộ lọc
+  trước khi lấy `limit`, nên chi phí tăng theo số span. Request không có `from`
+  (và không lọc `traceId`) chỉ đọc 1 giờ trước `to`, con trỏ trang hoặc hiện tại; console kiểm tra kết nối bằng
+  `GET /projects/{id}` thay vì liệt kê trace. Lần đo 2026-11-16 đã bỏ timeout 504 do lookup lặp span,
+  nhưng 1.000 bản ghi + 5 truy vấn/giây vẫn bão hòa PostgreSQL 2 vCPU và trả 503 do backpressure.
+  Cùng code và workload với PostgreSQL 4 vCPU không lỗi trong 60 giây, đọc p95 689ms; đây là số đo
+  ngắn để chọn cấu hình thử nghiệm, chưa chứng minh tải dài hạn hay cửa sổ truy vấn đầy một giờ.
 - ClickHouse sập làm readiness trả 503 trên mọi replica (đăng nhập vẫn chạy); sau khi CH lên lại cần khoảng 30s.
 - Test tích hợp PostgreSQL cần database dùng một lần (`TRACEPILOT_INTEGRATION_TEST=1`),
   ClickHouse dùng instance dùng một lần (`TRACEPILOT_CLICKHOUSE_INTEGRATION_TEST=1`, `TRACEPILOT_CLICKHOUSE_TEST_URL`).

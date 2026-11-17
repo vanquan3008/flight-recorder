@@ -149,8 +149,11 @@ flowchart TD
 
 <section id="d3">
   <h2>3. Đăng ký, đăng nhập, refresh</h2>
+  <p>Production cài mới: operator chạy create-admin --email ... --name ... --password-stdin sau migration.
+    CLI chỉ kết nối PostgreSQL, giữ kiểm TLS/schema readiness, đọc mật khẩu từ stdin và tạo admin cùng audit
+    trong một transaction. Email đã có bị từ chối; lệnh không ghi đè tài khoản hoặc ghi mật khẩu vào log.</p>
   <p>tracepilot seed chỉ tạo super admin development, không tạo project, environment, membership hay telemetry mẫu; chạy lại giữ nguyên tài khoản và dữ liệu đã có. Sau khi đăng nhập, người dùng tạo project trong console.</p>
-  <p>application/session xác minh credential và đổi mật khẩu qua storage port. HTTP giữ rate limit, JWT, cookie và response contract. Đổi mật khẩu thu hồi phiên/token trong transaction rồi đọc lại tài khoản từ DB và trả JWT mới. Access token (15 phút) nằm trong bộ nhớ; refresh token ngẫu nhiên nằm trong cookie HttpOnly và đổi mới mỗi lần dùng.</p>
+  <p>application/session xác minh credential và đổi mật khẩu qua storage port. HTTP giữ rate limit, JWT, cookie và response contract. Đổi mật khẩu tăng mốc thu hồi tokens_valid_after ít nhất một microsecond trong transaction rồi đọc lại tài khoản và trả JWT có phiên bản tp_ver mới. REST/SSE đối chiếu phiên bản bằng nhau, nên token cũ bị thu hồi cả trong cùng giây hoặc khi đồng hồ chạy chậm. Access token (15 phút) nằm trong bộ nhớ; refresh token ngẫu nhiên nằm trong cookie HttpOnly và đổi mới mỗi lần dùng.</p>
   <div class="diagram"><pre class="mermaid">
 sequenceDiagram
   autonumber
@@ -223,7 +226,8 @@ flowchart TD
 
 <section id="d5">
   <h2>5. Ingest OTLP - ACK sau commit</h2>
-  <p>ACK chờ ClickHouse flush và mọi transaction PostgreSQL cần thiết. ClickHouse bắt buộc cho raw log; không có transaction xuyên hai kho.</p>
+  <p>ACK chờ ClickHouse flush và mọi transaction PostgreSQL cần thiết. ClickHouse là kho duy nhất cho raw log, không có fallback sang PostgreSQL; không có transaction xuyên hai kho.</p>
+  <p>ID log băm cả timestamp nanosecond: retry cùng record giữ ID, log khác thời điểm trong cùng millisecond không bị gộp. Severity group ưu tiên số OTLP 1–24; số unspecified dùng text chuẩn hóa (hoa thường, WARNING/INFORMATION, hậu tố 1–4). Log explorer và Live Tail dùng cùng quy tắc; text exporter được giữ nguyên.</p>
   <div class="diagram"><pre class="mermaid">
 flowchart TD
   S(["SDK gửi OTLP kèm ingest token"]) --> G{"Client đang bị chặn<br/>vì sai token quá nhiều?"}
@@ -285,6 +289,10 @@ stateDiagram-v2
   <p>Worker cũ tổng hợp tối đa 64 phút dirty mỗi scope (deadline 5 giây), rồi detection chạy nền.
     Query dùng summary clean và đọc span gốc cho phần chưa tổng hợp; dữ liệu đến muộn đánh dấu dirty lại.
     Performance giữ timestamp và latency từng request để tính p95/p99 chính xác. RCA tính khi xem incident.</p>
+  <p>Topology ghép parent/child theo trace/span ID trong cùng scope, parent được tìm từ một giờ trước cửa sổ.
+    SQL dùng LATERAL/OFFSET 0 để tra parent theo trace/span ID và tra span theo từng trace ID khi liệt kê trace,
+    tránh quét lặp mọi cặp span khi project mới chưa có trong thống kê.
+    Test tích hợp kiểm tra 16.000 spans của scope mới trong ngân sách 5 giây mỗi truy vấn. Số đo tải nằm trong README.</p>
   <div class="diagram"><pre class="mermaid">
 flowchart TD
   T(["Mỗi phút"]) --> S["Liệt kê mọi cặp project / environment"]
