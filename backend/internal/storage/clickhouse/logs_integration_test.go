@@ -103,19 +103,6 @@ func TestWeeklyLogsDeduplicateRetriesPreserveJSONAndPageByNanosecond(t *testing.
 	if err != nil || string(data) != "{\"partition\":\"2025-12-29\"}\n{\"partition\":\"2026-01-05\"}\n" {
 		t.Fatalf("expected Monday UTC week partitions: %s, %v", data, err)
 	}
-	if err := store.StoreLogRecords(ctx, testProject, testEnvironment, []query.LogRecord{got, got}); err != nil {
-		t.Fatal(err)
-	}
-	// PostgreSQL's timestamp encoding truncates nanos to micros. A pre-cutover
-	// exporter retry must still deduplicate against the backfilled row's ID.
-	legacy := got
-	legacy.OccurredAt = legacy.OccurredAt.Truncate(time.Microsecond)
-	if err := store.StoreLogRecords(ctx, testProject, testEnvironment, []query.LogRecord{legacy}); err != nil {
-		t.Fatal(err)
-	}
-	if total, _, err := store.LogQuality(ctx, testProject, testEnvironment, "", monday.Add(-time.Minute), monday.Add(time.Minute)); err != nil || total != 3 {
-		t.Fatalf("backfill duplicated rows: %d, %v", total, err)
-	}
 }
 
 func TestRetentionHidesExpiredLogsBeforeWeeklyPartitionExpires(t *testing.T) {

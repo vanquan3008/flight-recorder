@@ -54,7 +54,7 @@ func (server *Server) writeSession(responseWriter http.ResponseWriter, request *
 	if server.writeIdentityError(responseWriter, "list projects", listError) {
 		return
 	}
-	token, expires, tokenError := server.issueAccessToken(user.ID)
+	token, expires, tokenError := server.issueAccessToken(user)
 	if tokenError != nil {
 		server.writeInternalError(responseWriter, "sign access token", tokenError)
 		return
@@ -252,7 +252,7 @@ func (server *Server) authChangePassword(responseWriter http.ResponseWriter, req
 	if server.writeIdentityError(responseWriter, "list projects", listError) {
 		return
 	}
-	token, expires, tokenError := server.issueAccessToken(user.ID)
+	token, expires, tokenError := server.issueAccessToken(user)
 	if tokenError != nil {
 		server.writeInternalError(responseWriter, "sign access token", tokenError)
 		return
@@ -260,10 +260,10 @@ func (server *Server) authChangePassword(responseWriter http.ResponseWriter, req
 	writeJSONValue(responseWriter, http.StatusOK, sessionView{User: user, Memberships: memberships, AccessToken: token, ExpiresAt: &expires})
 }
 
-func (server *Server) issueAccessToken(userID string) (string, time.Time, error) {
+func (server *Server) issueAccessToken(user auth.User) (string, time.Time, error) {
 	ttl := server.accessTokenTTL
 	if ttl <= 0 {
 		ttl = auth.AccessTokenTTL
 	}
-	return auth.IssueAccessTokenWithOptions(server.jwtSecret, userID, time.Now(), ttl, server.issuer, server.audience)
+	return auth.IssueAccessTokenWithOptions(server.jwtSecret, user.ID, time.Now(), ttl, server.issuer, server.audience, user.TokenVersion())
 }

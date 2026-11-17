@@ -152,31 +152,6 @@ type IngestToken struct {
 	RevokedAt *time.Time
 }
 
-type Log struct {
-	EventID                string
-	ProjectID              string
-	EnvironmentID          string
-	OccurredAt             time.Time
-	ObservedAt             *time.Time
-	TraceID                *string
-	SpanID                 *string
-	TraceFlags             int64
-	SeverityNumber         int32
-	SeverityText           string
-	Body                   []byte
-	EventName              string
-	ServiceName            string
-	ServiceVersion         *string
-	ResourceSchemaURL      string
-	ResourceAttributes     []byte
-	ScopeName              string
-	ScopeVersion           string
-	ScopeSchemaURL         string
-	ScopeAttributes        []byte
-	LogAttributes          []byte
-	DroppedAttributesCount int32
-}
-
 type LogsDefault struct {
 	EventID                string
 	ProjectID              string

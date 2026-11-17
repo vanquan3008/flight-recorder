@@ -43,8 +43,16 @@ type User struct {
 	DisabledAt         *time.Time `json:"disabled_at,omitempty"`
 	CreatedAt          time.Time  `json:"created_at"`
 	LastLoginAt        *time.Time `json:"last_login_at,omitempty"`
-	// TokensValidAfter ends access tokens issued before it; it is never sent to clients.
+	// TokensValidAfter is a monotonically increasing revocation marker, never sent to clients.
 	TokensValidAfter time.Time `json:"-"`
+}
+
+// TokenVersion uses PostgreSQL's timestamp precision, independently of JWT iat and server clocks.
+func (user User) TokenVersion() int64 {
+	if user.TokensValidAfter.IsZero() {
+		return 0
+	}
+	return user.TokensValidAfter.UnixMicro()
 }
 
 // Credentials is a user with the secret needed to verify a login.

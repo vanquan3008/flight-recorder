@@ -83,7 +83,7 @@ func TestIncidentBatchGroupsOccurrencesAndIsIdempotent(t *testing.T) {
 func TestStoreEventsMarksContentRejectedByPostgreSQL(t *testing.T) {
 	database, scope := newFlowTestDatabase(t)
 	event := flowSpan(scope, "api", time.Now().UTC(), "5555555555555555", "")
-	event.Signal, event.Type, event.LogBody = telemetry.SignalLog, telemetry.EventLog, "bad\x00body"
+	event.Attributes = map[string]any{"body": "bad\x00body"} // jsonb rejects NUL: SQLSTATE class 22
 	err := database.StoreEvents(context.Background(), scope, []telemetry.Event{event})
 	if !errors.Is(err, telemetry.ErrInvalidEvent) {
 		t.Fatalf("error = %v, want telemetry.ErrInvalidEvent", err)

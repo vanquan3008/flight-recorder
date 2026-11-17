@@ -37,7 +37,7 @@ func (server *Server) watchStreamAccess(ctx context.Context, principal auth.Prin
 func (server *Server) streamAccessAllowed(ctx context.Context, principal auth.Principal, claims auth.Claims) bool {
 	user, err := server.backend.GetUser(ctx, principal.UserID)
 	if err != nil || user.ID != claims.Subject || user.DisabledAt != nil || user.MustChangePassword ||
-		claims.IssuedAt.Unix() < user.TokensValidAfter.Unix() || !time.Now().Before(claims.ExpiresAt) {
+		claims.TokenVersion != user.TokenVersion() || !time.Now().Before(claims.ExpiresAt) {
 		return false
 	}
 	if user.PlatformAdmin {

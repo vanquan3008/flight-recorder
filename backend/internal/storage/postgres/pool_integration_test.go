@@ -2,7 +2,7 @@ package postgres
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"os"
 	"sync"
 	"testing"
@@ -47,41 +47,46 @@ func TestStoreEventsIdempotentIntegration(t *testing.T) {
 		ProjectID:          ingestion.ProjectID,
 		Environment:        ingestion.EnvironmentName,
 		ServiceName:        "integration-service",
-		Type:               telemetry.EventLog,
+		Type:               telemetry.EventHTTPServer,
 		Timestamp:          timestamp,
-		Severity:           "INFO",
+		Duration:           time.Millisecond,
+		Status:             "OK",
+		TraceID:            "0123456789abcdef0123456789abcdef",
+		SpanID:             "0123456789abcdef",
 		Attributes:         map[string]any{"attempt": "same-event"},
-		Signal:             telemetry.SignalLog,
+		Signal:             telemetry.SignalTrace,
 		ResourceAttributes: map[string]any{"service.name": "integration-service"},
 		ScopeName:          "integration-test",
 		ScopeAttributes:    map[string]any{},
 		RecordAttributes:   map[string]any{"attempt": "same-event"},
-		SeverityNumber:     9,
-		LogBody:            map[string]any{"message": "same event"},
 	}
 	for range 2 {
 		if storeError := database.StoreEvents(context.Background(), ingestion, []telemetry.Event{event}); storeError != nil {
 			t.Fatal(storeError)
 		}
 	}
-	var count int
-	if queryError := database.pool.QueryRow(context.Background(), "SELECT count(*) FROM events WHERE project_id = $1 AND id = $2", ingestion.ProjectID, event.ID).Scan(&count); queryError != nil {
+	var events, spans int
+	if queryError := database.pool.QueryRow(context.Background(),
+		"SELECT (SELECT count(*) FROM events WHERE project_id = $1 AND id = $2), (SELECT count(*) FROM spans WHERE project_id = $1 AND event_id = $2)",
+		ingestion.ProjectID, event.ID).Scan(&events, &spans); queryError != nil {
 		t.Fatal(queryError)
 	}
-	if count != 1 {
-		t.Fatalf("idempotent event count = %d", count)
+	if events != 1 || spans != 1 {
+		t.Fatalf("idempotent rows: events=%d spans=%d", events, spans)
 	}
-	var severityNumber int
-	var body []byte
-	if queryError := database.pool.QueryRow(context.Background(), "SELECT severity_number, body FROM logs WHERE project_id = $1 AND event_id = $2", ingestion.ProjectID, event.ID).Scan(&severityNumber, &body); queryError != nil {
-		t.Fatal(queryError)
+
+	// Raw logs live only in ClickHouse. A log routed here fails the whole batch
+	// as a storage error (retried, never split and dropped as invalid).
+	log := event
+	log.ID, log.Type, log.Signal = telemetry.DeterministicID(timestamp, "integration", "log"), telemetry.EventLog, telemetry.SignalLog
+	log.LogBody = map[string]any{"message": "belongs in ClickHouse"}
+	storeError := database.StoreEvents(context.Background(), ingestion, []telemetry.Event{log})
+	if storeError == nil || errors.Is(storeError, telemetry.ErrInvalidEvent) {
+		t.Fatalf("PostgreSQL accepted or dropped a log: %v", storeError)
 	}
-	var storedBody map[string]string
-	if decodeError := json.Unmarshal(body, &storedBody); decodeError != nil {
-		t.Fatal(decodeError)
-	}
-	if severityNumber != 9 || storedBody["message"] != "same event" {
-		t.Fatalf("stored log = severity=%d body=%s", severityNumber, body)
+	var logEvents int
+	if queryError := database.pool.QueryRow(context.Background(), "SELECT count(*) FROM events WHERE project_id = $1 AND id = $2", ingestion.ProjectID, log.ID).Scan(&logEvents); queryError != nil || logEvents != 0 {
+		t.Fatalf("rejected log left an event row: %d, %v", logEvents, queryError)
 	}
 }
 
@@ -124,7 +129,7 @@ func TestStoreEventsDeduplicatesConcurrentIncidentCandidatesIntegration(t *testi
 		group.Add(1)
 		go func(event telemetry.Event) {
 			defer group.Done()
-			errors <- database.StoreEvents(context.Background(), ingestion, []telemetry.Event{event})
+			errors <- database.StoreLogIncidents(context.Background(), ingestion, []telemetry.Event{event})
 		}(event)
 	}
 	group.Wait()
@@ -184,7 +189,6 @@ func TestStoreEventsRecoversAfterRolledBackBatchIntegration(t *testing.T) {
 		Type:        telemetry.EventLog,
 		Timestamp:   timestamp,
 		Attributes:  map[string]any{},
-		Signal:      telemetry.SignalLog,
 	}
 	badEvent.ID = "not-a-uuid"
 	if storeError := database.StoreEvents(context.Background(), ingestion, []telemetry.Event{badEvent}); storeError == nil {
@@ -219,7 +223,7 @@ func cleanupIntegrationScope(t testing.TB, database *Database, projectID string)
 		return
 	}
 	// Partitioned telemetry has no cascading foreign keys, so each table is cleared explicitly.
-	for _, table := range []string{"spans", "logs", "events"} {
+	for _, table := range []string{"spans", "events"} {
 		if _, deleteError := database.pool.Exec(context.Background(), "DELETE FROM "+table+" WHERE project_id = $1", projectID); deleteError != nil {
 			t.Errorf("delete integration %s: %v", table, deleteError)
 			return

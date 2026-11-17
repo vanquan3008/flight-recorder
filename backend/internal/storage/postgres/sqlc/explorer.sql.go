@@ -10,174 +10,6 @@ import (
 	"time"
 )
 
-const getLog = `-- name: GetLog :one
-SELECT event_id, occurred_at, observed_at, COALESCE(trace_id, '')::text AS trace_id, COALESCE(span_id, '')::text AS span_id,
-       trace_flags, severity_number, severity_text, COALESCE(body, 'null'::jsonb)::jsonb AS body, event_name, service_name,
-       COALESCE(service_version, '')::text AS service_version, resource_attributes, scope_name, scope_version,
-       scope_attributes, log_attributes
-FROM logs
-WHERE project_id = $1 AND environment_id = $2 AND event_id = $3
-`
-
-type GetLogParams struct {
-	ProjectID     string
-	EnvironmentID string
-	EventID       string
-}
-
-type GetLogRow struct {
-	EventID            string
-	OccurredAt         time.Time
-	ObservedAt         *time.Time
-	TraceID            string
-	SpanID             string
-	TraceFlags         int64
-	SeverityNumber     int32
-	SeverityText       string
-	Body               []byte
-	EventName          string
-	ServiceName        string
-	ServiceVersion     string
-	ResourceAttributes []byte
-	ScopeName          string
-	ScopeVersion       string
-	ScopeAttributes    []byte
-	LogAttributes      []byte
-}
-
-func (q *Queries) GetLog(ctx context.Context, arg GetLogParams) (GetLogRow, error) {
-	row := q.db.QueryRow(ctx, getLog, arg.ProjectID, arg.EnvironmentID, arg.EventID)
-	var i GetLogRow
-	err := row.Scan(
-		&i.EventID,
-		&i.OccurredAt,
-		&i.ObservedAt,
-		&i.TraceID,
-		&i.SpanID,
-		&i.TraceFlags,
-		&i.SeverityNumber,
-		&i.SeverityText,
-		&i.Body,
-		&i.EventName,
-		&i.ServiceName,
-		&i.ServiceVersion,
-		&i.ResourceAttributes,
-		&i.ScopeName,
-		&i.ScopeVersion,
-		&i.ScopeAttributes,
-		&i.LogAttributes,
-	)
-	return i, err
-}
-
-const listLogs = `-- name: ListLogs :many
-SELECT event_id, occurred_at, observed_at, COALESCE(trace_id, '')::text AS trace_id, COALESCE(span_id, '')::text AS span_id,
-       trace_flags, severity_number, severity_text, COALESCE(body, 'null'::jsonb)::jsonb AS body, event_name, service_name,
-       COALESCE(service_version, '')::text AS service_version, resource_attributes, scope_name, scope_version,
-       scope_attributes, log_attributes
-FROM logs
-WHERE project_id = $1
-  AND environment_id = $2
-  AND ($3::text IS NULL OR service_name = $3)
-  AND ($4::text IS NULL OR severity_text = $4)
-  AND ($5::text IS NULL OR trace_id = $5)
-  AND ($6::text IS NULL OR span_id = $6)
-  AND ($7::text IS NULL OR body::text ILIKE '%' || $7 || '%')
-  AND ($8::timestamptz IS NULL OR occurred_at >= $8)
-  AND ($9::timestamptz IS NULL OR occurred_at <= $9)
-  AND ($10::timestamptz IS NULL
-       OR occurred_at < $10
-       OR (occurred_at = $10 AND event_id < $11::uuid))
-ORDER BY occurred_at DESC, event_id DESC
-LIMIT $12::integer
-`
-
-type ListLogsParams struct {
-	ProjectID     string
-	EnvironmentID string
-	Service       *string
-	Severity      *string
-	TraceID       *string
-	SpanID        *string
-	Search        *string
-	FromTime      *time.Time
-	ToTime        *time.Time
-	Before        *time.Time
-	CursorID      *string
-	RowLimit      int32
-}
-
-type ListLogsRow struct {
-	EventID            string
-	OccurredAt         time.Time
-	ObservedAt         *time.Time
-	TraceID            string
-	SpanID             string
-	TraceFlags         int64
-	SeverityNumber     int32
-	SeverityText       string
-	Body               []byte
-	EventName          string
-	ServiceName        string
-	ServiceVersion     string
-	ResourceAttributes []byte
-	ScopeName          string
-	ScopeVersion       string
-	ScopeAttributes    []byte
-	LogAttributes      []byte
-}
-
-func (q *Queries) ListLogs(ctx context.Context, arg ListLogsParams) ([]ListLogsRow, error) {
-	rows, err := q.db.Query(ctx, listLogs,
-		arg.ProjectID,
-		arg.EnvironmentID,
-		arg.Service,
-		arg.Severity,
-		arg.TraceID,
-		arg.SpanID,
-		arg.Search,
-		arg.FromTime,
-		arg.ToTime,
-		arg.Before,
-		arg.CursorID,
-		arg.RowLimit,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []ListLogsRow{}
-	for rows.Next() {
-		var i ListLogsRow
-		if err := rows.Scan(
-			&i.EventID,
-			&i.OccurredAt,
-			&i.ObservedAt,
-			&i.TraceID,
-			&i.SpanID,
-			&i.TraceFlags,
-			&i.SeverityNumber,
-			&i.SeverityText,
-			&i.Body,
-			&i.EventName,
-			&i.ServiceName,
-			&i.ServiceVersion,
-			&i.ResourceAttributes,
-			&i.ScopeName,
-			&i.ScopeVersion,
-			&i.ScopeAttributes,
-			&i.LogAttributes,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const listTraceSpans = `-- name: ListTraceSpans :many
 WITH page AS (
     SELECT spans.event_id, spans.project_id, spans.environment_id, spans.trace_id, spans.span_id, spans.parent_span_id, spans.trace_state, spans.span_name, spans.span_kind, spans.started_at, spans.ended_at, spans.status_code, spans.status_message, spans.flags, spans.service_name, spans.service_version, spans.resource_schema_url, spans.resource_attributes, spans.scope_name, spans.scope_version, spans.scope_schema_url, spans.scope_attributes, spans.span_attributes, spans.span_events, spans.span_links, spans.dropped_attributes_count, spans.dropped_events_count, spans.dropped_links_count,
@@ -322,16 +154,17 @@ func (q *Queries) ListTraceSpans(ctx context.Context, arg ListTraceSpansParams) 
 
 const listTraces = `-- name: ListTraces :many
 WITH matching_traces AS (
-    SELECT spans.trace_id, min(spans.started_at) AS first_match, max(spans.started_at) AS last_match FROM spans
-    WHERE spans.project_id = $1
-      AND spans.environment_id = $2
+    SELECT spans.project_id, spans.environment_id, spans.trace_id,
+           min(spans.started_at) AS first_match, max(spans.started_at) AS last_match FROM spans
+    WHERE spans.project_id = $6
+      AND spans.environment_id = $7
       AND ($8::text IS NULL OR spans.service_name = $8)
       AND ($9::text IS NULL OR spans.span_name = $9)
       AND ($10::text IS NULL OR spans.status_code = $10)
       AND ($11::text IS NULL OR spans.trace_id = $11)
       AND ($12::timestamptz IS NULL OR spans.started_at >= $12)
       AND ($13::timestamptz IS NULL OR spans.started_at <= $13)
-    GROUP BY spans.trace_id
+    GROUP BY spans.project_id, spans.environment_id, spans.trace_id
 ), match_bounds AS (
     SELECT min(matching_traces.first_match) - interval '1 hour' AS earliest,
            max(matching_traces.last_match) + interval '1 hour' AS latest
@@ -345,33 +178,37 @@ SELECT spans.trace_id,
        (array_agg(spans.service_name ORDER BY (NULLIF(spans.parent_span_id, '') IS NULL) DESC, spans.started_at, spans.event_id))[1]::text AS root_service,
        count(*) AS span_count,
        count(*) FILTER (WHERE spans.status_code = 'ERROR') AS error_count
-FROM spans
+FROM matching_traces
 CROSS JOIN match_bounds
-WHERE spans.project_id = $1
-  AND spans.environment_id = $2
-  AND spans.started_at >= match_bounds.earliest
-  AND spans.started_at <= match_bounds.latest
-  AND spans.trace_id IN (SELECT matching_traces.trace_id FROM matching_traces)
+CROSS JOIN LATERAL (
+    SELECT spans.event_id, spans.project_id, spans.environment_id, spans.trace_id, spans.span_id, spans.parent_span_id, spans.trace_state, spans.span_name, spans.span_kind, spans.started_at, spans.ended_at, spans.status_code, spans.status_message, spans.flags, spans.service_name, spans.service_version, spans.resource_schema_url, spans.resource_attributes, spans.scope_name, spans.scope_version, spans.scope_schema_url, spans.scope_attributes, spans.span_attributes, spans.span_events, spans.span_links, spans.dropped_attributes_count, spans.dropped_events_count, spans.dropped_links_count FROM spans
+    WHERE spans.project_id = matching_traces.project_id
+      AND spans.environment_id = matching_traces.environment_id
+      AND spans.trace_id = matching_traces.trace_id
+      AND spans.started_at >= match_bounds.earliest
+      AND spans.started_at <= match_bounds.latest
+    OFFSET 0
+) AS spans
 GROUP BY spans.trace_id
-HAVING ($3::timestamptz IS NULL
-        OR max(spans.started_at) < $3
-        OR (max(spans.started_at) = $3 AND spans.trace_id < $4::text))
-   AND ($5::bigint IS NULL
-        OR (extract(epoch FROM max(spans.ended_at) - min(spans.started_at)) * 1000000000)::bigint >= $5)
-   AND ($6::bigint IS NULL
-        OR (extract(epoch FROM max(spans.ended_at) - min(spans.started_at)) * 1000000000)::bigint <= $6)
+HAVING ($1::timestamptz IS NULL
+        OR max(spans.started_at) < $1
+        OR (max(spans.started_at) = $1 AND spans.trace_id < $2::text))
+   AND ($3::bigint IS NULL
+        OR (extract(epoch FROM max(spans.ended_at) - min(spans.started_at)) * 1000000000)::bigint >= $3)
+   AND ($4::bigint IS NULL
+        OR (extract(epoch FROM max(spans.ended_at) - min(spans.started_at)) * 1000000000)::bigint <= $4)
 ORDER BY max(spans.started_at) DESC, spans.trace_id DESC
-LIMIT $7::integer
+LIMIT $5::integer
 `
 
 type ListTracesParams struct {
-	ProjectID     string
-	EnvironmentID string
 	Before        *time.Time
 	CursorID      *string
 	MinDurationNs *int64
 	MaxDurationNs *int64
 	RowLimit      int32
+	ProjectID     string
+	EnvironmentID string
 	Service       *string
 	Operation     *string
 	Status        *string
@@ -391,15 +228,17 @@ type ListTracesRow struct {
 	ErrorCount    int64
 }
 
+// Keep the full-trace lookup parameterized by trace ID with OFFSET 0. A new
+// scope absent from statistics otherwise risks a quadratic nested-loop semi join.
 func (q *Queries) ListTraces(ctx context.Context, arg ListTracesParams) ([]ListTracesRow, error) {
 	rows, err := q.db.Query(ctx, listTraces,
-		arg.ProjectID,
-		arg.EnvironmentID,
 		arg.Before,
 		arg.CursorID,
 		arg.MinDurationNs,
 		arg.MaxDurationNs,
 		arg.RowLimit,
+		arg.ProjectID,
+		arg.EnvironmentID,
 		arg.Service,
 		arg.Operation,
 		arg.Status,

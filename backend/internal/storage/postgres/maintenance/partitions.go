@@ -20,12 +20,13 @@ import (
 // Partitions are named <table>_pYYYYMMDD (UTC day). Rows whose day has no
 // partition go to <table>_default, so a missing partition never rejects data.
 
-// partitionedTables is every table that is partitioned by day.
-var partitionedTables = []string{"events", "spans", "logs", "metric_data_points"}
+// partitionedTables is every table that is partitioned by day. Logs live in
+// ClickHouse, which expires them with its own TTL.
+var partitionedTables = []string{"events", "spans", "metric_data_points"}
 
-// eventPartitionedTables expire together: a span or log is only useful next to
-// its event, so all three are dropped on the same day boundary.
-var eventPartitionedTables = []string{"events", "spans", "logs"}
+// eventPartitionedTables expire together: a span is only useful next to its
+// event, so both are dropped on the same day boundary.
+var eventPartitionedTables = []string{"events", "spans"}
 
 const (
 	// partitionNameDateLayout is the YYYYMMDD suffix of a partition name.

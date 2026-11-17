@@ -81,13 +81,16 @@ func (store *Store) ListLogs(ctx context.Context, projectID string, filter query
 		return nil, err
 	}
 	for _, field := range []struct{ column, name, value string }{
-		{"service_name", "service", filter.Service}, {"severity_text", "severity", filter.Severity},
+		{"service_name", "service", filter.Service},
 		{"trace_id", "trace", filter.TraceID}, {"span_id", "span", filter.SpanID},
 	} {
 		if field.value != "" {
 			where = append(where, field.column+" = {"+field.name+":String}")
 			parameters[field.name] = field.value
 		}
+	}
+	if filter.Severity != "" {
+		where = append(where, logSeverityPredicate(filter.Severity, parameters))
 	}
 	if filter.Search != "" {
 		where = append(where, "body ILIKE {search:String}")
@@ -102,6 +105,34 @@ func (store *Store) ListLogs(ctx context.Context, projectID string, filter query
 	parameters["limit"] = strconv.Itoa(filter.Limit + 1)
 	return store.readLogs(ctx, "SELECT "+logColumns+" FROM tracepilot_logs FINAL WHERE "+strings.Join(where, " AND ")+
 		" ORDER BY occurred_at DESC, toString(event_id) DESC LIMIT {limit:UInt32} FORMAT JSONEachRow", parameters)
+}
+
+// Standard filters select an OTLP severity group. Text remains untouched in storage.
+func logSeverityPredicate(value string, parameters map[string]string) string {
+	level := strings.ToUpper(strings.TrimSpace(value))
+	switch level {
+	case "INFORMATION":
+		level = "INFO"
+	case "WARNING":
+		level = "WARN"
+	}
+	for index, group := range []string{"TRACE", "DEBUG", "INFO", "WARN", "ERROR", "FATAL"} {
+		if level != group && !(strings.HasPrefix(level, group) && len(level) == len(group)+1 && level[len(group)] >= '1' && level[len(group)] <= '4') {
+			continue
+		}
+		parameters["severity_min"], parameters["severity_max"] = strconv.Itoa(index*4+1), strconv.Itoa(index*4+4)
+		pattern := group + "[1-4]?"
+		if group == "INFO" {
+			pattern += "|INFORMATION|"
+		} else if group == "WARN" {
+			pattern += "|WARNING"
+		}
+		parameters["severity_pattern"] = "^(" + pattern + ")$"
+		return "(severity_number BETWEEN {severity_min:Int32} AND {severity_max:Int32} OR " +
+			"(NOT (severity_number BETWEEN 1 AND 24) AND match(upperUTF8(trimBoth(severity_text)), {severity_pattern:String})))"
+	}
+	parameters["severity"] = level
+	return "upperUTF8(trimBoth(severity_text)) = {severity:String}"
 }
 
 func (store *Store) GetLog(ctx context.Context, projectID, environmentID, eventID string) (query.LogRecord, error) {

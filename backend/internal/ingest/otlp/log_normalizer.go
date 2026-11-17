@@ -109,6 +109,7 @@ func (normalizer *normalizer) logRecord(resource *resourcepb.Resource, resourceS
 	identityAttributes, _ := json.Marshal([]any{resourceAttributes, scopeAttributes, recordAttributes, body})
 	event.ID = telemetry.DeterministicID(
 		timestamp,
+		timestamp.Format(time.RFC3339Nano),
 		normalizer.configuration.ProjectID,
 		normalizer.configuration.EnvironmentID,
 		event.ServiceName,

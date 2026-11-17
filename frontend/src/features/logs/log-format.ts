@@ -73,10 +73,14 @@ export function parseHttpLog(text: string): ParsedHttpLog | null {
   };
 }
 
-export function normalizeSeverityText(severity?: string): string {
-  if (!severity) return "INFO";
-  const upper = severity.toUpperCase().trim();
+export const severityGroups = ["TRACE", "DEBUG", "INFO", "WARN", "ERROR", "FATAL"];
+
+export function normalizeSeverityText(severity?: string, number?: number): string {
+  if (number !== undefined && Number.isInteger(number) && number >= 1 && number <= 24) {
+    return severityGroups[Math.floor((number - 1) / 4)];
+  }
+  const upper = severity?.toUpperCase().trim() || "INFO";
   if (upper === "INFORMATION") return "INFO";
   if (upper === "WARNING") return "WARN";
-  return upper;
+  return upper.match(/^(TRACE|DEBUG|INFO|WARN|ERROR|FATAL)[1-4]?$/)?.[1] ?? upper;
 }

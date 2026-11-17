@@ -59,7 +59,7 @@ func (server *Server) authenticateScope(responseWriter http.ResponseWriter, requ
 		return auth.Principal{}, false
 	}
 	// Disabling an account, or changing its password, ends the tokens issued before it.
-	if user.DisabledAt != nil || claims.IssuedAt.Unix() < user.TokensValidAfter.Unix() {
+	if user.DisabledAt != nil || claims.TokenVersion != user.TokenVersion() {
 		writeAPIError(responseWriter, http.StatusUnauthorized, "UNAUTHORIZED", "authentication required")
 		return auth.Principal{}, false
 	}

@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -22,10 +21,9 @@ import (
 	"github.com/vanquan3008/tracepilot/internal/transport/httpapi"
 )
 
-func TestAuthenticatedLogQueryIntegration(t *testing.T) {
+func TestAuthenticatedQueryIntegration(t *testing.T) {
 	database, ingestion, bootstrapKey := newQueryIntegrationDatabase(t)
 	projectID := ingestion.ProjectID
-	runID := projectID
 	timestamp := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
 	event := telemetry.Event{
 		ID:                 telemetry.DeterministicID(timestamp, "query-integration", projectID),
@@ -52,28 +50,17 @@ func TestAuthenticatedLogQueryIntegration(t *testing.T) {
 		TraceID: "0123456789abcdef0123456789abcdef", SpanID: "0123456789abcdef", Signal: telemetry.SignalTrace,
 		Attributes: map[string]any{}, ResourceAttributes: map[string]any{}, ScopeAttributes: map[string]any{}, RecordAttributes: map[string]any{},
 	}
-	if storeError := database.StoreEvents(context.Background(), ingestion, []telemetry.Event{event, secondEvent, spanEvent}); storeError != nil {
+	// Raw logs go to ClickHouse; PostgreSQL keeps only the incident envelope of error logs.
+	if storeError := database.StoreLogIncidents(context.Background(), ingestion, []telemetry.Event{event, secondEvent}); storeError != nil {
+		t.Fatal(storeError)
+	}
+	if storeError := database.StoreEvents(context.Background(), ingestion, []telemetry.Event{spanEvent}); storeError != nil {
 		t.Fatal(storeError)
 	}
 	minimumDuration := int64(250 * time.Millisecond)
 	traces, traceError := database.ListTraces(context.Background(), ingestion.ProjectID, query.TraceFilter{EnvironmentID: ingestion.EnvironmentID, MinDurationNs: &minimumDuration, Limit: 10})
 	if traceError != nil || len(traces) != 1 || traces[0].TraceID != spanEvent.TraceID {
 		t.Fatalf("duration trace query = %#v, error = %v", traces, traceError)
-	}
-	otherEnvironment := ingestion
-	otherEnvironment.EnvironmentID = telemetry.DeterministicID(time.Now().UTC(), "query-integration-other-environment", runID)
-	otherEnvironment.EnvironmentName = "other"
-	if scopeError := database.EnsureIngestionScope(context.Background(), otherEnvironment); scopeError != nil {
-		t.Fatal(scopeError)
-	}
-	otherEvent := event
-	otherEvent.ID = telemetry.DeterministicID(timestamp, "query-integration-other-environment-event", projectID)
-	otherEvent.Environment = otherEnvironment.EnvironmentName
-	otherEvent.ServiceName = "other-environment-service"
-	otherEvent.Severity = "INFO"
-	otherEvent.LogBody = map[string]any{"message": "other-environment-only"}
-	if storeError := database.StoreEvents(context.Background(), otherEnvironment, []telemetry.Event{otherEvent}); storeError != nil {
-		t.Fatal(storeError)
 	}
 
 	configuration := config.Config{
@@ -100,8 +87,10 @@ func TestAuthenticatedLogQueryIntegration(t *testing.T) {
 		t.Fatal(executorError)
 	}
 	replayService := replay.NewService(database, executor)
-	server := httpapi.New(configuration, slog.New(slog.NewTextHandler(io.Discard, nil)), func(context.Context) error { return nil }, metrics.New("test", "test", "test"), database, replayService)
-	traceRequest := httptest.NewRequest(http.MethodGet, "/api/v1/traces?minDuration=250ms", nil)
+	server := httpapi.New(configuration, slog.New(slog.NewTextHandler(io.Discard, nil)), func(context.Context) error { return nil }, metrics.New("test", "test", "test"), postgresBackend{database}, replayService)
+	// The span is months old; without `from` the list would cover only the last hour.
+	window := "&from=" + timestamp.Add(-time.Minute).Format(time.RFC3339) + "&to=" + timestamp.Add(time.Minute).Format(time.RFC3339)
+	traceRequest := httptest.NewRequest(http.MethodGet, "/api/v1/traces?minDuration=250ms"+window, nil)
 	integrationAuth(traceRequest, bootstrapKey, ingestion.ProjectID)
 	traceResponse := httptest.NewRecorder()
 	server.ServeHTTP(traceResponse, traceRequest)
@@ -110,7 +99,7 @@ func TestAuthenticatedLogQueryIntegration(t *testing.T) {
 	}
 	secureConfiguration := configuration
 	secureConfiguration.Production = true
-	secureServer := httpapi.New(secureConfiguration, slog.New(slog.NewTextHandler(io.Discard, nil)), func(context.Context) error { return nil }, metrics.New("test", "test", "test"), database, replayService)
+	secureServer := httpapi.New(secureConfiguration, slog.New(slog.NewTextHandler(io.Discard, nil)), func(context.Context) error { return nil }, metrics.New("test", "test", "test"), postgresBackend{database}, replayService)
 	secureMetrics := httptest.NewRecorder()
 	secureServer.ServeHTTP(secureMetrics, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 	if secureMetrics.Code != http.StatusUnauthorized {
@@ -130,16 +119,8 @@ func TestAuthenticatedLogQueryIntegration(t *testing.T) {
 		t.Fatalf("unauthorized status = %d", unauthorized.Code)
 	}
 
-	from := url.QueryEscape(timestamp.Add(-time.Minute).Format(time.RFC3339))
-	to := url.QueryEscape(timestamp.Add(time.Minute).Format(time.RFC3339))
-	request := httptest.NewRequest(http.MethodGet, "/api/v1/logs?search=bounded-search-needle&from="+from+"&to="+to, nil)
-	integrationAuth(request, bootstrapKey, ingestion.ProjectID)
-	response := httptest.NewRecorder()
-	server.ServeHTTP(response, request)
-	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), event.ID) || strings.Contains(response.Body.String(), otherEvent.ID) {
-		t.Fatalf("query status = %d, body = %s", response.Code, response.Body.String())
-	}
-
+	var request *http.Request
+	var response *httptest.ResponseRecorder
 	incidents, incidentError := database.ListIncidents(context.Background(), ingestion.ProjectID, incident.Filter{EnvironmentID: ingestion.EnvironmentID, Limit: 1})
 	if incidentError != nil || len(incidents) != 1 {
 		t.Fatalf("incidents = %#v, error = %v", incidents, incidentError)

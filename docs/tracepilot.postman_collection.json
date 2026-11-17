@@ -17,6 +17,7 @@
           "pm.collectionVariables.set('startNs', String(nowMs - 120) + '000000');",
           "pm.collectionVariables.set('midNs', String(nowMs - 60) + '000000');",
           "pm.collectionVariables.set('endNs', String(nowMs) + '000000');",
+          "pm.collectionVariables.set('nextLogNs', String(nowMs) + '000001');",
           "pm.collectionVariables.set('fromIso', new Date(nowMs - 3600 * 1000).toISOString());",
           "pm.collectionVariables.set('toIso', new Date(nowMs + 60 * 1000).toISOString());"
         ]
@@ -652,7 +653,7 @@
         {
           "name": "Logs: error linked to the trace",
           "request": {
-            "description": "ClickHouse is required for log storage: raw logs persist to ClickHouse time-based UTC partitions (daily, monthly, yearly, or weekly). ACK waits for ClickHouse flush and the PostgreSQL incident/outbox transaction; transient failures return 503 for exporter retry. The existing verify folder reads logs through the same API. For an existing database, stop ingestion, migrate clickhouse up, then migrate clickhouse backfill before restarting.",
+            "description": "Two identical error logs one nanosecond apart must remain distinct; retrying the same records must keep their IDs. Severity number 20 belongs to ERROR, while raw exporter text Error is preserved. ACK waits for ClickHouse flush and required PostgreSQL incident/outbox transactions. Legacy PostgreSQL logs must be copied with the previous release before upgrading to the release that drops that table.",
             "method": "POST",
             "header": [
               {
@@ -676,7 +677,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"resourceLogs\": [\n    {\n      \"resource\": {\n        \"attributes\": [\n          {\n            \"key\": \"service.name\",\n            \"value\": {\n              \"stringValue\": \"postman-demo\"\n            }\n          }\n        ]\n      },\n      \"scopeLogs\": [\n        {\n          \"scope\": {\n            \"name\": \"postman\"\n          },\n          \"logRecords\": [\n            {\n              \"timeUnixNano\": \"{{endNs}}\",\n              \"severityNumber\": 17,\n              \"severityText\": \"ERROR\",\n              \"body\": {\n                \"stringValue\": \"postman-{{runId}} payment failed for order 42\"\n              },\n              \"traceId\": \"{{traceId}}\",\n              \"spanId\": \"{{spanId}}\",\n              \"attributes\": [\n                {\n                  \"key\": \"order.id\",\n                  \"value\": {\n                    \"stringValue\": \"42\"\n                  }\n                }\n              ]\n            }\n          ]\n        }\n      ]\n    }\n  ]\n}",
+              "raw": "{\n  \"resourceLogs\": [\n    {\n      \"resource\": {\n        \"attributes\": [\n          {\n            \"key\": \"service.name\",\n            \"value\": {\n              \"stringValue\": \"postman-demo\"\n            }\n          }\n        ]\n      },\n      \"scopeLogs\": [\n        {\n          \"scope\": {\n            \"name\": \"postman\"\n          },\n          \"logRecords\": [\n            {\n              \"timeUnixNano\": \"{{endNs}}\",\n              \"severityNumber\": 20,\n              \"severityText\": \"Error\",\n              \"body\": {\n                \"stringValue\": \"postman-{{runId}} payment failed for order 42\"\n              },\n              \"traceId\": \"{{traceId}}\",\n              \"spanId\": \"{{spanId}}\",\n              \"attributes\": [\n                {\n                  \"key\": \"order.id\",\n                  \"value\": {\n                    \"stringValue\": \"42\"\n                  }\n                }\n              ]\n            },\n            {\n              \"timeUnixNano\": \"{{nextLogNs}}\",\n              \"severityNumber\": 20,\n              \"severityText\": \"Error\",\n              \"body\": {\n                \"stringValue\": \"postman-{{runId}} payment failed for order 42\"\n              },\n              \"traceId\": \"{{traceId}}\",\n              \"spanId\": \"{{spanId}}\",\n              \"attributes\": [\n                {\n                  \"key\": \"order.id\",\n                  \"value\": {\n                    \"stringValue\": \"42\"\n                  }\n                }\n              ]\n            }\n          ]\n        }\n      ]\n    }\n  ]\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -801,6 +802,7 @@
         {
           "name": "Traces: list",
           "request": {
+            "description": "Without from (and without traceId) the list covers the hour before to, the page cursor, or now. Pass from to read further back.",
             "method": "GET",
             "header": [
               {
@@ -941,7 +943,7 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/api/v1/logs?search=postman-{{runId}}&from={{fromIso}}&to={{toIso}}",
+              "raw": "{{baseUrl}}/api/v1/logs?search=postman-{{runId}}&from={{fromIso}}&to={{toIso}}&severity=ERROR",
               "host": [
                 "{{baseUrl}}"
               ],
@@ -962,9 +964,14 @@
                 {
                   "key": "to",
                   "value": "{{toIso}}"
+                },
+                {
+                  "key": "severity",
+                  "value": "ERROR"
                 }
               ]
-            }
+            },
+            "description": "Severity groups use OTLP numbers first, then normalized text; WARNING/INFORMATION and numbered levels are accepted aliases. Exporter text is preserved. This verifies same-millisecond logs and ERROR4 records through the standard ERROR filter."
           },
           "event": [
             {
@@ -973,7 +980,8 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
-                  "pm.test('finds the run logs', function () { pm.expect(pm.response.json().data.length).to.be.above(0); });"
+                  "pm.test('finds the run logs', function () { pm.expect(pm.response.json().data.length).to.be.above(0); });",
+                  "pm.test('submillisecond logs stay distinct and keep exporter severity text', function () { const body = 'postman-' + pm.collectionVariables.get('runId') + ' payment failed for order 42'; const rows = pm.response.json().data.filter(r => r.body === body); pm.expect(rows).to.have.lengthOf(2); pm.expect(new Set(rows.map(r => r.event_id)).size).to.eql(2); rows.forEach(r => { pm.expect(r.severity_text).to.eql('Error'); pm.expect(r.severity_number).to.eql(20); }); });"
                 ]
               }
             }
