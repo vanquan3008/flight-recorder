@@ -23,6 +23,7 @@ func (b *passwordBackend) GetCredentialsByID(context.Context, string) (auth.Cred
 
 func (b *passwordBackend) SetPassword(context.Context, string, string, bool, string, auth.Actor) error {
 	b.changed = true
+	b.user.TokensValidAfter = time.Now().UTC().Truncate(time.Microsecond)
 	return nil
 }
 
@@ -51,5 +52,8 @@ func TestPasswordChangePreservesConfiguredTokenPolicy(t *testing.T) {
 	}
 	if claims.ExpiresAt.Sub(claims.IssuedAt) != server.accessTokenTTL {
 		t.Fatalf("wrong token lifetime: %v", claims.ExpiresAt.Sub(claims.IssuedAt))
+	}
+	if claims.TokenVersion != backend.user.TokenVersion() || claims.TokenVersion == 0 {
+		t.Fatalf("password response kept an old token version: %d", claims.TokenVersion)
 	}
 }

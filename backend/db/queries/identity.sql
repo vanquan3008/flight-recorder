@@ -21,8 +21,7 @@ SELECT * FROM users WHERE id = @id FOR UPDATE;
 SELECT count(*) FROM users
 WHERE platform_admin AND disabled_at IS NULL AND id <> @id;
 
--- Only the fields that are set change; disabled = true stamps the first time, false clears it. valid_after is the
--- application's clock, the one access tokens are stamped with, so a database clock that runs ahead cannot refuse new tokens.
+-- Revocation markers advance even for concurrent changes or a clock moving backwards.
 -- name: UpdateUser :one
 UPDATE users SET
     display_name   = COALESCE(sqlc.narg(display_name), display_name),
@@ -31,14 +30,17 @@ UPDATE users SET
         WHEN sqlc.narg(disabled)::boolean IS NULL THEN disabled_at
         WHEN sqlc.narg(disabled)::boolean THEN COALESCE(disabled_at, now())
         ELSE NULL END,
-    tokens_valid_after = CASE WHEN sqlc.narg(disabled)::boolean THEN sqlc.arg(valid_after)::timestamptz ELSE tokens_valid_after END,
+    tokens_valid_after = CASE WHEN sqlc.narg(disabled)::boolean
+        THEN greatest(tokens_valid_after + interval '1 microsecond', sqlc.arg(valid_after)::timestamptz)
+        ELSE tokens_valid_after END,
     updated_at     = now()
 WHERE id = @id
 RETURNING *;
 
 -- name: SetUserPassword :execrows
 UPDATE users
-SET password_hash = @password_hash, must_change_password = @must_change_password, tokens_valid_after = @valid_after, updated_at = now()
+SET password_hash = @password_hash, must_change_password = @must_change_password,
+    tokens_valid_after = greatest(tokens_valid_after + interval '1 microsecond', sqlc.arg(valid_after)::timestamptz), updated_at = now()
 WHERE id = @id;
 
 -- name: RecordUserLogin :exec

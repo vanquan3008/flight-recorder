@@ -912,7 +912,8 @@ func (q *Queries) RotateSession(ctx context.Context, arg RotateSessionParams) (i
 
 const setUserPassword = `-- name: SetUserPassword :execrows
 UPDATE users
-SET password_hash = $1, must_change_password = $2, tokens_valid_after = $3, updated_at = now()
+SET password_hash = $1, must_change_password = $2,
+    tokens_valid_after = greatest(tokens_valid_after + interval '1 microsecond', $3::timestamptz), updated_at = now()
 WHERE id = $4
 `
 
@@ -960,7 +961,9 @@ UPDATE users SET
         WHEN $3::boolean IS NULL THEN disabled_at
         WHEN $3::boolean THEN COALESCE(disabled_at, now())
         ELSE NULL END,
-    tokens_valid_after = CASE WHEN $3::boolean THEN $4::timestamptz ELSE tokens_valid_after END,
+    tokens_valid_after = CASE WHEN $3::boolean
+        THEN greatest(tokens_valid_after + interval '1 microsecond', $4::timestamptz)
+        ELSE tokens_valid_after END,
     updated_at     = now()
 WHERE id = $5
 RETURNING id, email, display_name, password_hash, platform_admin, must_change_password, disabled_at, tokens_valid_after, created_at, updated_at, last_login_at
@@ -974,8 +977,7 @@ type UpdateUserParams struct {
 	ID            string
 }
 
-// Only the fields that are set change; disabled = true stamps the first time, false clears it. valid_after is the
-// application's clock, the one access tokens are stamped with, so a database clock that runs ahead cannot refuse new tokens.
+// Revocation markers advance even for concurrent changes or a clock moving backwards.
 func (q *Queries) UpdateUser(ctx context.Context, arg UpdateUserParams) (User, error) {
 	row := q.db.QueryRow(ctx, updateUser,
 		arg.DisplayName,
