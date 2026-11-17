@@ -1,5 +1,7 @@
 # Luồng hoạt động của TracePilot
 
+Tra cứu vai trò từng file, chữ ký hàm, ví dụ sử dụng và chuỗi gọi tại [bản đồ source HTML](diagrams.html#reading-guide); [mục lục file/hàm](diagrams.html#source-map) có tìm kiếm và bộ lọc test/mã sinh.
+
 Mô tả các luồng chính của hệ thống. Sơ đồ tương ứng ở [diagrams.html](diagrams.html)
 (mở bằng trình duyệt, cần mạng để tải thư viện vẽ). Số trong ngoặc `[n]` là số sơ đồ.
 

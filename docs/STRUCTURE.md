@@ -70,7 +70,7 @@ Luồng hoạt động chi tiết nằm ở [FLOW.md](FLOW.md); cách chạy và
 | Thư mục | Vai trò |
 | --- | --- |
 | `middleware/` | Request ID, security headers, rate limit, CORS, giới hạn body, recover panic. |
-| `openapi/` | Sinh spec OpenAPI 3.1 từ bảng route. |
+| `openapi/` | Sinh spec OpenAPI 3.1 (`GET /openapi.json`) từ bảng route. Mỗi route khai báo tên tham số query/header dùng chung, kiểu Go của request và response (`openapi.Object/Page/List/Empty`); schema sinh bằng reflect theo tag `json`, nên luôn khớp code. Scope ghi trong security requirement của Bearer JWT và `x-required-api-scope`. |
 | `render/` | Định dạng JSON và lỗi trả về. |
 | `integration/` | Test API với PostgreSQL thật (bật bằng `TRACEPILOT_INTEGRATION_TEST=1`). |
 
