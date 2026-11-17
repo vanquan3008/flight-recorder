@@ -1,0 +1,81 @@
+name: tracepilot-prod
+
+x-hardening: &hardening
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+x-backend: &backend
+  <<: *hardening
+  image: ${TRACEPILOT_BACKEND_IMAGE:?set TRACEPILOT_BACKEND_IMAGE, for example tracepilot:0.1.0}
+  env_file: ../backend/.env
+  environment:
+    TRACEPILOT_PRODUCTION: "true"
+    TRACEPILOT_DATABASE_AUTO_MIGRATE: "false"
+    TRACEPILOT_CLICKHOUSE_AUTO_MIGRATE: "false"
+  volumes:
+    - type: bind
+      source: ../certs
+      target: /etc/tracepilot
+      read_only: true
+      bind:
+        create_host_path: false
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,size=16m
+
+services:
+  migrate:
+    <<: *backend
+    command: ["migrate", "all"]
+    restart: "no"
+    healthcheck:
+      disable: true
+    networks: [app]
+
+  tracepilot:
+    <<: *backend
+    command: ["serve"]
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    stop_grace_period: 60s
+    cpus: 2
+    mem_limit: 1g
+    ports:
+      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:4318:4318"
+    networks:
+      app:
+        ipv4_address: 172.30.90.2
+
+  tracepilot-console:
+    <<: *hardening
+    image: ${TRACEPILOT_CONSOLE_IMAGE:?set TRACEPILOT_CONSOLE_IMAGE, for example tracepilot-console:0.1.0}
+    restart: unless-stopped
+    env_file: ../frontend/.env
+    depends_on:
+      tracepilot:
+        condition: service_healthy
+    cpus: 1
+    mem_limit: 128m
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+      - /etc/nginx/conf.d:rw,noexec,nosuid,size=1m,uid=101,gid=101,mode=0700
+    ports:
+      - "127.0.0.1:8081:8080"
+    networks:
+      app:
+        ipv4_address: 172.30.90.3
+
+networks:
+  app:
+    ipam:
+      config:
+        - subnet: 172.30.90.0/24
+          gateway: 172.30.90.1

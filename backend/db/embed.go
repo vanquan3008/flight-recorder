@@ -1,4 +1,3 @@
-// Package db embeds the schema history shipped with this application.
 package db
 
 import (
@@ -11,7 +10,6 @@ import (
 	"github.com/golang-migrate/migrate/v4/source"
 )
 
-// Directories of the two independent migration histories inside SQL.
 const (
 	PostgresMigrations   = "postgres/migrations"
 	ClickHouseMigrations = "clickhouse/migrations"

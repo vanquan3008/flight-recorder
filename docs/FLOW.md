@@ -34,6 +34,23 @@ kế hoạch tiếp theo nằm trong [README](../README.md#mvp-scope-and-release
 
 ## 2. Khởi động và tắt [2]
 
+### Triển khai container
+
+`deploy/compose.yaml` chỉ dựng ứng dụng; PostgreSQL và ClickHouse là dịch vụ bên ngoài.
+Compose đọc `backend/.env` và `frontend/.env` theo đường dẫn tương đối từ `deploy/`;
+`certs/` phải có sẵn và chỉ chứa public CA. Service `migrate` chạy `migrate all` bằng cùng
+image với backend, không dùng healthcheck của server. Backend chỉ chạy sau exit code 0;
+console chỉ chạy khi backend healthy. `up --wait` chờ các điều kiện này trước khi trả thành công.
+
+Stack buộc production validation và tắt hai cờ auto-migrate ở `serve`, tránh mỗi lần start
+server lại tự quản lý schema. Tên container/network theo Compose project; DNS service giữ nguyên.
+Port chỉ bind loopback, HTTPS do nginx trên host xử lý. Filesystem read-only, tmpfs dành cho
+nginx render config và file tạm; container dừng trong grace 60s. Khi nâng cấp: dừng exporter,
+dừng/drain backend, sao lưu DB rồi chạy migration của image mới trước khi khởi động app.
+Dependency startup không thay cho readiness/retry khi DB lỗi trong lúc hệ thống đang chạy.
+
+### Vòng đời backend
+
 Khởi động theo thứ tự, bước nào lỗi thì thoát với mã 1:
 
 Trước khi chạy bản mới, bước cập nhật chạy `migrate all`: nâng PostgreSQL (khóa advisory riêng)

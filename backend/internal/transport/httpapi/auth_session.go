@@ -13,16 +13,11 @@ import (
 )
 
 const (
-	// refreshCookieName holds the opaque refresh token. It is only ever sent to the auth routes.
 	refreshCookieName = "tp_refresh"
-	// refreshHeader must accompany a request that uses the refresh cookie. A page on another site
-	// cannot add a custom header to a cross-site request without a CORS preflight this server refuses,
-	// so the cookie alone cannot be used to act on a signed-in person's behalf.
-	refreshHeader = "X-TracePilot-Refresh"
-	refreshPath   = "/api/v1/auth"
+	refreshHeader     = "X-TracePilot-Refresh"
+	refreshPath       = "/api/v1/auth"
 )
 
-// refreshParameters document the header and cookie a refresh-cookie route reads.
 var refreshParameters = []string{"RefreshHeader", "RefreshCookie"}
 
 var authRoutes = []apiRouteDefinition{
@@ -39,8 +34,6 @@ func (server *Server) authStatus(responseWriter http.ResponseWriter, _ *http.Req
 	writeJSONValue(responseWriter, http.StatusOK, authStatusResponse{RegistrationOpen: server.allowRegistration, FirstAccount: false})
 }
 
-// signInView finishes a sign-in: it opens a refresh session, sets its cookie and answers with the
-// access token and the projects the person can open.
 func (server *Server) signInView(responseWriter http.ResponseWriter, request *http.Request, user auth.User, status int) {
 	refresh, _, sessionError := server.backend.CreateSession(request.Context(), user.ID, request.UserAgent())
 	if server.writeIdentityError(responseWriter, "create session", sessionError) {
@@ -52,7 +45,6 @@ func (server *Server) signInView(responseWriter http.ResponseWriter, request *ht
 	server.writeSession(responseWriter, request, user, refresh, status)
 }
 
-// writeSession sets the refresh cookie and answers with a fresh access token.
 func (server *Server) writeSession(responseWriter http.ResponseWriter, request *http.Request, user auth.User, refresh string, status int) {
 	memberships, listError := server.projectsFor(request, user)
 	if server.writeIdentityError(responseWriter, "list projects", listError) {
@@ -67,8 +59,6 @@ func (server *Server) writeSession(responseWriter http.ResponseWriter, request *
 	writeJSONValue(responseWriter, status, sessionView{User: user, Memberships: memberships, AccessToken: token, ExpiresAt: &expires})
 }
 
-// refreshToken returns the caller's refresh cookie, or "" when the request does not prove it came
-// from the console (see refreshHeader).
 func refreshToken(request *http.Request) string {
 	if request.Header.Get(refreshHeader) == "" {
 		return ""
@@ -127,15 +117,13 @@ func (server *Server) clearRefreshCookie(responseWriter http.ResponseWriter, req
 	})
 }
 
-// authRegister creates an ordinary account when registration is open and signs the user in.
-// Platform administrators can promote ordinary accounts or grant them project access.
 func (server *Server) authRegister(responseWriter http.ResponseWriter, request *http.Request, _ auth.Principal) {
 	var payload registerRequest
 	if decodeError := decodeIdentityBody(request, &payload); decodeError != nil {
 		writeAPIError(responseWriter, http.StatusBadRequest, "INVALID_REQUEST", decodeError.Error())
 		return
 	}
-	// Registration is open to anyone who can reach the server, so it is throttled per address by the router.
+
 	user, registerError := server.backend.RegisterUser(request.Context(), server.defaultProjectID, auth.CreateUserParams{
 		Email: payload.Email, DisplayName: payload.DisplayName, Password: payload.Password,
 	}, server.allowRegistration)
@@ -152,13 +140,11 @@ func (server *Server) authLogin(responseWriter http.ResponseWriter, request *htt
 		return
 	}
 	email := strings.ToLower(strings.TrimSpace(payload.Email))
-	// The address becomes a rate-limit key, and no valid one is longer than this; cutting it keeps a
-	// request body from filling the limiter with large keys.
+
 	if len(email) > maxEmailLength {
 		email = email[:maxEmailLength]
 	}
-	// Guessing is limited per client by the router and per account here, so spreading attempts
-	// across addresses does not help.
+
 	if allowed, retryAfter := server.rateLimiter.Allow("login:"+email, loginAttemptsPerEmail, time.Now()); !allowed {
 		responseWriter.Header().Set("Retry-After", retryAfterSeconds(retryAfter))
 		writeAPIError(responseWriter, http.StatusTooManyRequests, "RATE_LIMITED", "too many sign-in attempts; try again later")
@@ -176,8 +162,6 @@ func (server *Server) authLogin(responseWriter http.ResponseWriter, request *htt
 	server.signInView(responseWriter, request, user, http.StatusOK)
 }
 
-// authRefresh trades the refresh cookie for a new one and a new access token. The console calls it when
-// its access token expires, and on page load to resume a session.
 func (server *Server) authRefresh(responseWriter http.ResponseWriter, request *http.Request, _ auth.Principal) {
 	next, user, refreshError := server.backend.RefreshSession(request.Context(), refreshToken(request))
 	if errors.Is(refreshError, auth.ErrSessionNotFound) {
@@ -214,8 +198,6 @@ func (server *Server) authMe(responseWriter http.ResponseWriter, request *http.R
 	writeJSONValue(responseWriter, http.StatusOK, sessionView{User: user, Memberships: memberships})
 }
 
-// authChangePassword replaces the password, ends every other session and the access tokens issued so
-// far, and answers with a new access token so this one stays signed in.
 func (server *Server) authChangePassword(responseWriter http.ResponseWriter, request *http.Request, principal auth.Principal) {
 	var payload changePasswordRequest
 	if decodeError := decodeIdentityBody(request, &payload); decodeError != nil {

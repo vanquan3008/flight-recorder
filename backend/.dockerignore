@@ -3,6 +3,11 @@
 bin
 data
 .env
+.env.*
+**/*_test.go
+**/testdata
+*.exe
+*.test
 *.local.yaml
 coverage.out
 *.log
