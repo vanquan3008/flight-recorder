@@ -1,11 +1,11 @@
 import { expect, type Page } from "@playwright/test";
 
-const email = process.env.TRACEPILOT_E2E_EMAIL || "admin@tracepilot.local";
+const email = process.env.TRACEPILOT_E2E_EMAIL || "e2e@tracepilot.test";
 const password = process.env.TRACEPILOT_E2E_PASSWORD || "admin-password-123";
 
 /**
- * Signs in as the development account created by `tracepilot seed`. A different account is registered
- * first when it does not exist. Accounts without a project create one through the console.
+ * Uses an ordinary test account so another project's telemetry cannot affect empty-state checks.
+ * Registers it when missing, then creates its first project through the console.
  */
 export async function signIn(page: Page, who = { email, password }) {
   await page.request.post("/api/v1/auth/register", { data: { email: who.email, display_name: "E2E", password: who.password }, headers: { "X-TracePilot-Refresh": "1" } });

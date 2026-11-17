@@ -40,6 +40,28 @@ func TestStreamHubSubscribeAndBroadcast(t *testing.T) {
 	}
 }
 
+func TestStreamUsesSeverityNumberForLogAndIncident(t *testing.T) {
+	hub := NewHub()
+	defer hub.Close()
+	events, stop, _ := hub.Subscribe("project", "environment")
+	defer stop()
+	hub.BroadcastEvents([]telemetry.Event{{ID: "error", ProjectID: "project", EnvironmentID: "environment",
+		Signal: telemetry.SignalLog, Timestamp: time.Now(), Severity: "custom", SeverityNumber: 20}})
+	for _, kind := range []string{"log", "incident"} {
+		select {
+		case event := <-events:
+			if event.Type != kind {
+				t.Fatalf("got %s want %s", event.Type, kind)
+			}
+			if kind == "log" && event.Payload.(map[string]any)["severity_number"] != int32(20) {
+				t.Fatal("live log lost severity number")
+			}
+		default:
+			t.Fatalf("missing %s event for a numeric error severity", kind)
+		}
+	}
+}
+
 func TestStreamHubBroadcastEvents(t *testing.T) {
 	hub := NewHub()
 	projectID := "proj-2"

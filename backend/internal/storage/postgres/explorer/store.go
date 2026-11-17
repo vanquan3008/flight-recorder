@@ -1,4 +1,4 @@
-// Package explorer reads traces, logs and request performance for the
+// Package explorer reads traces and request performance for the
 // investigation screens.
 package explorer
 

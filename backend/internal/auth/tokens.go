@@ -8,27 +8,23 @@ import (
 
 // IssueAccessToken signs the short-lived token a signed-in console sends with each request.
 func IssueAccessToken(secret []byte, userID string, now time.Time) (string, time.Time, error) {
-	return IssueAccessTokenWithOptions(secret, userID, now, AccessTokenTTL, "", "")
-}
-
-// IssueAccessTokenWithTTL signs the console access token with the specified duration.
-func IssueAccessTokenWithTTL(secret []byte, userID string, now time.Time, ttl time.Duration) (string, time.Time, error) {
-	return IssueAccessTokenWithOptions(secret, userID, now, ttl, "", "")
+	return IssueAccessTokenWithOptions(secret, userID, now, AccessTokenTTL, "", "", 0)
 }
 
 // IssueAccessTokenWithOptions signs the console token using custom TTL, issuer, and audience.
-func IssueAccessTokenWithOptions(secret []byte, userID string, now time.Time, ttl time.Duration, issuer, audience string) (string, time.Time, error) {
+func IssueAccessTokenWithOptions(secret []byte, userID string, now time.Time, ttl time.Duration, issuer, audience string, tokenVersion int64) (string, time.Time, error) {
 	if ttl <= 0 {
 		ttl = AccessTokenTTL
 	}
 	expires := now.Add(ttl)
 	token, signError := SignJWT(secret, Claims{
-		Kind:      TokenAccess,
-		Subject:   userID,
-		IssuedAt:  now,
-		ExpiresAt: expires,
-		Issuer:    issuer,
-		Audience:  audience,
+		Kind:         TokenAccess,
+		Subject:      userID,
+		IssuedAt:     now,
+		ExpiresAt:    expires,
+		Issuer:       issuer,
+		Audience:     audience,
+		TokenVersion: tokenVersion,
 	})
 	return token, expires, signError
 }

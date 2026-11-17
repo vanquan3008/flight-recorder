@@ -8,7 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// DeleteEventsBefore expires events, spans, and logs by dropping every daily
+// DeleteEventsBefore expires events and spans by dropping every daily
 // partition that ended at or before the cutoff, so retention granularity is one
 // UTC day and the cost does not grow with the number of rows. Rows that missed
 // their daily partition live in events_default and are deleted in batches. It
@@ -38,11 +38,9 @@ func (store *PartitionStore) deleteEventsBefore(ctx context.Context, before time
 	if deleteError != nil {
 		return dropped + deleted, deleteError
 	}
-	// Spans and logs in the default partition expire with the same cutoff.
-	for _, table := range []string{"spans", "logs"} {
-		if _, tableError := store.deleteDefaultPartitionRows(ctx, table, before, batchSize); tableError != nil {
-			return dropped + deleted, tableError
-		}
+	// Spans in the default partition expire with the same cutoff.
+	if _, spanError := store.deleteDefaultPartitionRows(ctx, "spans", before, batchSize); spanError != nil {
+		return dropped + deleted, spanError
 	}
 	if err := store.queries.DeleteSpanRollupBucketsBefore(ctx, before); err != nil {
 		return dropped + deleted, fmt.Errorf("delete expired span rollups: %w", err)

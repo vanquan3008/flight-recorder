@@ -26,7 +26,7 @@ jobs:
   release:
     needs: verify
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
@@ -117,6 +117,30 @@ jobs:
             COMMIT=${{ github.sha }}
             BUILD_TIME=${{ steps.version.outputs.build_time }}
 
+      - name: Extract console image metadata
+        id: console_meta
+        uses: docker/metadata-action@8e5442c4ef9f78752691e2d8f8d19755c6f78e81 # v5.5.1
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-console
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=sha
+
+      - name: Build and push console image
+        id: console_image
+        uses: docker/build-push-action@5cd11c3a4ced054e52742c5fd54dca954e0edd85 # v6.7.0
+        with:
+          context: frontend
+          target: console
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.console_meta.outputs.tags }}
+          labels: ${{ steps.console_meta.outputs.labels }}
+          sbom: true
+          provenance: mode=max
+
       - name: Sign immutable image digest
         uses: sigstore/cosign-installer@1aa8e0f2454b781fbf0fbf306a4c9533a0c57409 # v3.7.0
 
@@ -134,12 +158,29 @@ jobs:
             --certificate-identity-regexp "^https://github.com/${{ github.repository }}/.github/workflows/" \
             "$IMAGE_DIGEST"
 
+      - name: Sign and verify console image with keyless OIDC
+        env:
+          IMAGE_DIGEST: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-console@${{ steps.console_image.outputs.digest }}
+        run: |
+          cosign sign --yes "$IMAGE_DIGEST"
+          cosign verify \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            --certificate-identity-regexp "^https://github.com/${{ github.repository }}/.github/workflows/" \
+            "$IMAGE_DIGEST"
+
       - name: Smoke test immutable server image
         env:
           IMAGE_DIGEST: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.server_image.outputs.digest }}
         run: |
           docker pull "$IMAGE_DIGEST"
           docker run --rm "$IMAGE_DIGEST" version
+
+      - name: Smoke test immutable console image
+        env:
+          IMAGE_DIGEST: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-console@${{ steps.console_image.outputs.digest }}
+        run: |
+          docker pull "$IMAGE_DIGEST"
+          docker run --rm -e TRACEPILOT_API_UPSTREAM=http://127.0.0.1:8080 "$IMAGE_DIGEST" nginx -t
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@c062e08bd532815e2082a85e87e3ef29c3e6d191 # v2.0.8

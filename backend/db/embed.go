@@ -1,9 +1,9 @@
-// Package db embeds the schema history shipped with this application.
 package db
 
 import (
 	"embed"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 
@@ -26,38 +26,75 @@ type Migration struct {
 func List(directory string) ([]Migration, error) {
 	entries, err := SQL.ReadDir(directory)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read migrations from %q: %w", directory, err)
 	}
-	var result []Migration
-	seen := make(map[uint]bool)
+
+	migrations := make([]Migration, 0, len(entries))
+	versions := make(map[uint]struct{}, len(entries))
+
 	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql") {
+		filename := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(filename, ".sql") {
 			continue
 		}
-		migration, err := source.DefaultParse(entry.Name())
+
+		parsed, err := source.DefaultParse(filename)
 		if err != nil {
-			return nil, fmt.Errorf("invalid migration filename %s: %w", entry.Name(), err)
+			return nil, fmt.Errorf("parse migration %q: %w", filename, err)
 		}
-		if migration.Direction != source.Up {
+
+		if parsed.Direction != source.Up {
 			continue
 		}
-		if migration.Version == 0 || seen[migration.Version] {
-			return nil, fmt.Errorf("invalid or duplicate migration version in %s", entry.Name())
+
+		if parsed.Version == 0 {
+			return nil, fmt.Errorf("invalid migration version in %q", filename)
 		}
-		seen[migration.Version] = true
-		result = append(result, Migration{Version: migration.Version, File: directory + "/" + entry.Name()})
+
+		if _, exists := versions[parsed.Version]; exists {
+			return nil, fmt.Errorf(
+				"duplicate migration version %d in %q",
+				parsed.Version,
+				directory,
+			)
+		}
+
+		versions[parsed.Version] = struct{}{}
+		migrations = append(migrations, Migration{
+			Version: parsed.Version,
+			File:    directory + "/" + filename,
+		})
 	}
-	if len(result) == 0 {
-		return nil, fmt.Errorf("no up migrations in %s", directory)
+
+	if len(migrations) == 0 {
+		return nil, fmt.Errorf("no up migrations found in %q", directory)
 	}
-	sort.Slice(result, func(i, j int) bool { return result[i].Version < result[j].Version })
-	return result, nil
+
+	sort.Slice(migrations, func(i, j int) bool {
+		return migrations[i].Version < migrations[j].Version
+	})
+
+	slog.Debug("Database migrations loaded",
+		"directory", directory,
+		"count", len(migrations),
+		"latest_version", migrations[len(migrations)-1].Version,
+	)
+
+	return migrations, nil
 }
 
 func LatestVersion(directory string) (uint, error) {
-	list, err := List(directory)
+	migrations, err := List(directory)
 	if err != nil {
 		return 0, err
 	}
-	return list[len(list)-1].Version, nil
+
+	version := migrations[len(migrations)-1].Version
+
+	slog.Debug("Latest migration version resolved",
+		"directory", directory,
+		"version", version,
+	)
+
+	return version, nil
 }

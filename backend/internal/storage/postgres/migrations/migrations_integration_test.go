@@ -208,7 +208,11 @@ func TestBaselineRollbackIsRejectedWithoutChangingSchemaIntegration(t *testing.T
 	if _, err := Run(ctx, endpoint, "up", 0); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Run(ctx, endpoint, "down", 1); err == nil || !strings.Contains(err.Error(), "no rollback SQL") {
+	version, err := CurrentVersion()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Run(ctx, endpoint, "down", int(version)); err == nil || !strings.Contains(err.Error(), "no rollback SQL") {
 		t.Fatalf("baseline rollback was not rejected: %v", err)
 	}
 	state, err := Inspect(ctx, endpoint)

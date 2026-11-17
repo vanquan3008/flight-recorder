@@ -8,16 +8,17 @@ import (
 
 	"github.com/vanquan3008/tracepilot/internal/auth"
 	notificationdomain "github.com/vanquan3008/tracepilot/internal/domain/notification"
+	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/openapi"
 )
 
 var webhookRoutes = []apiRouteDefinition{
-	{path: "/api/v1/webhooks", method: http.MethodGet, scope: "admin", tags: []string{"webhooks"}, operationID: "listWebhooks", handler: (*Server).listWebhooks},
-	{path: "/api/v1/webhooks", method: http.MethodPost, scope: "admin", tags: []string{"webhooks"}, operationID: "createWebhook", requestBody: true, handler: (*Server).createWebhook},
-	{path: "/api/v1/webhooks/{webhookID}", method: http.MethodGet, scope: "admin", tags: []string{"webhooks"}, operationID: "getWebhook", handler: (*Server).getWebhook},
-	{path: "/api/v1/webhooks/{webhookID}", method: http.MethodPut, scope: "admin", tags: []string{"webhooks"}, operationID: "updateWebhook", requestBody: true, handler: (*Server).updateWebhook},
-	{path: "/api/v1/webhooks/{webhookID}", method: http.MethodDelete, scope: "admin", tags: []string{"webhooks"}, operationID: "deleteWebhook", handler: (*Server).deleteWebhook},
-	{path: "/api/v1/webhooks/{webhookID}/rotate", method: http.MethodPost, scope: "admin", tags: []string{"webhooks"}, operationID: "rotateWebhookSecret", successStatus: http.StatusOK, handler: (*Server).rotateWebhookSecret},
-	{path: "/api/v1/webhooks/{webhookID}/deliveries", method: http.MethodGet, scope: "admin", tags: []string{"webhooks"}, operationID: "listWebhookDeliveries", handler: (*Server).listWebhookDeliveries},
+	{path: "/api/v1/webhooks", method: http.MethodGet, scope: "admin", tags: []string{"webhooks"}, operationID: "listWebhooks", query: []string{"Limit", "Cursor"}, handler: (*Server).listWebhooks, response: openapi.Page[notificationdomain.Webhook]()},
+	{path: "/api/v1/webhooks", method: http.MethodPost, scope: "admin", tags: []string{"webhooks"}, operationID: "createWebhook", requestBody: true, handler: (*Server).createWebhook, request: openapi.TypeOf[webhookRequest](), response: openapi.Object[createWebhookResponse]()},
+	{path: "/api/v1/webhooks/{webhookID}", method: http.MethodGet, scope: "admin", tags: []string{"webhooks"}, operationID: "getWebhook", handler: (*Server).getWebhook, response: openapi.Object[notificationdomain.Webhook]()},
+	{path: "/api/v1/webhooks/{webhookID}", method: http.MethodPut, scope: "admin", tags: []string{"webhooks"}, operationID: "updateWebhook", requestBody: true, handler: (*Server).updateWebhook, request: openapi.TypeOf[webhookRequest](), response: openapi.Object[notificationdomain.Webhook]()},
+	{path: "/api/v1/webhooks/{webhookID}", method: http.MethodDelete, scope: "admin", tags: []string{"webhooks"}, operationID: "deleteWebhook", handler: (*Server).deleteWebhook, response: openapi.Empty()},
+	{path: "/api/v1/webhooks/{webhookID}/rotate", method: http.MethodPost, scope: "admin", tags: []string{"webhooks"}, operationID: "rotateWebhookSecret", successStatus: http.StatusOK, handler: (*Server).rotateWebhookSecret, response: openapi.Object[webhookSecretResponse]()},
+	{path: "/api/v1/webhooks/{webhookID}/deliveries", method: http.MethodGet, scope: "admin", tags: []string{"webhooks"}, operationID: "listWebhookDeliveries", query: []string{"Limit", "Cursor"}, handler: (*Server).listWebhookDeliveries, response: openapi.Page[notificationdomain.Delivery]()},
 }
 
 type webhookRequest struct {
@@ -87,7 +88,7 @@ func (server *Server) createWebhook(responseWriter http.ResponseWriter, request 
 	if server.writeWebhookError(responseWriter, "create webhook", createError) {
 		return
 	}
-	writeJSONValue(responseWriter, http.StatusCreated, map[string]any{"webhook": issued.Webhook, "secret": issued.Secret})
+	writeJSONValue(responseWriter, http.StatusCreated, createWebhookResponse{Webhook: issued.Webhook, Secret: issued.Secret})
 }
 
 func (server *Server) getWebhook(responseWriter http.ResponseWriter, request *http.Request, principal auth.Principal) {
@@ -146,7 +147,7 @@ func (server *Server) rotateWebhookSecret(responseWriter http.ResponseWriter, re
 	if server.writeWebhookError(responseWriter, "rotate webhook secret", rotateError) {
 		return
 	}
-	writeJSONValue(responseWriter, http.StatusOK, map[string]string{"secret": secret})
+	writeJSONValue(responseWriter, http.StatusOK, webhookSecretResponse{Secret: secret})
 }
 
 func (server *Server) listWebhookDeliveries(responseWriter http.ResponseWriter, request *http.Request, principal auth.Principal) {

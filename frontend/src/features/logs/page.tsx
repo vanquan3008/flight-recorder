@@ -16,9 +16,9 @@ import {
   useTimeWindow,
 } from "../../shared/ui";
 import { matchesLogFilters, mergeLogs } from "./log-model";
+import { severityGroups } from "./log-format";
 import { LogTable } from "./log-table";
 
-const severities = ["TRACE", "DEBUG", "INFO", "WARN", "ERROR", "FATAL"];
 const filterNames = ["service", "severity", "search", "traceId", "spanId"];
 
 export function LogsPage() {
@@ -104,7 +104,7 @@ export function LogsPage() {
       <div className="log-toolbar-bar mb-4 flex w-full flex-wrap items-center justify-between gap-3 max-[960px]:flex-col max-[960px]:items-stretch">
         <div className="log-toolbar-left flex flex-1 flex-wrap items-center gap-2.5">
           <div className="severity-chips inline-flex h-9 shrink-0 items-center gap-0.5 self-start rounded-xl border border-glass-field-edge bg-glass-field p-0.75" role="group" aria-label="Quick severity filter">
-            {["", ...severities.slice(2)].map((severity) => {
+            {["", ...severityGroups.slice(2)].map((severity) => {
               const selected = (params.get("severity") || "") === severity;
               const toneColor = !selected && (
                 severity === "ERROR" || severity === "FATAL"

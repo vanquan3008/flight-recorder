@@ -18,10 +18,9 @@ func main() {
 }
 
 func run(args []string) int {
-	// Every sub-command logs JSON through slog; serve later applies the configured level.
 	slog.SetDefault(logging.NewLogger(os.Stdout, &logging.Options{ServiceName: "tracepilot", ServiceVersion: version}))
 	if len(args) == 0 {
-		slog.Error("missing sub-command", "usage", "tracepilot <serve|migrate|seed|healthcheck|version>")
+		slog.Error("missing sub-command", "usage", "tracepilot <serve|migrate|create-admin|seed|healthcheck|version>")
 		return 2
 	}
 	switch args[0] {
@@ -31,13 +30,15 @@ func run(args []string) int {
 		return runMigrations(args[1:])
 	case "seed":
 		return runSeed(args[1:])
+	case "create-admin":
+		return runCreateAdmin(args[1:], os.Stdin)
 	case "version":
 		slog.Info("TracePilot version", "version", version, "commit", commit, "built", buildTime)
 		return 0
 	case "healthcheck":
 		return healthcheck()
 	default:
-		slog.Error("unknown sub-command", "subcommand", args[0], "usage", "tracepilot <serve|migrate|seed|healthcheck|version>")
+		slog.Error("unknown sub-command", "subcommand", args[0], "usage", "tracepilot <serve|migrate|create-admin|seed|healthcheck|version>")
 		return 2
 	}
 }

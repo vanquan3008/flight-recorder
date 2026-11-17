@@ -4,14 +4,6 @@ package pgvalue
 
 import "encoding/json"
 
-// MarshalJSON encodes a JSON document; nil becomes JSON null.
-func MarshalJSON(value any) ([]byte, error) {
-	if value == nil {
-		return []byte("null"), nil
-	}
-	return json.Marshal(value)
-}
-
 // MarshalJSONObject encodes an object column; nil becomes {}.
 func MarshalJSONObject(value map[string]any) ([]byte, error) {
 	if value == nil {

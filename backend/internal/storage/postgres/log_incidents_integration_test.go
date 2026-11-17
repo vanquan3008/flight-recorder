@@ -28,7 +28,7 @@ func TestCompactLogIncidentsReuseTimelineAndOutboxWithoutRawLogs(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for table, want := range map[string]int{"logs": 0, "events": 1, "incident_occurrences": 1, "webhook_deliveries": 1, "incident_evidence": 1} {
+	for table, want := range map[string]int{"events": 1, "incident_occurrences": 1, "webhook_deliveries": 1, "incident_evidence": 1} {
 		if got := countRows(t, database, "SELECT count(*) FROM "+table+" WHERE project_id=$1", scope.ProjectID); got != want {
 			t.Fatalf("%s rows=%d, want %d", table, got, want)
 		}

@@ -17,7 +17,7 @@ export const LogRow = memo(function LogRow({ log, forceOpen }: LogRowProps) {
   const detailID = useId();
   const body = useMemo(() => logBodyText(log.body), [log.body]);
   const http = useMemo(() => parseHttpLog(body), [body]);
-  const severity = normalizeSeverityText(log.severity_text);
+  const severity = normalizeSeverityText(log.severity_text, log.severity_number);
   const timestamp = useMemo(() => formatTimeParts(log.occurred_at), [log.occurred_at]);
   const failed = severity === "ERROR" || severity === "FATAL";
   const rail = failed ? "border-l-rose-500" : severity === "WARN" ? "border-l-amber-500" : "border-l-transparent";

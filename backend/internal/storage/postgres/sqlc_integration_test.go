@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -109,7 +110,7 @@ func BenchmarkStoreEventsIntegration(b *testing.B) {
 	b.Cleanup(func() { cleanupIntegrationScope(b, database, ingestion.ProjectID) })
 
 	const batchSize = 256
-	message := strings.Repeat("representative log payload ", 16)
+	message := strings.Repeat("representative span payload ", 16)
 	startedAt := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
 	b.ResetTimer()
 	for iteration := 0; iteration < b.N; iteration++ {
@@ -121,15 +122,18 @@ func BenchmarkStoreEventsIntegration(b *testing.B) {
 				ProjectID:          ingestion.ProjectID,
 				Environment:        ingestion.EnvironmentName,
 				ServiceName:        "benchmark-service",
-				Type:               telemetry.EventLog,
+				Type:               telemetry.EventHTTPServer,
 				Timestamp:          timestamp,
-				Severity:           "INFO",
+				Duration:           time.Millisecond,
+				Status:             "OK",
+				Operation:          "GET /benchmark",
+				TraceID:            fmt.Sprintf("%032x", iteration*batchSize+index+1),
+				SpanID:             fmt.Sprintf("%016x", iteration*batchSize+index+1),
 				Attributes:         map[string]any{"iteration": iteration, "record": index},
-				Signal:             telemetry.SignalLog,
+				Signal:             telemetry.SignalTrace,
 				ResourceAttributes: map[string]any{"service.name": "benchmark-service"},
 				ScopeAttributes:    map[string]any{},
-				RecordAttributes:   map[string]any{"source": "benchmark"},
-				LogBody:            map[string]any{"message": message},
+				RecordAttributes:   map[string]any{"source": "benchmark", "message": message},
 			}
 		}
 		if storeError := database.StoreEvents(context.Background(), ingestion, events); storeError != nil {

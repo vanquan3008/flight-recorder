@@ -200,7 +200,7 @@ func TestTwoProjectsKeepTheirTelemetryApartIntegration(t *testing.T) {
 		defer cleanup.Close()
 		// Partitioned telemetry has no cascading foreign keys, so each table is cleared before the project.
 		for _, id := range []string{one.ID, two.ID, base.ProjectID} {
-			for _, table := range []string{"incidents", "spans", "logs", "events", "metric_data_points"} {
+			for _, table := range []string{"incidents", "spans", "events", "metric_data_points"} {
 				if _, err := cleanup.Exec(ctx, "DELETE FROM "+table+" WHERE project_id = $1", id); err != nil {
 					t.Error(err)
 				}

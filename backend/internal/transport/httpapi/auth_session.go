@@ -9,34 +9,31 @@ import (
 	sessionapp "github.com/vanquan3008/tracepilot/internal/application/session"
 	"github.com/vanquan3008/tracepilot/internal/auth"
 	"github.com/vanquan3008/tracepilot/internal/config"
+	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/openapi"
 )
 
 const (
-	// refreshCookieName holds the opaque refresh token. It is only ever sent to the auth routes.
 	refreshCookieName = "tp_refresh"
-	// refreshHeader must accompany a request that uses the refresh cookie. A page on another site
-	// cannot add a custom header to a cross-site request without a CORS preflight this server refuses,
-	// so the cookie alone cannot be used to act on a signed-in person's behalf.
-	refreshHeader = "X-TracePilot-Refresh"
-	refreshPath   = "/api/v1/auth"
+	refreshHeader     = "X-TracePilot-Refresh"
+	refreshPath       = "/api/v1/auth"
 )
 
+var refreshParameters = []string{"RefreshHeader", "RefreshCookie"}
+
 var authRoutes = []apiRouteDefinition{
-	{path: "/api/v1/auth/status", method: http.MethodGet, scope: "public", public: true, tags: []string{"auth"}, operationID: "getAuthStatus", handler: (*Server).authStatus},
-	{path: "/api/v1/auth/register", method: http.MethodPost, scope: "public", public: true, tags: []string{"auth"}, operationID: "register", successStatus: http.StatusCreated, requestBody: true, handler: (*Server).authRegister},
-	{path: "/api/v1/auth/refresh", method: http.MethodPost, scope: "public", public: true, tags: []string{"auth"}, operationID: "refreshSession", successStatus: http.StatusOK, handler: (*Server).authRefresh},
-	{path: "/api/v1/auth/login", method: http.MethodPost, scope: "public", public: true, tags: []string{"auth"}, operationID: "login", successStatus: http.StatusOK, requestBody: true, handler: (*Server).authLogin},
-	{path: "/api/v1/auth/logout", method: http.MethodPost, scope: "public", public: true, tags: []string{"auth"}, operationID: "logout", successStatus: http.StatusNoContent, handler: (*Server).authLogout},
-	{path: "/api/v1/auth/me", method: http.MethodGet, scope: auth.ScopeSession, tags: []string{"auth"}, operationID: "getCurrentUser", handler: (*Server).authMe},
-	{path: "/api/v1/auth/password", method: http.MethodPost, scope: auth.ScopeSession, tags: []string{"auth"}, operationID: "changePassword", successStatus: http.StatusOK, requestBody: true, handler: (*Server).authChangePassword},
+	{path: "/api/v1/auth/status", method: http.MethodGet, scope: "public", public: true, tags: []string{"auth"}, operationID: "getAuthStatus", handler: (*Server).authStatus, response: openapi.Object[authStatusResponse]()},
+	{path: "/api/v1/auth/register", method: http.MethodPost, scope: "public", public: true, tags: []string{"auth"}, operationID: "register", successStatus: http.StatusCreated, requestBody: true, handler: (*Server).authRegister, request: openapi.TypeOf[registerRequest](), response: openapi.Object[sessionView]()},
+	{path: "/api/v1/auth/refresh", method: http.MethodPost, scope: "public", public: true, tags: []string{"auth"}, operationID: "refreshSession", successStatus: http.StatusOK, handler: (*Server).authRefresh, headers: refreshParameters, response: openapi.Object[sessionView]()},
+	{path: "/api/v1/auth/login", method: http.MethodPost, scope: "public", public: true, tags: []string{"auth"}, operationID: "login", successStatus: http.StatusOK, requestBody: true, handler: (*Server).authLogin, request: openapi.TypeOf[loginRequest](), response: openapi.Object[sessionView]()},
+	{path: "/api/v1/auth/logout", method: http.MethodPost, scope: "public", public: true, tags: []string{"auth"}, operationID: "logout", successStatus: http.StatusNoContent, handler: (*Server).authLogout, headers: refreshParameters, response: openapi.Empty()},
+	{path: "/api/v1/auth/me", method: http.MethodGet, scope: auth.ScopeSession, tags: []string{"auth"}, operationID: "getCurrentUser", handler: (*Server).authMe, response: openapi.Object[sessionView]()},
+	{path: "/api/v1/auth/password", method: http.MethodPost, scope: auth.ScopeSession, tags: []string{"auth"}, operationID: "changePassword", successStatus: http.StatusOK, requestBody: true, handler: (*Server).authChangePassword, request: openapi.TypeOf[changePasswordRequest](), response: openapi.Object[sessionView]()},
 }
 
 func (server *Server) authStatus(responseWriter http.ResponseWriter, _ *http.Request, _ auth.Principal) {
-	writeJSONValue(responseWriter, http.StatusOK, map[string]any{"registration_open": server.allowRegistration, "first_account": false})
+	writeJSONValue(responseWriter, http.StatusOK, authStatusResponse{RegistrationOpen: server.allowRegistration, FirstAccount: false})
 }
 
-// signInView finishes a sign-in: it opens a refresh session, sets its cookie and answers with the
-// access token and the projects the person can open.
 func (server *Server) signInView(responseWriter http.ResponseWriter, request *http.Request, user auth.User, status int) {
 	refresh, _, sessionError := server.backend.CreateSession(request.Context(), user.ID, request.UserAgent())
 	if server.writeIdentityError(responseWriter, "create session", sessionError) {
@@ -48,13 +45,12 @@ func (server *Server) signInView(responseWriter http.ResponseWriter, request *ht
 	server.writeSession(responseWriter, request, user, refresh, status)
 }
 
-// writeSession sets the refresh cookie and answers with a fresh access token.
 func (server *Server) writeSession(responseWriter http.ResponseWriter, request *http.Request, user auth.User, refresh string, status int) {
 	memberships, listError := server.projectsFor(request, user)
 	if server.writeIdentityError(responseWriter, "list projects", listError) {
 		return
 	}
-	token, expires, tokenError := server.issueAccessToken(user.ID)
+	token, expires, tokenError := server.issueAccessToken(user)
 	if tokenError != nil {
 		server.writeInternalError(responseWriter, "sign access token", tokenError)
 		return
@@ -63,8 +59,6 @@ func (server *Server) writeSession(responseWriter http.ResponseWriter, request *
 	writeJSONValue(responseWriter, status, sessionView{User: user, Memberships: memberships, AccessToken: token, ExpiresAt: &expires})
 }
 
-// refreshToken returns the caller's refresh cookie, or "" when the request does not prove it came
-// from the console (see refreshHeader).
 func refreshToken(request *http.Request) string {
 	if request.Header.Get(refreshHeader) == "" {
 		return ""
@@ -123,19 +117,13 @@ func (server *Server) clearRefreshCookie(responseWriter http.ResponseWriter, req
 	})
 }
 
-// authRegister creates an ordinary account when registration is open and signs the user in.
-// Platform administrators can promote ordinary accounts or grant them project access.
 func (server *Server) authRegister(responseWriter http.ResponseWriter, request *http.Request, _ auth.Principal) {
-	var payload struct {
-		Email       string `json:"email"`
-		DisplayName string `json:"display_name"`
-		Password    string `json:"password"`
-	}
+	var payload registerRequest
 	if decodeError := decodeIdentityBody(request, &payload); decodeError != nil {
 		writeAPIError(responseWriter, http.StatusBadRequest, "INVALID_REQUEST", decodeError.Error())
 		return
 	}
-	// Registration is open to anyone who can reach the server, so it is throttled per address by the router.
+
 	user, registerError := server.backend.RegisterUser(request.Context(), server.defaultProjectID, auth.CreateUserParams{
 		Email: payload.Email, DisplayName: payload.DisplayName, Password: payload.Password,
 	}, server.allowRegistration)
@@ -146,22 +134,17 @@ func (server *Server) authRegister(responseWriter http.ResponseWriter, request *
 }
 
 func (server *Server) authLogin(responseWriter http.ResponseWriter, request *http.Request, _ auth.Principal) {
-	var payload struct {
-		Email    string `json:"email"`
-		Password string `json:"password"`
-	}
+	var payload loginRequest
 	if decodeError := decodeIdentityBody(request, &payload); decodeError != nil {
 		writeAPIError(responseWriter, http.StatusBadRequest, "INVALID_REQUEST", decodeError.Error())
 		return
 	}
 	email := strings.ToLower(strings.TrimSpace(payload.Email))
-	// The address becomes a rate-limit key, and no valid one is longer than this; cutting it keeps a
-	// request body from filling the limiter with large keys.
+
 	if len(email) > maxEmailLength {
 		email = email[:maxEmailLength]
 	}
-	// Guessing is limited per client by the router and per account here, so spreading attempts
-	// across addresses does not help.
+
 	if allowed, retryAfter := server.rateLimiter.Allow("login:"+email, loginAttemptsPerEmail, time.Now()); !allowed {
 		responseWriter.Header().Set("Retry-After", retryAfterSeconds(retryAfter))
 		writeAPIError(responseWriter, http.StatusTooManyRequests, "RATE_LIMITED", "too many sign-in attempts; try again later")
@@ -179,8 +162,6 @@ func (server *Server) authLogin(responseWriter http.ResponseWriter, request *htt
 	server.signInView(responseWriter, request, user, http.StatusOK)
 }
 
-// authRefresh trades the refresh cookie for a new one and a new access token. The console calls it when
-// its access token expires, and on page load to resume a session.
 func (server *Server) authRefresh(responseWriter http.ResponseWriter, request *http.Request, _ auth.Principal) {
 	next, user, refreshError := server.backend.RefreshSession(request.Context(), refreshToken(request))
 	if errors.Is(refreshError, auth.ErrSessionNotFound) {
@@ -217,13 +198,8 @@ func (server *Server) authMe(responseWriter http.ResponseWriter, request *http.R
 	writeJSONValue(responseWriter, http.StatusOK, sessionView{User: user, Memberships: memberships})
 }
 
-// authChangePassword replaces the password, ends every other session and the access tokens issued so
-// far, and answers with a new access token so this one stays signed in.
 func (server *Server) authChangePassword(responseWriter http.ResponseWriter, request *http.Request, principal auth.Principal) {
-	var payload struct {
-		CurrentPassword string `json:"current_password"`
-		NewPassword     string `json:"new_password"`
-	}
+	var payload changePasswordRequest
 	if decodeError := decodeIdentityBody(request, &payload); decodeError != nil {
 		writeAPIError(responseWriter, http.StatusBadRequest, "INVALID_REQUEST", decodeError.Error())
 		return
@@ -252,7 +228,7 @@ func (server *Server) authChangePassword(responseWriter http.ResponseWriter, req
 	if server.writeIdentityError(responseWriter, "list projects", listError) {
 		return
 	}
-	token, expires, tokenError := server.issueAccessToken(user.ID)
+	token, expires, tokenError := server.issueAccessToken(user)
 	if tokenError != nil {
 		server.writeInternalError(responseWriter, "sign access token", tokenError)
 		return
@@ -260,10 +236,10 @@ func (server *Server) authChangePassword(responseWriter http.ResponseWriter, req
 	writeJSONValue(responseWriter, http.StatusOK, sessionView{User: user, Memberships: memberships, AccessToken: token, ExpiresAt: &expires})
 }
 
-func (server *Server) issueAccessToken(userID string) (string, time.Time, error) {
+func (server *Server) issueAccessToken(user auth.User) (string, time.Time, error) {
 	ttl := server.accessTokenTTL
 	if ttl <= 0 {
 		ttl = auth.AccessTokenTTL
 	}
-	return auth.IssueAccessTokenWithOptions(server.jwtSecret, userID, time.Now(), ttl, server.issuer, server.audience)
+	return auth.IssueAccessTokenWithOptions(server.jwtSecret, user.ID, time.Now(), ttl, server.issuer, server.audience, user.TokenVersion())
 }

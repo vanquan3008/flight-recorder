@@ -15,13 +15,25 @@ TracePilot is a self-hosted observability platform for OpenTelemetry traces, log
 
 **Status: Beta.** PostgreSQL stores traces, metrics, incidents, and management data. ClickHouse is required for raw logs. Redis is optional for caching.
 
+## Contents
+
+- [Requirements](#requirements)
+- [Quick start](#quick-start)
+- [Send telemetry](#send-telemetry)
+- [Container images](#container-images)
+- [Production deployment](#production-deployment)
+- [Project structure](#project-structure)
+- [MVP scope and release criteria](#mvp-scope-and-release-criteria)
+- [Development](#development)
+- [Reference](#reference)
+
 ## Requirements
 
 - Go matching [backend/go.mod](backend/go.mod).
 - Node.js 24 and npm, matching [frontend/.nvmrc](frontend/.nvmrc).
 - An existing PostgreSQL database and a reachable ClickHouse service.
 
-Databases run separately; this repository does not include Docker Compose.
+Databases run separately. [deploy/compose.yaml](deploy/compose.yaml) runs the production backend and console against existing databases (see [Production deployment](#production-deployment)); [docker-compose/](docker-compose/docker-compose.yaml) only starts ClickHouse on a development machine.
 
 ## Quick start
 
@@ -53,7 +65,7 @@ go -C backend run ./cmd/tracepilot serve
 
 Seeding creates only the super admin account `admin@tracepilot.local` with password `admin-password-123`. It does not create projects, environments, memberships, or sample telemetry. Create a project in the console after signing in; server startup does not create a default project. Seeding is disabled in production, and rerunning it preserves existing accounts and data.
 
-Automatic migration defaults to off for each database. To migrate during `serve` (including the Docker default command), set `TRACEPILOT_DATABASE_AUTO_MIGRATE=true` for PostgreSQL and/or `TRACEPILOT_CLICKHOUSE_AUTO_MIGRATE=true` for ClickHouse in `backend/.env`. Each flag upgrades only its own database, before any listener or worker starts; failure stops startup. When moving existing PostgreSQL logs to ClickHouse, stop ingestion and drain the pipeline, then run `go -C backend run ./cmd/tracepilot migrate clickhouse backfill` after both schemas are ready, before restarting ingestion.
+Automatic migration defaults to off for each database. To migrate during `serve` (including the Docker default command), set `TRACEPILOT_DATABASE_AUTO_MIGRATE=true` for PostgreSQL and/or `TRACEPILOT_CLICKHOUSE_AUTO_MIGRATE=true` for ClickHouse in `backend/.env`. Each flag upgrades only its own database, before any listener or worker starts; failure stops startup. Logs live only in ClickHouse, with no PostgreSQL fallback. PostgreSQL migration `000002` drops the legacy `logs` table, so an older installation that still keeps logs in PostgreSQL must copy them with the previous release's `migrate clickhouse backfill` before upgrading.
 
 With Make installed, `make start` (or `make dev`) runs `migrate all` and starts the backend only after migration succeeds, including with parallel Make enabled. The release/update step should use the same binary or image for migration and serving, and gate startup on the migration exit code.
 
@@ -94,64 +106,163 @@ Replace `<ingest-token>` and `development` with your token and environment name.
 
 Health checks are available at `/health/live` and `/health/ready` on port `8080`. Readiness checks both databases.
 
-## Docker
+## Container images
 
-Build the backend and console images independently:
+Use Docker Engine 25+ with BuildKit and Docker Compose 2.24+ for the container workflow.
 
-```powershell
-docker build -t tracepilot ./backend
-docker build -t tracepilot-console ./frontend
-```
+| Image | Build target | Runtime | Container ports |
+| --- | --- | --- | --- |
+| Backend | `backend/Dockerfile`, target `server` | Static Go binary, distroless, UID 65532 | 8080 API; 4317 OTLP/gRPC; 4318 OTLP/HTTP |
+| Console | `frontend/Dockerfile`, target `console` | Unprivileged nginx, UID 101 | 8080 UI and same-origin API proxy |
 
-Use database hostnames reachable from the backend container in `backend/.env`, then initialize the schemas and start the backend:
+Build from the repository root:
 
-```powershell
-docker run --rm --env-file backend/.env tracepilot migrate postgres up
-if ($LASTEXITCODE -ne 0) { throw "PostgreSQL migration failed; server was not started." }
-docker run --rm --env-file backend/.env tracepilot migrate clickhouse up
-if ($LASTEXITCODE -ne 0) { throw "ClickHouse migration failed; server was not started." }
-docker run --rm --env-file backend/.env tracepilot seed  # Optional, development only
-if ($LASTEXITCODE -ne 0) { throw "Seed failed; server was not started." }
-docker run -d --name tracepilot --env-file backend/.env -p 8080:8080 -p 4317:4317 -p 4318:4318 tracepilot
-```
+~~~powershell
+docker build --target server -t tracepilot:local backend
+docker build --target console -t tracepilot-console:local frontend
+~~~
 
-Start the console with a backend address reachable from its container:
+Both builders run on the build host's architecture. Go cross-compiles using `TARGETOS`/`TARGETARCH`; the console produces static assets for either runtime architecture. Go module/compiler and npm download caches survive source rebuilds. Contexts exclude secrets/generated output; the backend also excludes tests and loadgen. See Docker's [cache](https://docs.docker.com/build/cache/optimize/) and [multi-platform](https://docs.docker.com/build/building/multi-platform/) guidance.
 
-```powershell
-docker run -d --name tracepilot-console -p 8081:8080 -e "TRACEPILOT_API_UPSTREAM=http://<backend-host>:8080" tracepilot-console
-```
+Pass `--platform linux/arm64` for an ARM image. Running it on amd64 still needs emulation. Both images accept `VERSION`, `COMMIT` and `BUILD_TIME` build arguments for OCI metadata; the backend embeds them in `tracepilot version` too.
 
-Replace `<backend-host>` with a reachable hostname or IP, then open [localhost:8081](http://localhost:8081). The console image serves the UI through nginx and proxies API requests to `TRACEPILOT_API_UPSTREAM`.
+`VITE_API_BASE_URL` is a console **build argument**. Leave it empty for the recommended same-origin proxy. `TRACEPILOT_API_UPSTREAM` is the nginx **runtime** URL, normally `http://tracepilot:8080`. A separate API origin also requires appropriate backend CORS and console CSP policies.
+
+## Production deployment
+
+### Stack and configuration
+
+[deploy/compose.yaml](deploy/compose.yaml) runs the application against **external PostgreSQL and ClickHouse**:
+
+| Service | Purpose | Startup condition |
+| --- | --- | --- |
+| `migrate` | Run `migrate all` once using the backend image | Must exit successfully |
+| `tracepilot` | API, OTLP and background workers in one process | Migration completed |
+| `tracepilot-console` | Serve UI and proxy `/api/` | Backend healthy |
+
+Compose enforces production validation and disables server auto-migration; `migrate` owns schema updates. Containers run non-root with read-only filesystems, writable tmpfs mounts, bounded logs and CPU/memory limits. Ports bind to loopback for the host HTTPS proxy. Container/network names are scoped to the project; service DNS remains `tracepilot`.
+
+On the deployment host, run these Bash commands from the repository or extracted bundle root. Existing configuration is preserved:
+
+~~~bash
+umask 077
+test -e backend/.env || cp backend/.env.example backend/.env
+test -e frontend/.env || cp frontend/.env.example frontend/.env
+mkdir -p certs
+chmod 755 certs
+~~~
+
+| File / setting | Required content |
+| --- | --- |
+| `backend/.env` | Database URLs/credentials reachable **from containers**, persistent secrets, console origin and resource settings |
+| `frontend/.env` | `TRACEPILOT_API_UPSTREAM=http://tracepilot:8080`; `VITE_*` here does not rebuild an image |
+| `certs/` | Public CA certificates only; mounted read-only at `/etc/tracepilot`. Create the directory before starting |
+| `TRACEPILOT_DATABASE_URL` | PostgreSQL with `sslmode=verify-full`; URL-encode password characters |
+| `TRACEPILOT_CLICKHOUSE_URL` | HTTPS endpoint with valid server certificates |
+| `TRACEPILOT_HTTP_TRUSTED_PROXIES` | `172.30.90.1/32,172.30.90.3/32` for the host gateway and console |
+| `TRACEPILOT_HTTP_ALLOWED_ORIGINS` | Actual HTTPS console origin |
+| `TRACEPILOT_AUTH_ALLOW_REGISTRATION` | `false`; create the first operator with the CLI |
+
+Generate three independent persistent secrets with `openssl rand -hex 32` for access JWT, ingest JWT and metrics. Single-quote literal `$` values in Compose env files. Set the PostgreSQL CA path to `/etc/tracepilot/postgres-ca.pem`; public CA files need mode `644` so UID 65532 can read them. For a private ClickHouse CA, provide a public CA bundle and set `SSL_CERT_FILE=/etc/tracepilot/ca-bundle.pem`. TLS private keys stay in the host proxy's certificate directory.
+
+The network uses `172.30.90.0/24`: gateway `.1`, backend `.2`, console `.3`. If this subnet is already allocated/routed, change the subnet, static addresses and trusted proxy CIDRs together. The 60-second stop grace must exceed configured request-shutdown and pipeline-drain deadlines. Keep listener addresses at the ports above, or update mappings and healthcheck URL together.
+
+### Start and verify
+
+Choose explicit image tags from your build/registry, or use the offline bundle's tags:
+
+~~~bash
+export TRACEPILOT_BACKEND_IMAGE=tracepilot:local
+export TRACEPILOT_CONSOLE_IMAGE=tracepilot-console:local
+docker compose -f deploy/compose.yaml config --quiet
+docker compose -f deploy/compose.yaml up --wait --wait-timeout 180
+docker compose -f deploy/compose.yaml ps -a
+~~~
+
+Expected: `migrate` exited with code 0, backend and console healthy. `--wait` checks readiness before returning; `depends_on` controls initial startup, not recovery from later database outages. Increase the timeout for a reviewed long migration. On failure, inspect `docker compose -f deploy/compose.yaml logs migrate tracepilot`; do not reset migration journals.
+
+For a fresh database, create an operator with a password from stdin:
+
+~~~bash
+read -r -s -p 'Administrator password: ' ADMIN_PASSWORD
+printf '\n'
+printf '%s' "$ADMIN_PASSWORD" | docker compose -f deploy/compose.yaml run --rm -T migrate \
+  create-admin --email operator@your-domain.com --name "Administrator" --password-stdin
+unset ADMIN_PASSWORD
+~~~
+
+The command needs PostgreSQL, records an audit event and refuses an existing email. Never use the development seed account in production.
+
+Install [deploy/nginx.conf.example](deploy/nginx.conf.example) in the host nginx configuration, replace DNS names/certificate paths, validate with `sudo nginx -t` and reload. It terminates HTTPS, normalizes proxy headers, disables SSE buffering and exposes OTLP/HTTP on its own hostname. Only 80/443 need public access. OTLP/gRPC stays unpublished until a TLS/h2 ingress is configured.
+
+Verify HTTPS sign-in/refresh, an OTLP export with a new ingest token, correlated trace/log reads and Live Tail before switching exporters. Inspect resource use with `docker stats`; Compose limits are starting values, and [measured capacity](#measured-capacity) describes their practical limits.
+
+### Offline release bundle
+
+Package without committing, pushing or connecting to a database:
+
+~~~powershell
+powershell -ExecutionPolicy Bypass -File scripts/package-release.ps1 -Version 0.1.0-rc.1
+~~~
+
+Use a new version for each archive. Default: Linux amd64; `-Platform linux/arm64` creates an ARM bundle. The script builds and smoke-tests both images, so cross-architecture smoke checks need Docker emulation.
+
+Output under `bin/releases/` includes the archive and its SHA-256 file. The archive contains:
+
+- `images.tar`, `images.txt`, IDs/build metadata in `release.json`, source hashes and `SHA256SUMS`;
+- `backend/.env.example` and `frontend/.env.example`, with a production backend template;
+- `deploy/compose.yaml`, `deploy/nginx.conf.example`, README, flow/structure/diagram docs and Postman collection.
+
+Actual `.env` files, certificates, credentials and telemetry are excluded. Uncommitted builds are marked dirty and identified by input hashes. Relative paths are the same in the repository and archive.
+
+On the target Linux host:
+
+~~~bash
+set -euo pipefail
+sha256sum -c tracepilot-<version>-linux-amd64.tar.gz.sha256
+tar -xzf tracepilot-<version>-linux-amd64.tar.gz
+cd tracepilot-<version>-linux-amd64
+sha256sum -c SHA256SUMS
+docker load -i images.tar
+export TRACEPILOT_BACKEND_IMAGE="$(sed -n '1p' images.txt)"
+export TRACEPILOT_CONSOLE_IMAGE="$(sed -n '2p' images.txt)"
+docker run --rm "$TRACEPILOT_BACKEND_IMAGE" version
+~~~
+
+Continue with [configuration](#stack-and-configuration) and [startup](#start-and-verify) using these exported tags.
+
+### Updates and recovery
+
+Back up **both databases**, retain previous images/configuration and rehearse the upgrade on restored copies. Older histories may be incompatible with the rebuilt baseline. Migration `000002` drops legacy PostgreSQL logs; copy them using the previous release's backfill command before applying it. See [Schema migrations](#schema-migrations).
+
+Pause exporters and stop the app to drain accepted work before changing schemas:
+
+~~~bash
+docker compose -f deploy/compose.yaml stop tracepilot-console tracepilot
+# Set TRACEPILOT_BACKEND_IMAGE and TRACEPILOT_CONSOLE_IMAGE to new immutable tags.
+docker compose -f deploy/compose.yaml config --quiet
+docker compose -f deploy/compose.yaml up --wait --wait-timeout 180
+~~~
+
+Repeat readiness/user-journey checks before resuming exporters. Do not remove database volumes or reset migration journals. Roll back only to an application compatible with the current schema; incompatible/destructive changes need the reviewed restore procedure. Image archives do not back up database content.
+
+
 
 ## Project structure
 
-```text
-backend/
-  cmd/tracepilot/          CLI, dependency wiring, process lifecycle
-  db/
-    postgres/migrations/  PostgreSQL SQL files and version sequence
-    clickhouse/migrations/ ClickHouse SQL files and independent version sequence
-    embed.go              SQL embedded in every backend binary
-    queries/              SQL queries used by sqlc
-  internal/
-    application/          Use cases and background workflows
-    domain/               Pure models and business rules
-    ingest/               OTLP receivers, normalization, bounded queues
-    transport/httpapi/    REST handlers, authentication boundary, responses
-    storage/              PostgreSQL, ClickHouse, migrations, partitions
-    config/               Configuration loading and validation
-    auth/                 Tokens, passwords, access rules
-    cache/                Memory and Redis cache implementations
-    query/                Query contracts and read models
-    observability/        Internal logging and metrics
-frontend/
-  src/
-    app/                  App shell, routing, authentication
-    features/             Feature pages and components
-    shared/               Shared API client, types, UI, charts
-    styles/               Base styles, themes, self-hosted fonts
-docs/                     Flow reference, diagrams, Postman collection
-```
+| Path | Responsibility |
+| --- | --- |
+| `backend/cmd/tracepilot/` | CLI, dependency wiring and process lifecycle |
+| `backend/internal/` | Use cases, pure rules, protocols, storage, configuration and observability |
+| `backend/db/` | Embedded migrations and named SQLC queries |
+| `backend/cmd/loadgen/` | Telemetry/API test workloads and capacity reports |
+| `frontend/src/{app,features,shared}/` | App shell, feature screens, shared client/UI/types |
+| `deploy/` | Production application Compose and host nginx; external databases |
+| `docker-compose/` | Development ClickHouse and its UI |
+| `scripts/` | Offline release packaging |
+| `docs/` | Flow, source/function reference, structure and API collection |
+
+See [docs/STRUCTURE.md](docs/STRUCTURE.md) for the module map and [docs/diagrams.html](docs/diagrams.html#source-map) for searchable files/functions.
 
 The backend runs as one process. Keep business rules in `domain`, workflows in `application`, and protocol or database details in their adapters.
 
@@ -192,10 +303,23 @@ First measurement, 2026-11-12, on Docker Desktop (Windows, 8 shared vCPU; the lo
 
 - Backend memory stayed below 100 MiB; PostgreSQL grew about 1.4 KB per span with indexes, ClickHouse under 100 bytes per log.
 - Before requests were admitted as a whole, overload persisted 46–51% of records for requests that still returned 503; goodput at 3,000 records/s rose from 674 to 1,263 records/s after the change.
-- Console reads compete with ingestion for PostgreSQL: with 1,000 records/s ingested, 17–36% of reads returned 503 because `GET /api/v1/traces` aggregates every span in its window (about 4.4 µs per span) and holds the 4 query slots.
+- In that first measurement, console reads competed with ingestion for PostgreSQL: at 1,000 records/s, 17–36% of reads returned 503. Trace lists still aggregate all matching traces before pagination, so cost grows with the window's span count.
+- A trace list without `from` (and without `traceId`) reads only the hour before `to`, its page cursor, or now. The console checks its connection with `GET /api/v1/projects/{id}` instead of listing traces.
 - `docker stop` under 1,500 records/s exited cleanly in about 1.2s without failing in-flight requests. With ClickHouse stopped, readiness returned 503 and login kept working; readiness recovered about 30s after ClickHouse returned, without restarting the backend.
 
-Supported envelope until the trace list query is reworked: per replica with 2 vCPU PostgreSQL, plan for at most 1,000 records/s sustained, set `TRACEPILOT_INGESTION_WORKERS=8` (keep `DATABASE_MAX_CONNECTIONS` ≥ 2 × workers + 2), and expect console trace lists to slow down during heavy ingestion. Repeat the measurement with `backend/cmd/loadgen` after changing the workload shape or hardware:
+Follow-up on 2026-11-16 used the production server image with the same container limits, `INGESTION_WORKERS=8`, `QUEUE_WORKERS=8`, and a new project in an existing disposable database for each run. At 500 spans + 500 logs/s and 5 console reads/s, topology and trace lookups could choose quadratic plans for a new project absent from PostgreSQL statistics. Parameterized lateral lookups removed that failure: read failures fell from 223/300 (74.33%, including six 504s) to 101/300 (33.67%, all 503s); topology p95 fell from 20.502s to 9.812s. PostgreSQL still saturated its 2 vCPU limit, and two of 59 trace exports returned 503. This workload exceeds the measured interactive capacity; the original ingest-oriented 1,000 records/s figure is not a guarantee with concurrent console reads.
+
+Final runs with that same code and 5 reads/s:
+
+| PostgreSQL CPU limit | Offered records/s | Failed ingest requests | Failed reads | Read p95 |
+| --- | --- | --- | --- | --- |
+| 2 vCPU | 500 | 0/60 | 2/300 (503) | 700ms |
+| 2 vCPU | 1,000 | 2/118 (503) | 101/300 (503) | 3.621s |
+| 4 vCPU | 1,000 | 0/118 | 0/300 | 689ms |
+
+Only PostgreSQL's CPU limit changed in the last run; its memory stayed at 2 GiB, backend at 2 vCPU / 1 GiB, and ClickHouse at 2 vCPU / 2 GiB. Ingest p95 was 940ms for traces and 942ms for logs; topology p95 was 1.183s, and the query gate peaked at three of four slots. Use 4 vCPU PostgreSQL as a starting point for testing this interactive workload, not as a production guarantee: these 60s runs do not establish long-term capacity for a full one-hour query window or larger retained datasets.
+
+Keep `DATABASE_MAX_CONNECTIONS` ≥ 2 × ingestion workers + 2. Repeat the measurement with `backend/cmd/loadgen` after changing the workload shape, query window, data volume or hardware:
 
 ```powershell
 go -C backend run ./cmd/loadgen -spans-per-second 500 -logs-per-second 500 -spans-per-request 512 -logs-per-request 512 -reads-per-second 5 -duration 60s
@@ -267,9 +391,9 @@ Use `make migrate-postgres` or `make migrate-clickhouse` to upgrade just that da
 
 `migrate all` is a convenience batch command: it calls the PostgreSQL manager, then the ClickHouse manager, then checks readiness of both schemas. It has no shared version or journal. It stops at the first error and never starts the server or automatically rolls back a completed step. PostgreSQL and ClickHouse do not share a transaction. After resolving a connectivity failure, rerun the command; completed versions are skipped. A `dirty` version requires inspecting and repairing the failed migration before retrying.
 
-Each database manages its own migration files, target version, history, and auto-migration setting. PostgreSQL commands bind and validate only PostgreSQL settings and production TLS policy; ClickHouse commands bind and validate only ClickHouse settings, log retention and production TLS policy. Missing or malformed settings for the other database do not block an individual command. Both keep their configuration in the single `backend/.env` file. `migrate all` and the explicit PostgreSQL-to-ClickHouse backfill require both. The server always requires both databases to be ready, even if only one auto-migration flag is enabled.
+Each database manages its own migration files, target version, history, and auto-migration setting. PostgreSQL commands bind and validate only PostgreSQL settings and production TLS policy; ClickHouse commands bind and validate only ClickHouse settings, log retention and production TLS policy. Missing or malformed settings for the other database do not block an individual command. Both keep their configuration in the single `backend/.env` file. `migrate all` requires both. The server always requires both databases to be ready, even if only one auto-migration flag is enabled.
 
-The CLI routes PostgreSQL commands to `cmd/tracepilot/migrate_postgres.go` and ClickHouse commands to `migrate_clickhouse.go`; each validates its own operations before loading configuration. Startup calls each database's runner directly under its own auto-migration flag. The shared CLI helper handles configuration, signals and logging; the shared status helper only computes a read-only view from the selected history. Neither owns migration state or dispatches between engines. The storage adapters cannot import each other; architecture tests enforce this boundary. Backfill lives separately in `migrate_logs.go` because it explicitly transfers data between the two stores. `migrate all` reuses the runtime connection/readiness path with database credentials only, so it does not require application JWT or webhook secrets.
+The CLI routes PostgreSQL commands to `cmd/tracepilot/migrate_postgres.go` and ClickHouse commands to `migrate_clickhouse.go`; each validates its own operations before loading configuration. Startup calls each database's runner directly under its own auto-migration flag. The shared CLI helper handles configuration, signals and logging; the shared status helper only computes a read-only view from the selected history. Neither owns migration state or dispatches between engines. The storage adapters cannot import each other; architecture tests enforce this boundary. `migrate all` reuses the runtime connection/readiness path with database credentials only, so it does not require application JWT or webhook secrets.
 
 To migrate both automatically, set these in `backend/.env` and run `go -C backend run ./cmd/tracepilot serve`:
 
@@ -291,7 +415,7 @@ Status reports the current version (`0` means uninitialized), embedded target ve
 
 The PostgreSQL runner owns its advisory lock for every `up`/`down` call, including creation of the migration journal on a fresh database; callers do not acquire a second application lock. `status` and `version` stay read-only and do not wait for that mutation lock. Lock waits are limited to 10s, PostgreSQL migration statements to 5m, and ClickHouse requests to `TRACEPILOT_CLICKHOUSE_REQUEST_TIMEOUT`. Cancellation stops PostgreSQL between files; an in-flight PostgreSQL statement can continue until its statement timeout. ClickHouse manages its own version/dirty journal without a PostgreSQL lock; use a single updater for non-idempotent ClickHouse DDL.
 
-PostgreSQL starts with one file: `backend/db/postgres/migrations/000001_init.up.sql`. It creates the initial tables, constraints, indexes, functions and partitions in one transaction. ClickHouse keeps its own `000001_tracepilot_logs.up.sql`, because it uses a different SQL dialect and journal. Both histories are embedded in the binary; no runtime SQL path setting is needed.
+PostgreSQL starts with `backend/db/postgres/migrations/000001_init.up.sql`, which creates the initial tables, constraints, indexes, functions and partitions in one transaction. `000002_drop_postgres_logs` removes the legacy `logs` table; its down SQL recreates only an empty table. ClickHouse keeps its own `000001_tracepilot_logs.up.sql`, because it uses a different SQL dialect and journal. Both histories are embedded in the binary; no runtime SQL path setting is needed.
 
 This consolidated baseline is for fresh PostgreSQL databases. It does not upgrade the earlier per-table or grouped histories. For an existing installation, use a new database and a reviewed data transfer or prepare a separate transition migration; do not reset or force the old journal to version 1. Once published or applied to retained data, never edit, renumber or squash that history. The first ClickHouse migration adopts an existing log table only after validating its schema and retention settings, preserving its rows. TTL changes use the ClickHouse migration command or its auto-migration flag; changing an existing partition key needs a separate table/data migration.
 
@@ -320,7 +444,7 @@ if ($LASTEXITCODE -ne 0) { throw "Migration failed; do not start the server." }
 go -C backend run ./cmd/tracepilot serve
 ```
 
-For a later PostgreSQL schema change, choose the next unused sequence number, currently `000002`, and add `000002_projects_add_description.up.sql` plus its `.down.sql` partner. Put only that change in the new files. Each database numbers its migrations independently; numbers do not restart for a new feature or application release. After editing schema or queries, regenerate and verify sqlc with `make sqlc-check`, adapt storage code, and test on a migrated disposable database. Keep large data backfills in explicit bounded workflows.
+For a later PostgreSQL schema change, choose the next unused sequence number, currently `000003`, and add `000003_projects_add_description.up.sql` plus its `.down.sql` partner. Put only that change in the new files. Each database numbers its migrations independently; numbers do not restart for a new feature or application release. After editing schema or queries, regenerate and verify sqlc with `make sqlc-check`, adapt storage code, and test on a migrated disposable database. Keep large data backfills in explicit bounded workflows.
 
 ### Application versions
 
@@ -328,7 +452,7 @@ Application releases use [Semantic Versioning](https://semver.org/): `MAJOR.MINO
 
 Keep application versions separate from schema versions. For example, application `v0.1.1` may still use PostgreSQL migration 1; application `v0.2.0` may include PostgreSQL migration 2 while ClickHouse remains at migration 1. Git commit hashes identify individual source revisions.
 
-The release workflow uses Git tags such as `v0.1.0-beta.1`, runs CI, embeds version/commit/build time into the backend, and publishes Linux binaries and the backend container image. It currently verifies the console but does not publish its image. `frontend/package.json` is private package metadata; when preparing a release, synchronize it and its lockfile with `npm --prefix frontend version 0.1.0-beta.1 --no-git-tag-version` if needed, without creating a second tag.
+The release workflow uses Git tags such as `v0.1.0-beta.1`, runs CI, embeds version/commit/build time into the backend, and publishes Linux binaries plus backend and console images. Both images receive SBOM/provenance and keyless signatures. The console image uses the same tag at the repository name with a -console suffix. Local offline bundles use scripts/package-release.ps1 and do not create tags or contact a registry. `frontend/package.json` is private package metadata; when preparing a release, synchronize it and its lockfile with `npm --prefix frontend version 0.1.0-beta.1 --no-git-tag-version` if needed, without creating a second tag.
 
 After reviewing and committing the intended release, these commands publish it through the existing workflow; run them only when ready to release:
 
@@ -353,9 +477,12 @@ Keep contributions focused and add regression tests for behavior changes. Never 
 
 For production, set `TRACEPILOT_PRODUCTION=true`, replace sample secrets with persistent random values (including a separate `TRACEPILOT_AUTH_INGEST_JWT_SECRET`, which production requires), use HTTPS and PostgreSQL `sslmode=verify-full`, and keep replay disabled unless its destination allowlist has been reviewed. See [backend/.env.example](backend/.env.example) for configuration options.
 
+When upgrading from access tokens without the `tp_ver` claim, accounts that have previously changed passwords or been disabled renew their token through refresh or sign in again. Log IDs now include the full nanosecond timestamp; an exporter retry spanning this upgrade can store a record under both its old and new ID. Existing rows are preserved; already collapsed logs require resending from the original source.
+
 ## Reference
 
 - [Application flow](docs/FLOW.md)
-- [Architecture diagrams](docs/diagrams.html) (open in a browser)
+- [Source/function reference and diagrams](docs/diagrams.html) (open in a browser)
+- [Repository structure](docs/STRUCTURE.md)
 - [Postman API collection](docs/tracepilot.postman_collection.json)
 - [MIT license](LICENSE)

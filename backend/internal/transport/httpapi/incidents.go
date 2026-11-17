@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -11,21 +10,23 @@ import (
 	"github.com/vanquan3008/tracepilot/internal/application/replay"
 	"github.com/vanquan3008/tracepilot/internal/application/replay/capture"
 	"github.com/vanquan3008/tracepilot/internal/auth"
+	"github.com/vanquan3008/tracepilot/internal/domain/analysis"
 	"github.com/vanquan3008/tracepilot/internal/domain/incident"
 	replaydomain "github.com/vanquan3008/tracepilot/internal/domain/replay"
+	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/openapi"
 )
 
 var incidentRoutes = []apiRouteDefinition{
-	{path: "/api/v1/incidents", method: http.MethodGet, scope: "read", tags: []string{"incidents"}, operationID: "listIncidents", handler: (*Server).listIncidents},
-	{path: "/api/v1/incidents/{incidentID}", method: http.MethodGet, scope: "read", tags: []string{"incidents"}, operationID: "getIncident", handler: (*Server).getIncident},
-	{path: "/api/v1/incidents/{incidentID}/occurrences", method: http.MethodGet, scope: "read", tags: []string{"incidents"}, operationID: "listIncidentOccurrences", handler: (*Server).listIncidentOccurrences},
-	{path: "/api/v1/incidents/{incidentID}/events", method: http.MethodGet, scope: "read", tags: []string{"incidents"}, operationID: "listIncidentEvents", handler: (*Server).listIncidentEvents},
-	{path: "/api/v1/incidents/{incidentID}/status-changes", method: http.MethodGet, scope: "read", tags: []string{"incidents"}, operationID: "listIncidentStatusChanges", handler: (*Server).listIncidentStatusChanges},
-	{path: "/api/v1/incidents/{incidentID}/analysis", method: http.MethodGet, scope: "read", tags: []string{"incidents", "analysis"}, operationID: "getIncidentAnalysis", handler: (*Server).getIncidentAnalysis},
-	{path: "/api/v1/incidents/{incidentID}/executions", method: http.MethodGet, scope: "read", tags: []string{"replay"}, operationID: "listReplayExecutions", handler: (*Server).listAllowedRequestExecutions},
-	{path: "/api/v1/incidents/{incidentID}/executions/{executionID}", method: http.MethodGet, scope: "read", tags: []string{"replay"}, operationID: "getReplayExecution", handler: (*Server).getAllowedRequestExecution},
-	{path: "/api/v1/incidents/{incidentID}", method: http.MethodPatch, scope: "write", tags: []string{"incidents"}, operationID: "updateIncident", requestBody: true, handler: (*Server).updateIncident},
-	{path: "/api/v1/incidents/{incidentID}/replays", method: http.MethodPost, scope: "replay", tags: []string{"replay"}, operationID: "replayIncident", requestBody: true, requiresReplay: true, handler: (*Server).replayIncident},
+	{path: "/api/v1/incidents", method: http.MethodGet, scope: "read", tags: []string{"incidents"}, operationID: "listIncidents", query: []string{"Limit", "Cursor", "From", "To", "Service", "Severity", "Status"}, handler: (*Server).listIncidents, response: openapi.Page[incident.Incident]()},
+	{path: "/api/v1/incidents/{incidentID}", method: http.MethodGet, scope: "read", tags: []string{"incidents"}, operationID: "getIncident", handler: (*Server).getIncident, response: openapi.Object[incident.Incident]()},
+	{path: "/api/v1/incidents/{incidentID}/occurrences", method: http.MethodGet, scope: "read", tags: []string{"incidents"}, operationID: "listIncidentOccurrences", query: []string{"Limit", "Cursor"}, handler: (*Server).listIncidentOccurrences, response: openapi.Page[incident.Occurrence]()},
+	{path: "/api/v1/incidents/{incidentID}/events", method: http.MethodGet, scope: "read", tags: []string{"incidents"}, operationID: "listIncidentEvents", query: []string{"Limit", "Cursor"}, handler: (*Server).listIncidentEvents, response: openapi.Page[incident.Event]()},
+	{path: "/api/v1/incidents/{incidentID}/status-changes", method: http.MethodGet, scope: "read", tags: []string{"incidents"}, operationID: "listIncidentStatusChanges", query: []string{"Limit", "Cursor"}, handler: (*Server).listIncidentStatusChanges, response: openapi.Page[incident.StatusChange]()},
+	{path: "/api/v1/incidents/{incidentID}/analysis", method: http.MethodGet, scope: "read", tags: []string{"incidents", "analysis"}, operationID: "getIncidentAnalysis", handler: (*Server).getIncidentAnalysis, response: openapi.Object[analysis.IncidentAnalysis]()},
+	{path: "/api/v1/incidents/{incidentID}/executions", method: http.MethodGet, scope: "read", tags: []string{"replay"}, operationID: "listReplayExecutions", query: []string{"Limit", "Cursor"}, handler: (*Server).listAllowedRequestExecutions, response: openapi.Page[replaydomain.Execution]()},
+	{path: "/api/v1/incidents/{incidentID}/executions/{executionID}", method: http.MethodGet, scope: "read", tags: []string{"replay"}, operationID: "getReplayExecution", handler: (*Server).getAllowedRequestExecution, response: openapi.Object[replaydomain.Execution]()},
+	{path: "/api/v1/incidents/{incidentID}", method: http.MethodPatch, scope: "write", tags: []string{"incidents"}, operationID: "updateIncident", requestBody: true, handler: (*Server).updateIncident, request: openapi.TypeOf[updateIncidentRequest](), response: openapi.Object[incident.Incident]()},
+	{path: "/api/v1/incidents/{incidentID}/replays", method: http.MethodPost, scope: "replay", tags: []string{"replay"}, operationID: "replayIncident", requestBody: true, requiresReplay: true, handler: (*Server).replayIncident, request: openapi.TypeOf[replayRequest](), response: openapi.Object[replay.Outcome]()},
 }
 
 func (server *Server) listIncidents(responseWriter http.ResponseWriter, request *http.Request, principal auth.Principal) {
@@ -118,9 +119,7 @@ func (server *Server) updateIncident(responseWriter http.ResponseWriter, request
 	if !requireUUID(responseWriter, incidentID) {
 		return
 	}
-	var payload struct {
-		Status string `json:"status"`
-	}
+	var payload updateIncidentRequest
 	if decodeError := decodeJSONBody(request, &payload); decodeError != nil {
 		writeAPIError(responseWriter, http.StatusBadRequest, "INVALID_REQUEST", "request body must contain a status")
 		return
@@ -190,12 +189,7 @@ func (server *Server) replayIncident(responseWriter http.ResponseWriter, request
 	if !requireUUID(responseWriter, incidentID) {
 		return
 	}
-	var payload struct {
-		Target  string            `json:"target"`
-		Method  string            `json:"method"`
-		Headers map[string]string `json:"headers"`
-		Body    json.RawMessage   `json:"body"`
-	}
+	var payload replayRequest
 	if decodeError := decodeJSONBody(request, &payload); decodeError != nil {
 		writeAPIError(responseWriter, http.StatusBadRequest, "INVALID_REQUEST", "request body must contain a target")
 		return

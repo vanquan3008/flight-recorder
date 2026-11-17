@@ -4,13 +4,14 @@ import (
 	"net/http"
 
 	"github.com/vanquan3008/tracepilot/internal/auth"
+	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/openapi"
 )
 
 var userRoutes = []apiRouteDefinition{
-	{path: "/api/v1/users", method: http.MethodGet, scope: auth.ScopePlatform, tags: []string{"users"}, operationID: "listUsers", handler: (*Server).listUsers},
-	{path: "/api/v1/users", method: http.MethodPost, scope: auth.ScopePlatform, tags: []string{"users"}, operationID: "createUser", requestBody: true, handler: (*Server).createUser},
-	{path: "/api/v1/users/{userID}", method: http.MethodPatch, scope: auth.ScopePlatform, tags: []string{"users"}, operationID: "updateUser", requestBody: true, successStatus: http.StatusOK, handler: (*Server).updateUser},
-	{path: "/api/v1/users/{userID}/password-reset", method: http.MethodPost, scope: auth.ScopePlatform, tags: []string{"users"}, operationID: "resetUserPassword", successStatus: http.StatusOK, handler: (*Server).resetUserPassword},
+	{path: "/api/v1/users", method: http.MethodGet, scope: auth.ScopePlatform, tags: []string{"users"}, operationID: "listUsers", query: []string{"Limit", "Cursor"}, handler: (*Server).listUsers, response: openapi.Page[auth.User]()},
+	{path: "/api/v1/users", method: http.MethodPost, scope: auth.ScopePlatform, tags: []string{"users"}, operationID: "createUser", requestBody: true, handler: (*Server).createUser, request: openapi.TypeOf[createUserRequest](), response: openapi.Object[createUserResponse]()},
+	{path: "/api/v1/users/{userID}", method: http.MethodPatch, scope: auth.ScopePlatform, tags: []string{"users"}, operationID: "updateUser", requestBody: true, successStatus: http.StatusOK, handler: (*Server).updateUser, request: openapi.TypeOf[updateUserRequest](), response: openapi.Object[userResponse]()},
+	{path: "/api/v1/users/{userID}/password-reset", method: http.MethodPost, scope: auth.ScopePlatform, tags: []string{"users"}, operationID: "resetUserPassword", successStatus: http.StatusOK, handler: (*Server).resetUserPassword, response: openapi.Object[temporaryPasswordResponse]()},
 }
 
 func (server *Server) listUsers(responseWriter http.ResponseWriter, request *http.Request, _ auth.Principal) {
@@ -31,12 +32,7 @@ func (server *Server) listUsers(responseWriter http.ResponseWriter, request *htt
 // createUser makes an account with a password the administrator hands over once; the person must
 // replace it at first sign-in. Without a supplied password one is generated.
 func (server *Server) createUser(responseWriter http.ResponseWriter, request *http.Request, principal auth.Principal) {
-	var payload struct {
-		Email         string `json:"email"`
-		DisplayName   string `json:"display_name"`
-		Password      string `json:"password"`
-		PlatformAdmin bool   `json:"platform_admin"`
-	}
+	var payload createUserRequest
 	if decodeError := decodeIdentityBody(request, &payload); decodeError != nil {
 		writeAPIError(responseWriter, http.StatusBadRequest, "INVALID_REQUEST", decodeError.Error())
 		return
@@ -57,9 +53,9 @@ func (server *Server) createUser(responseWriter http.ResponseWriter, request *ht
 	if server.writeIdentityError(responseWriter, "create user", createError) {
 		return
 	}
-	response := map[string]any{"user": user}
+	response := createUserResponse{User: user}
 	if generated {
-		response["temporary_password"] = password
+		response.TemporaryPassword = password
 	}
 	writeJSONValue(responseWriter, http.StatusCreated, response)
 }
@@ -69,11 +65,7 @@ func (server *Server) updateUser(responseWriter http.ResponseWriter, request *ht
 	if !requireUUID(responseWriter, userID) {
 		return
 	}
-	var payload struct {
-		DisplayName   *string `json:"display_name"`
-		PlatformAdmin *bool   `json:"platform_admin"`
-		Disabled      *bool   `json:"disabled"`
-	}
+	var payload updateUserRequest
 	if decodeError := decodeIdentityBody(request, &payload); decodeError != nil {
 		writeAPIError(responseWriter, http.StatusBadRequest, "INVALID_REQUEST", decodeError.Error())
 		return
@@ -84,7 +76,7 @@ func (server *Server) updateUser(responseWriter http.ResponseWriter, request *ht
 	if server.writeIdentityError(responseWriter, "update user", updateError) {
 		return
 	}
-	writeJSONValue(responseWriter, http.StatusOK, map[string]any{"user": user})
+	writeJSONValue(responseWriter, http.StatusOK, userResponse{User: user})
 }
 
 // resetUserPassword issues a new temporary password and ends the account's sessions.
@@ -101,5 +93,5 @@ func (server *Server) resetUserPassword(responseWriter http.ResponseWriter, requ
 	if setError := server.backend.SetPassword(request.Context(), userID, password, true, "", principal.Actor()); server.writeIdentityError(responseWriter, "reset password", setError) {
 		return
 	}
-	writeJSONValue(responseWriter, http.StatusOK, map[string]any{"temporary_password": password})
+	writeJSONValue(responseWriter, http.StatusOK, temporaryPasswordResponse{TemporaryPassword: password})
 }

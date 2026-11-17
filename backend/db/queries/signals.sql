@@ -41,20 +41,6 @@ INSERT INTO spans (
 )
 ON CONFLICT DO NOTHING;
 
--- name: InsertLog :exec
-INSERT INTO logs (
-    event_id, project_id, environment_id, occurred_at, observed_at, trace_id, span_id,
-    trace_flags, severity_number, severity_text, body, event_name, service_name, service_version,
-    resource_schema_url, resource_attributes, scope_name, scope_version, scope_schema_url,
-    scope_attributes, log_attributes, dropped_attributes_count
-) VALUES (
-    @event_id, @project_id, @environment_id, @occurred_at, sqlc.narg(observed_at), sqlc.narg(trace_id), sqlc.narg(span_id),
-    @trace_flags, @severity_number, @severity_text, @body, @event_name, @service_name, sqlc.narg(service_version),
-    @resource_schema_url, @resource_attributes, @scope_name, @scope_version, @scope_schema_url,
-    @scope_attributes, @log_attributes, @dropped_attributes_count
-)
-ON CONFLICT (event_id, occurred_at) DO NOTHING;
-
 -- name: InsertMetricPoint :exec
 INSERT INTO metric_data_points (
     id, project_id, environment_id, metric_name, metric_unit, metric_type,

@@ -37,23 +37,25 @@ var (
 // Claims are what a TracePilot JWT states. Subject is the user ID of an access token, and the
 // project ID of an ingest token; ID is the ingest token's row, so it can be revoked.
 type Claims struct {
-	Kind      string
-	Subject   string
-	ID        string
-	IssuedAt  time.Time
-	ExpiresAt time.Time
-	Issuer    string
-	Audience  string
+	Kind         string
+	Subject      string
+	ID           string
+	IssuedAt     time.Time
+	ExpiresAt    time.Time
+	Issuer       string
+	Audience     string
+	TokenVersion int64
 }
 
 type jwtPayload struct {
-	Issuer    string `json:"iss"`
-	Audience  string `json:"aud"`
-	Subject   string `json:"sub"`
-	ID        string `json:"jti"`
-	Kind      string `json:"tp"`
-	IssuedAt  int64  `json:"iat"`
-	ExpiresAt int64  `json:"exp"`
+	Issuer       string `json:"iss"`
+	Audience     string `json:"aud"`
+	Subject      string `json:"sub"`
+	ID           string `json:"jti"`
+	Kind         string `json:"tp"`
+	IssuedAt     int64  `json:"iat"`
+	ExpiresAt    int64  `json:"exp"`
+	TokenVersion int64  `json:"tp_ver,omitempty"`
 }
 
 var jwtHeader = base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS256","typ":"JWT"}`))
@@ -74,6 +76,7 @@ func SignJWT(secret []byte, claims Claims) (string, error) {
 	body, marshalError := json.Marshal(jwtPayload{
 		Issuer: issuer, Audience: audience, Subject: claims.Subject, ID: claims.ID, Kind: claims.Kind,
 		IssuedAt: claims.IssuedAt.Unix(), ExpiresAt: claims.ExpiresAt.Unix(),
+		TokenVersion: claims.TokenVersion,
 	})
 	if marshalError != nil {
 		return "", fmt.Errorf("encode JWT: %w", marshalError)
@@ -124,6 +127,7 @@ func VerifyJWTWithIssuerAudience(secret []byte, token, wantKind, wantIssuer, wan
 		Kind: payload.Kind, Subject: payload.Subject, ID: payload.ID,
 		Issuer: payload.Issuer, Audience: payload.Audience,
 		IssuedAt: time.Unix(payload.IssuedAt, 0).UTC(), ExpiresAt: time.Unix(payload.ExpiresAt, 0).UTC(),
+		TokenVersion: payload.TokenVersion,
 	}
 	if !now.Before(claims.ExpiresAt.Add(clockSkew)) {
 		return Claims{}, ErrExpiredToken

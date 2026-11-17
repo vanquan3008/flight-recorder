@@ -54,8 +54,13 @@ describe("App", () => {
 
     expect(await screen.findByRole("button", { name: /Sign out/ })).toBeTruthy();
     expect(screen.getByRole("combobox", { name: "Project" }).textContent).toContain(project.name);
-    await waitFor(() => expect(calls.some((call) => call.path.startsWith("/api/v1/traces"))).toBe(true));
-    const read = calls.find((call) => call.path.startsWith("/api/v1/traces"))!;
+    // The connection check reads the project, not telemetry.
+    const connectionPath = `/api/v1/projects/${project.id}`;
+    await waitFor(() => expect(calls.some((call) => call.path === connectionPath)).toBe(true));
+    const read = calls.find((call) => call.path === connectionPath)!;
+    // Every trace list the console sends is bounded in time; an open-ended list scans all spans.
+    const traceLists = calls.filter((call) => new URL(call.path, "http://localhost").pathname === "/api/v1/traces");
+    expect(traceLists.every((call) => new URL(call.path, "http://localhost").searchParams.has("from"))).toBe(true);
     const headers = new Headers(read.init.headers);
     expect(headers.get("Authorization")).toBe("Bearer jwt-1");
     expect(headers.get("X-Project-ID")).toBe(project.id);
@@ -121,7 +126,7 @@ describe("App", () => {
     localStorage.setItem("tracepilot-signed-in", "1");
     render(<App />);
     expect(await screen.findByRole("heading", { name: "Choose your own password" })).toBeTruthy();
-    expect(fetchMock.mock.calls.some(([path]) => String(path).startsWith("/api/v1/traces"))).toBe(false);
+    expect(fetchMock.mock.calls.some(([path]) => String(path).startsWith("/api/v1/traces") || String(path).startsWith("/api/v1/projects/"))).toBe(false);
   });
 
   it("shows the product flow without requiring an API key", async () => {

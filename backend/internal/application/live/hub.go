@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/vanquan3008/tracepilot/internal/domain/incident"
 	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
 )
 
@@ -101,6 +102,7 @@ func (hub *Hub) BroadcastEvents(events []telemetry.Event) {
 					"service_name":        event.ServiceName,
 					"occurred_at":         event.Timestamp.Format(time.RFC3339Nano),
 					"severity_text":       event.Severity,
+					"severity_number":     event.SeverityNumber,
 					"body":                event.LogBody,
 					"resource_attributes": event.ResourceAttributes,
 					"trace_id":            event.TraceID,
@@ -108,7 +110,7 @@ func (hub *Hub) BroadcastEvents(events []telemetry.Event) {
 				},
 			})
 		}
-		if event.Status == "ERROR" || event.Severity == "ERROR" || event.ErrorType != "" {
+		if incident.Candidate(event) {
 			hub.Broadcast(Event{
 				Type:          "incident",
 				ProjectID:     event.ProjectID,

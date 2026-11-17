@@ -63,7 +63,7 @@ func TestAccountsProjectsAndTokensIntegration(t *testing.T) {
 	server := httpapi.New(config.Config{
 		HTTP: config.HTTPConfig{ManagementMaxBodyBytes: 4096}, Ingestion: ingestion, Auth: config.AuthConfig{JWTSecret: integrationJWTSecret, AllowRegistration: true},
 		Database: config.DatabaseConfig{ReadinessTimeout: time.Second}, ShutdownTimeout: time.Second,
-	}, slog.New(slog.NewTextHandler(io.Discard, nil)), func(context.Context) error { return nil }, metrics.New("test", "test", "test"), database, nil)
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)), func(context.Context) error { return nil }, metrics.New("test", "test", "test"), postgresBackend{database}, nil)
 	router := http.NewServeMux()
 	server.RegisterAPIRoutes(router)
 
@@ -201,13 +201,11 @@ func TestAccountsProjectsAndTokensIntegration(t *testing.T) {
 	}
 
 	// A password change ends the access tokens issued before it and every other session, not this one.
-	time.Sleep(1100 * time.Millisecond) // tokens carry whole seconds, so the change must land in a later one
 	oldAccess := alice.access
 	other := &client{t: t, handler: router}
 	if code := other.signIn(aliceEmail, "a-long-enough-passphrase"); code != http.StatusOK {
 		t.Fatalf("second sign-in: %d", code)
 	}
-	time.Sleep(1100 * time.Millisecond)
 	if status, _ = alice.do(http.MethodPost, "/api/v1/auth/password", `{"current_password":"a-long-enough-passphrase","new_password":"a-brand-new-passphrase"}`, ""); status != http.StatusOK {
 		t.Fatalf("change password: status %d", status)
 	}

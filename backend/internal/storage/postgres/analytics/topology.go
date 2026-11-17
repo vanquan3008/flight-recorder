@@ -91,8 +91,8 @@ func (store *AnalyticsStore) TelemetryQuality(ctx context.Context, projectID str
 	if err != nil {
 		return analysis.Quality{}, fmt.Errorf("telemetry quality: %w", err)
 	}
+	// Log counts are filled from ClickHouse by the caller; PostgreSQL stores no logs.
 	return analysis.Quality{
-		From: filter.From, To: filter.To, Spans: row.Spans, OrphanSpans: row.OrphanSpans,
-		Logs: row.Logs, UncorrelatedLogs: row.UncorrelatedLogs, MetricPoints: row.MetricPoints,
+		From: filter.From, To: filter.To, Spans: row.Spans, OrphanSpans: row.OrphanSpans, MetricPoints: row.MetricPoints,
 	}, nil
 }

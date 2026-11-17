@@ -23,6 +23,22 @@ func TestJWTRoundTrip(t *testing.T) {
 	}
 }
 
+func TestAccessTokenPreservesRevocationVersion(t *testing.T) {
+	now := time.Date(2026, 11, 16, 12, 0, 0, 123456000, time.UTC)
+	user := User{ID: "user-1", TokensValidAfter: now}
+	token, _, err := IssueAccessTokenWithOptions(testSecret, user.ID, now, time.Minute, "", "", user.TokenVersion())
+	if err != nil {
+		t.Fatal(err)
+	}
+	claims, err := VerifyJWT(testSecret, token, TokenAccess, now)
+	if err != nil || claims.TokenVersion != user.TokenVersion() {
+		t.Fatalf("version=%d want=%d error=%v", claims.TokenVersion, user.TokenVersion(), err)
+	}
+	if (User{}).TokenVersion() != 0 || (User{TokensValidAfter: time.Unix(0, 0)}).TokenVersion() != 0 {
+		t.Fatal("an account without a revocation must accept version zero")
+	}
+}
+
 func TestJWTRefusesWhatIsNotExactlyOurs(t *testing.T) {
 	now := time.Date(2026, 10, 31, 12, 0, 0, 0, time.UTC)
 	token, _, _ := IssueAccessToken(testSecret, "user-1", now)

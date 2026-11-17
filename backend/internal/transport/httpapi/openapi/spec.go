@@ -1,246 +1,111 @@
 package openapi
 
 import (
-	"net/http"
-	"strconv"
+	"slices"
 	"strings"
+	"unicode"
 )
 
-const MaxTraceSpansPerPage = 500
+const apiDescription = "Versioned management API. Additive changes are allowed in v1; breaking changes require /api/v2. " +
+	"Deprecated operations remain for one minor release and emit a Deprecation header.\n\n" +
+	"Project routes choose the project with the X-Project-ID header (ID or slug) unless the path names it, " +
+	"and the environment with X-Environment. Lists use cursor pagination: pass next_cursor back as cursor."
 
-// Route defines the metadata needed to document an API endpoint in OpenAPI 3.1.
-type Route struct {
-	Path          string
-	Method        string
-	Scope         string
-	Tags          []string
-	OperationID   string
-	SuccessStatus int
-	RequestBody   bool
-	Public        bool
-}
-
-// SpecForRoutes generates an OpenAPI 3.1.0 specification for the given list of routes.
+// SpecForRoutes renders an OpenAPI 3.1.0 document for the given routes.
 func SpecForRoutes(routes []Route) map[string]any {
+	registry := newSchemas()
+	addErrorSchemas(registry)
 	paths := make(map[string]any)
+	tags := []string{}
 	for _, route := range routes {
 		operations, _ := paths[route.Path].(map[string]any)
 		if operations == nil {
 			operations = make(map[string]any)
 			paths[route.Path] = operations
 		}
-		operation := map[string]any{
-			"operationId":          route.OperationID,
-			"summary":              RouteSummary(route.OperationID),
-			"tags":                 route.Tags,
-			"security":             OpenAPISecurity(route),
-			"parameters":           OpenAPIParameters(route.Path, route.OperationID),
-			"responses":            OpenAPIResponses(route.Method, route.SuccessStatus),
-			"x-required-api-scope": route.Scope,
-		}
-		if route.RequestBody {
-			operation["requestBody"] = map[string]any{
-				"required": true,
-				"content": map[string]any{"application/json": map[string]any{
-					"schema":  map[string]any{"type": "object"},
-					"example": map[string]any{},
-				}},
+		operations[strings.ToLower(route.Method)] = operation(route, registry)
+		for _, tag := range route.Tags {
+			if !slices.Contains(tags, tag) {
+				tags = append(tags, tag)
 			}
 		}
-		operations[strings.ToLower(route.Method)] = operation
+	}
+	slices.Sort(tags)
+	tagList := make([]map[string]string, 0, len(tags))
+	for _, tag := range tags {
+		tagList = append(tagList, map[string]string{"name": tag})
 	}
 	return map[string]any{
 		"openapi": "3.1.0",
 		"info": map[string]any{
 			"title":       "TracePilot API",
 			"version":     "v1",
-			"description": "Versioned management API. Additive changes are allowed in v1; breaking changes require /api/v2. Deprecated operations remain for one minor release and emit a Deprecation header.",
+			"description": apiDescription,
 		},
-		"servers": []map[string]string{{"url": "/"}},
-		"paths":   paths,
+		"servers":             []map[string]string{{"url": "/"}},
+		"tags":                tagList,
+		"paths":               paths,
+		"x-tracepilot-scopes": scopesExtension(),
 		"components": map[string]any{
-			"securitySchemes": map[string]any{
-				"BearerAuth": map[string]string{"type": "http", "scheme": "bearer", "bearerFormat": "JWT", "description": "Access token from /api/v1/auth/login or /refresh (15 minutes). Project routes also send X-Project-ID."},
-			},
-			"schemas": map[string]any{
-				"Error": map[string]any{
-					"type":     "object",
-					"required": []string{"error"},
-					"properties": map[string]any{"error": map[string]any{
-						"type":     "object",
-						"required": []string{"code", "message", "request_id"},
-						"properties": map[string]any{
-							"code":       map[string]string{"type": "string"},
-							"message":    map[string]string{"type": "string"},
-							"request_id": map[string]string{"type": "string"},
-						},
-					}},
-					"example": map[string]any{"error": map[string]string{"code": "INVALID_REQUEST", "message": "request is invalid", "request_id": "4f3c"}},
-				},
-				"Page": map[string]any{"type": "object", "required": []string{"data"}, "properties": map[string]any{"data": map[string]any{"type": "array", "items": map[string]any{}}, "next_cursor": map[string]string{"type": "string"}}},
-			},
-			"responses": map[string]any{
-				"InvalidRequest": map[string]any{"description": "Invalid request", "content": map[string]any{"application/json": map[string]any{"schema": map[string]string{"$ref": "#/components/schemas/Error"}}}},
-				"Unauthorized":   map[string]any{"description": "Missing, invalid, or expired access token", "content": map[string]any{"application/json": map[string]any{"schema": map[string]string{"$ref": "#/components/schemas/Error"}}}},
-				"Forbidden":      map[string]any{"description": "Your role in this project does not allow this action", "content": map[string]any{"application/json": map[string]any{"schema": map[string]string{"$ref": "#/components/schemas/Error"}}}},
-				"NotFound":       map[string]any{"description": "Resource does not exist", "content": map[string]any{"application/json": map[string]any{"schema": map[string]string{"$ref": "#/components/schemas/Error"}}}},
-				"RateLimited":    map[string]any{"description": "Rate limit exceeded", "headers": map[string]any{"Retry-After": map[string]any{"schema": map[string]string{"type": "integer"}}}, "content": map[string]any{"application/json": map[string]any{"schema": map[string]string{"$ref": "#/components/schemas/Error"}}}},
-			},
+			"securitySchemes": securitySchemes(),
+			"schemas":         registry.components,
+			"parameters":      parametersComponent(),
+			"responses":       responsesComponent(),
 		},
 	}
 }
 
-// OpenAPISecurity lists authentication requirements for a route.
-func OpenAPISecurity(route Route) []map[string][]string {
-	if route.Public {
-		return []map[string][]string{}
+func operation(route Route, registry *schemas) map[string]any {
+	summary := route.Summary
+	if summary == "" {
+		summary = RouteSummary(route.OperationID)
 	}
-	return []map[string][]string{{"BearerAuth": {}}}
-}
-
-// OpenAPIResponses defines standard HTTP responses for a method.
-func OpenAPIResponses(method string, configuredSuccessStatus int) map[string]any {
-	successCode, successDescription := "200", "Success"
-	if configuredSuccessStatus != 0 {
-		successCode = strconv.Itoa(configuredSuccessStatus)
-		if configuredSuccessStatus == http.StatusCreated {
-			successDescription = "Created"
-		} else if configuredSuccessStatus == http.StatusNoContent {
-			successDescription = "No content"
-		}
-	} else {
-		switch method {
-		case http.MethodPost:
-			successCode, successDescription = "201", "Created"
-		case http.MethodDelete:
-			successCode, successDescription = "204", "No content"
-		}
+	description := scopeSentence(route)
+	if route.Description != "" {
+		description = route.Description + "\n\n" + description
 	}
-	return map[string]any{
-		successCode: map[string]any{"description": successDescription},
-		"400":       map[string]string{"$ref": "#/components/responses/InvalidRequest"},
-		"401":       map[string]string{"$ref": "#/components/responses/Unauthorized"},
-		"403":       map[string]string{"$ref": "#/components/responses/Forbidden"},
-		"404":       map[string]string{"$ref": "#/components/responses/NotFound"},
-		"409":       map[string]any{"description": "Conflict"},
-		"413":       map[string]any{"description": "Request body too large"},
-		"429":       map[string]string{"$ref": "#/components/responses/RateLimited"},
-		"500":       map[string]any{"description": "Internal server error"},
+	operation := map[string]any{
+		"operationId":          route.OperationID,
+		"summary":              summary,
+		"description":          description,
+		"tags":                 route.Tags,
+		"security":             OpenAPISecurity(route),
+		"parameters":           RouteParameters(route),
+		"responses":            routeResponses(route, registry),
+		"x-required-api-scope": route.Scope,
 	}
-}
-
-// OpenAPIParameters extracts path and query parameters for a route.
-func OpenAPIParameters(path, operationID string) []map[string]any {
-	parameters := make([]map[string]any, 0, 8)
-	for _, segment := range strings.Split(path, "/") {
-		if strings.HasPrefix(segment, "{") && strings.HasSuffix(segment, "}") {
-			name := strings.TrimSuffix(strings.TrimPrefix(segment, "{"), "}")
-			schema := map[string]any{"type": "string"}
-			if strings.HasSuffix(name, "ID") && name != "traceID" {
-				schema["format"] = "uuid"
-			}
-			parameters = append(parameters, map[string]any{"name": name, "in": "path", "required": true, "schema": schema})
-		}
+	switch {
+	case route.Request != nil:
+		operation["requestBody"] = map[string]any{"required": true, "content": jsonContent(registry.schemaFor(route.Request))}
+	case route.RequestBody:
+		operation["requestBody"] = map[string]any{"required": true, "content": jsonContent(map[string]any{"type": "object"})}
 	}
-	return append(parameters, openAPIQueryParameters(operationID)...)
+	return operation
 }
 
-func openAPIQueryParameters(operationID string) []map[string]any {
-	switch operationID {
-	case "listTraces":
-		return combineOpenAPIParameters(
-			openAPIPageParameters(),
-			openAPITimeParameters(),
-			openAPIStringParameters("service", "operation", "status", "traceId"),
-			openAPIDurationParameters(),
-		)
-	case "listLogs":
-		return combineOpenAPIParameters(
-			openAPIPageParameters(),
-			openAPITimeParameters(),
-			openAPIStringParameters("service", "severity", "traceId", "spanId", "search"),
-		)
-	case "listTraceLogs":
-		return combineOpenAPIParameters(
-			openAPIPageParameters(),
-			openAPITimeParameters(),
-			openAPIStringParameters("service", "severity", "spanId", "search"),
-		)
-	case "listTopology", "getTelemetryQuality":
-		return combineOpenAPIParameters(
-			openAPITimeParameters(),
-			openAPIStringParameters("service"),
-		)
-	case "listMetricPoints":
-		return combineOpenAPIParameters(openAPIPageParameters()[:1], openAPITimeParameters(), openAPIStringParameters("service", "metric"))
-	case "listIncidents":
-		return combineOpenAPIParameters(
-			openAPIPageParameters(),
-			openAPITimeParameters(),
-			openAPIStringParameters("service", "severity", "status"),
-		)
-	case "listServices":
-		return openAPITimeParameters()
-	case "getTrace":
-		return []map[string]any{
-			{"name": "limit", "in": "query", "description": "Spans per page; next_cursor is present while more follow.", "schema": map[string]any{"type": "integer", "minimum": 1, "maximum": MaxTraceSpansPerPage}},
-			openAPIStringParameter("cursor"),
-		}
-	case "getRequestPerformance":
-		return combineOpenAPIParameters(openAPIPageParameters()[:1], openAPITimeParameters(), openAPIStringParameters("service", "endpoint"))
-	case "listIncidentOccurrences", "listIncidentEvents", "listIncidentStatusChanges", "listReplayExecutions", "listIngestTokens", "listWebhooks", "listWebhookDeliveries", "listAuditEvents", "listUsers":
-		return openAPIPageParameters()
-	default:
-		return nil
-	}
-}
-
-func combineOpenAPIParameters(groups ...[]map[string]any) []map[string]any {
-	parameters := make([]map[string]any, 0, 12)
-	for _, group := range groups {
-		parameters = append(parameters, group...)
-	}
-	return parameters
-}
-
-func openAPIPageParameters() []map[string]any {
-	return []map[string]any{openAPILimitParameter(), openAPIStringParameter("cursor")}
-}
-
-func openAPILimitParameter() map[string]any {
-	return map[string]any{"name": "limit", "in": "query", "schema": map[string]any{"type": "integer", "minimum": 1, "maximum": 100}}
-}
-
-func openAPITimeParameters() []map[string]any {
-	return []map[string]any{
-		{"name": "from", "in": "query", "schema": map[string]string{"type": "string", "format": "date-time"}},
-		{"name": "to", "in": "query", "schema": map[string]string{"type": "string", "format": "date-time"}},
-	}
-}
-
-func openAPIDurationParameters() []map[string]any {
-	return []map[string]any{
-		{"name": "minDuration", "in": "query", "schema": map[string]string{"type": "string", "example": "250ms"}},
-		{"name": "maxDuration", "in": "query", "schema": map[string]string{"type": "string", "example": "5s"}},
-	}
-}
-
-func openAPIStringParameters(names ...string) []map[string]any {
-	parameters := make([]map[string]any, 0, len(names))
-	for _, name := range names {
-		parameters = append(parameters, openAPIStringParameter(name))
-	}
-	return parameters
-}
-
-func openAPIStringParameter(name string) map[string]any {
-	return map[string]any{"name": name, "in": "query", "schema": map[string]string{"type": "string"}}
-}
-
-// RouteSummary gives a human-readable title to an operationID.
+// RouteSummary turns an operationID such as listTraceLogs into "List trace logs".
 func RouteSummary(operationID string) string {
 	if operationID == "" {
 		return "TracePilot management operation"
 	}
-	return "TracePilot " + operationID
+	var words strings.Builder
+	runes := []rune(operationID)
+	for index, r := range runes {
+		if index > 0 && unicode.IsUpper(r) {
+			nextLower := index+1 < len(runes) && unicode.IsLower(runes[index+1])
+			if !unicode.IsUpper(runes[index-1]) || nextLower {
+				words.WriteRune(' ')
+			}
+		}
+		if index == 0 {
+			words.WriteRune(unicode.ToUpper(r))
+			continue
+		}
+		if unicode.IsUpper(r) && (index+1 >= len(runes) || unicode.IsLower(runes[index+1])) {
+			words.WriteRune(unicode.ToLower(r))
+			continue
+		}
+		words.WriteRune(r)
+	}
+	return words.String()
 }
