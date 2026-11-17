@@ -5,12 +5,6 @@ import { formatDuration, formatTime } from "../../shared/ui";
 
 const pad = (n: number) => String(n).padStart(2, "0");
 
-export const formatClock = (isoString?: string) => {
-  if (!isoString) return "";
-  const t = Date.parse(isoString);
-  return Number.isNaN(t) ? "" : new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-};
-
 export const formatAxisTick = (isoString?: string, durationMs = 0) => {
   if (!isoString) return "";
   const t = Date.parse(isoString);

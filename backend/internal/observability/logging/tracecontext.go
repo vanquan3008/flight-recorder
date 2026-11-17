@@ -35,21 +35,6 @@ func FromContext(ctx context.Context) (TraceContext, bool) {
 	return tc, ok
 }
 
-// ContextWithRequestID attaches or updates requestID on ctx's TraceContext.
-func ContextWithRequestID(ctx context.Context, requestID string) context.Context {
-	tc, _ := FromContext(ctx)
-	tc.RequestID = requestID
-	return WithTraceContext(ctx, tc)
-}
-
-// ContextWithTrace attaches or updates traceID and spanID on ctx's TraceContext.
-func ContextWithTrace(ctx context.Context, traceID, spanID string) context.Context {
-	tc, _ := FromContext(ctx)
-	tc.TraceID = traceID
-	tc.SpanID = spanID
-	return WithTraceContext(ctx, tc)
-}
-
 var traceparentRegex = regexp.MustCompile(`^([0-9a-f]{2})-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})$`)
 
 // ParseTraceparent extracts trace correlation metadata according to the W3C Trace Context spec.

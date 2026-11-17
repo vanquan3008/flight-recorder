@@ -17,6 +17,7 @@ import (
 	"github.com/vanquan3008/tracepilot/internal/auth"
 	"github.com/vanquan3008/tracepilot/internal/config"
 	"github.com/vanquan3008/tracepilot/internal/observability/metrics"
+	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/middleware"
 )
 
 // TokenInvalidator is an optional callback to immediately invalidate revoked ingest tokens in cache.
@@ -61,7 +62,7 @@ type Server struct {
 	requestTimeout          time.Duration
 	corsAllowedMethods      string
 	metricsRequireAuth      bool
-	rateLimiter             *requestRateLimiter
+	rateLimiter             *middleware.RequestRateLimiter
 	rateLimitRequests       int
 	rateLimitAuthRequests   int
 	rateLimitReplayRequests int
@@ -102,7 +103,7 @@ func New(configuration config.Config, logger *slog.Logger, readinessCheck func(c
 		allowedOrigins:          make(map[string]struct{}, len(configuration.HTTP.AllowedOrigins)),
 		corsAllowedMethods:      corsMethods(apiRouteDefinitions),
 		metricsRequireAuth:      configuration.Production,
-		rateLimiter:             newRequestRateLimiter(configuration.HTTP.RateLimitWindow),
+		rateLimiter:             middleware.NewRequestRateLimiter(configuration.HTTP.RateLimitWindow),
 		rateLimitRequests:       configuration.HTTP.RateLimitRequests,
 		rateLimitAuthRequests:   configuration.HTTP.RateLimitAuthRequests,
 		rateLimitReplayRequests: configuration.HTTP.RateLimitReplayRequests,
@@ -173,11 +174,6 @@ func (server *Server) WithTokenInvalidator(invalidator TokenInvalidator) *Server
 func (server *Server) WithStreamHub(hub *live.Hub) *Server {
 	server.streamHub = hub
 	return server
-}
-
-// Handler returns the underlying http.Handler.
-func (server *Server) Handler() http.Handler {
-	return server.httpServer.Handler
 }
 
 // ServeHTTP delegates directly to the underlying http.Handler.
