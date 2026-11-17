@@ -150,7 +150,7 @@ func openAPIQueryParameters(operationID string) []map[string]any {
 	case "listTraces":
 		return combineOpenAPIParameters(
 			openAPIPageParameters(),
-			openAPITimeParameters(),
+			openAPITraceTimeParameters(),
 			openAPIStringParameters("service", "operation", "status", "traceId"),
 			openAPIDurationParameters(),
 		)
@@ -158,13 +158,13 @@ func openAPIQueryParameters(operationID string) []map[string]any {
 		return combineOpenAPIParameters(
 			openAPIPageParameters(),
 			openAPITimeParameters(),
-			openAPIStringParameters("service", "severity", "traceId", "spanId", "search"),
+			openAPILogFilters("service", "severity", "traceId", "spanId", "search"),
 		)
 	case "listTraceLogs":
 		return combineOpenAPIParameters(
 			openAPIPageParameters(),
 			openAPITimeParameters(),
-			openAPIStringParameters("service", "severity", "spanId", "search"),
+			openAPILogFilters("service", "severity", "spanId", "search"),
 		)
 	case "listTopology", "getTelemetryQuality":
 		return combineOpenAPIParameters(
@@ -218,6 +218,13 @@ func openAPITimeParameters() []map[string]any {
 	}
 }
 
+// openAPITraceTimeParameters documents the bounded default of a trace list.
+func openAPITraceTimeParameters() []map[string]any {
+	parameters := openAPITimeParameters()
+	parameters[0]["description"] = "Start of the window. When omitted without traceId, the list covers the hour before to, the page cursor, or now."
+	return parameters
+}
+
 func openAPIDurationParameters() []map[string]any {
 	return []map[string]any{
 		{"name": "minDuration", "in": "query", "schema": map[string]string{"type": "string", "example": "250ms"}},
@@ -229,6 +236,16 @@ func openAPIStringParameters(names ...string) []map[string]any {
 	parameters := make([]map[string]any, 0, len(names))
 	for _, name := range names {
 		parameters = append(parameters, openAPIStringParameter(name))
+	}
+	return parameters
+}
+
+func openAPILogFilters(names ...string) []map[string]any {
+	parameters := openAPIStringParameters(names...)
+	for _, parameter := range parameters {
+		if parameter["name"] == "severity" {
+			parameter["description"] = "Severity group: TRACE, DEBUG, INFO, WARN, ERROR or FATAL (case-insensitive; numbered levels and INFORMATION/WARNING are aliases). OTLP severity_number takes precedence over text; unspecified numbers fall back to normalized text. Custom text is matched case-insensitively. Raw exporter text is preserved."
+		}
 	}
 	return parameters
 }

@@ -33,6 +33,29 @@ func TestLogIDsIncludeEnvironment(t *testing.T) {
 	}
 }
 
+func TestLogIdentityPreservesNanosecondsAndRetries(t *testing.T) {
+	normalizer := newNormalizer(testIngestionConfig())
+	resource := &resourcepb.Resource{Attributes: []*commonpb.KeyValue{stringKeyValue("service.name", "worker")}}
+	at := time.Date(2026, 11, 16, 12, 0, 0, 123100000, time.UTC)
+	record := &logspb.LogRecord{TimeUnixNano: uint64(at.UnixNano()), Body: &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: "job completed"}}}
+	first, err := normalizer.logRecord(resource, "", nil, "", record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retry, err := normalizer.logRecord(resource, "", nil, "", record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record.TimeUnixNano++
+	next, err := normalizer.logRecord(resource, "", nil, "", record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.ID != retry.ID || first.ID == next.ID {
+		t.Fatalf("log IDs: first=%s retry=%s next nanosecond=%s", first.ID, retry.ID, next.ID)
+	}
+}
+
 func TestLogIdentityKeepsAttributeOrigins(t *testing.T) {
 	normalizer := newNormalizer(testIngestionConfig())
 	resource := &resourcepb.Resource{Attributes: []*commonpb.KeyValue{stringKeyValue("service.name", "worker"), stringKeyValue("host.name", "host-1")}}

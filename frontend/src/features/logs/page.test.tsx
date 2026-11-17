@@ -36,7 +36,10 @@ it("reads logs on their own inside the selected time window and links correlated
   expect(url.searchParams.get("severity")).toBe("ERROR");
   const traceLink = new URL(screen.getByRole("link", { name: "Open trace" }).getAttribute("href")!, "http://localhost");
   expect(traceLink.pathname).toBe(`/traces/${traceID}`);
-  expect(traceLink.searchParams.get("project")).toBe("01900000-0000-7000-8000-0000000000a1");
+  await waitFor(() => {
+    const scopedLink = new URL(screen.getByRole("link", { name: "Open trace" }).getAttribute("href")!, "http://localhost");
+    expect(scopedLink.searchParams.get("project")).toBe("01900000-0000-7000-8000-0000000000a1");
+  });
   expect(screen.getByLabelText("Not correlated")).toBeTruthy();
 });
 

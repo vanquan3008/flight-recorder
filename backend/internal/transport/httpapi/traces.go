@@ -28,6 +28,7 @@ func (server *Server) listTraces(responseWriter http.ResponseWriter, request *ht
 	}
 	filter.EnvironmentID = principal.EnvironmentID
 	filter.Before, filter.CursorID = cursor.At, cursor.ID
+	applyDefaultTraceWindow(&filter, time.Now())
 	traces, queryError := server.backend.ListTraces(request.Context(), principal.ProjectID, filter)
 	if queryError != nil {
 		server.writeInternalError(responseWriter, "list traces", queryError)
@@ -36,6 +37,28 @@ func (server *Server) listTraces(responseWriter http.ResponseWriter, request *ht
 	writePage(responseWriter, traces, filter.Limit, func(trace query.TraceSummary) pageCursor {
 		return pageCursor{At: trace.CursorAt, ID: trace.TraceID}
 	})
+}
+
+// defaultTraceWindow bounds a trace list that names no start. Listing traces
+// aggregates every span in its window, so an open-ended request would scan the
+// whole environment; a trace ID lookup uses its own index and stays unbounded.
+const defaultTraceWindow = time.Hour
+
+// applyDefaultTraceWindow gives a request without `from` the hour before its
+// end: `to` when given, else the page cursor, else now. Later pages therefore
+// keep reading backwards one bounded window at a time.
+func applyDefaultTraceWindow(filter *query.TraceFilter, now time.Time) {
+	if !filter.From.IsZero() || filter.TraceID != "" {
+		return
+	}
+	end := now
+	switch {
+	case !filter.To.IsZero():
+		end = filter.To
+	case !filter.Before.IsZero():
+		end = filter.Before
+	}
+	filter.From = end.Add(-defaultTraceWindow)
 }
 
 const (

@@ -66,6 +66,7 @@ export type LogRecord = {
   trace_id?: string;
   span_id?: string;
   severity_text?: string;
+  severity_number?: number;
   body: unknown;
   service_name: string;
   resource_attributes: unknown;

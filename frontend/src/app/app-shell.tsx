@@ -3,10 +3,9 @@ import { GitBranch, Menu, X } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { NavLink, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { api, APIError, onSessionRefreshed, refreshAccess, sessionCredential, setAccessToken, setProjectContext } from "../shared/api";
-import type { Page, TraceSummary } from "../shared/types";
 import { ChangePasswordGate, NoProject } from "./access-gates";
 import { AppRoutes } from "./routes";
-import { AuthContext, projectStorageKey, type SessionView, signedInHint } from "../shared/session";
+import { AuthContext, projectStorageKey, type ProjectDetail, type SessionView, signedInHint } from "../shared/session";
 import { ThemeToggle } from "./theme";
 import { Navigation } from "./navigation";
 import { SessionControls } from "./session-controls";
@@ -122,7 +121,9 @@ export function AppShell() {
     queryKey: ["connection", credential, scopeKey],
     enabled: Boolean(credential) && !mustChangePassword && !needsProject && !unknownProject,
     retry: false,
-    queryFn: ({ signal }) => api<Page<TraceSummary>>("/api/v1/traces?limit=1", credential, { signal }),
+    // The project read checks the token, project access and environment like any scoped call, but reads
+    // only cached identity rows, never telemetry: listing traces here scanned spans on every page load.
+    queryFn: ({ signal }) => api<ProjectDetail>(`/api/v1/projects/${encodeURIComponent(current?.project.id ?? "")}`, credential, { signal }),
   });
 
   useEffect(() => setMenuOpen(false), [location.pathname]);

@@ -58,6 +58,14 @@ Request Headers: [{"Accept": "*/*"}]`;
 });
 
 describe("normalizeSeverityText", () => {
+  it("groups OTLP levels, preferring severity numbers over exporter text", () => {
+    for (const [text, number, expected] of [
+      ["ERROR4", 0, "ERROR"], ["WARNING", undefined, "WARN"], [" ", 0, "INFO"],
+      ["Error", 9, "INFO"], ["custom", 20, "ERROR"], ["custom", 24, "FATAL"],
+      ["custom", 25, "CUSTOM"], ["debug2", undefined, "DEBUG"],
+    ] as const) expect(normalizeSeverityText(text, number)).toBe(expected);
+  });
+
   it("normalizes INFORMATION and WARNING to short versions", () => {
     expect(normalizeSeverityText("INFORMATION")).toBe("INFO");
     expect(normalizeSeverityText("WARNING")).toBe("WARN");
