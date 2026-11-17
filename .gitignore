@@ -1,5 +1,6 @@
 /bin/
 /data/
+/certs/
 .env
 .env.*
 !.env.example
@@ -13,16 +14,12 @@ coverage.out
 /frontend/test-results/
 /frontend/playwright-report/
 
-# Logs
 *.log
 
-# Docker
-.dockerignore
+!**/.dockerignore
 
-# IDEs
 .idea/
 .vscode/
 
-# OS
 .DS_Store
 Thumbs.db

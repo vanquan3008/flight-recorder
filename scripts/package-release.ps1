@@ -42,14 +42,14 @@ try {
     if ((Test-Path -LiteralPath $bundle) -or (Test-Path -LiteralPath $archive)) {
         throw 'This release path already exists. Choose a new version; existing artifacts are preserved.'
     }
-    New-Item -ItemType Directory -Path $bundle, "$bundle/backend", "$bundle/frontend", "$bundle/docs", "$bundle/certs" -Force | Out-Null
+    New-Item -ItemType Directory -Path $bundle, "$bundle/backend", "$bundle/frontend", "$bundle/docs", "$bundle/certs", "$bundle/deploy" -Force | Out-Null
     $sourceChecksums = (Source-Checksums) -join "`n"
     Write-UTF8 "$bundle/SOURCE_SHA256SUMS" ($sourceChecksums + "`n")
     $serverImage = 'tracepilot:' + $Version
     $consoleImage = 'tracepilot-console:' + $Version
     $labels = @('--label', "org.opencontainers.image.version=$Version", '--label', "org.opencontainers.image.revision=$revision", '--label', "org.opencontainers.image.created=$builtAt")
     Invoke-Docker build --platform $Platform --target server -t $serverImage @labels --build-arg "VERSION=$Version" --build-arg "COMMIT=$revision" --build-arg "BUILD_TIME=$builtAt" backend
-    Invoke-Docker build --platform $Platform --target console -t $consoleImage @labels frontend
+    Invoke-Docker build --platform $Platform --target console -t $consoleImage @labels --build-arg "VERSION=$Version" --build-arg "COMMIT=$revision" --build-arg "BUILD_TIME=$builtAt" frontend
     $versionOutput = Invoke-Docker run --rm $serverImage version
     if (($versionOutput -join '') -notlike "*`"version`":`"$Version`"*") { throw 'Backend version metadata does not match the release.' }
     foreach ($image in @($serverImage, $consoleImage)) {
@@ -86,8 +86,9 @@ try {
     Copy-Item -LiteralPath frontend/.env.example -Destination "$bundle/frontend/.env.example"
     Write-UTF8 "$bundle/README.md" ([IO.File]::ReadAllText((Join-Path $repoRoot 'README.md')).Replace('tracepilot-<version>-linux-amd64', $name))
     Copy-Item -LiteralPath LICENSE -Destination $bundle
-    Copy-Item -LiteralPath docs/FLOW.md, docs/diagrams.html, docs/tracepilot.postman_collection.json -Destination "$bundle/docs"
-    Copy-Item -LiteralPath deploy/nginx.conf.example -Destination "$bundle/nginx.conf.example"
+    Copy-Item -LiteralPath docs/FLOW.md, docs/STRUCTURE.md, docs/diagrams.html, docs/tracepilot.postman_collection.json -Destination "$bundle/docs"
+    Copy-Item -LiteralPath deploy/nginx.conf.example -Destination "$bundle/deploy/nginx.conf.example"
+    Copy-Item -LiteralPath deploy/compose.yaml -Destination "$bundle/deploy/compose.yaml"
     Write-UTF8 "$bundle/images.txt" ($serverImage + "`n" + $consoleImage + "`n")
     $serverID = (Invoke-Docker image inspect --format '{{.Id}}' $serverImage).Trim()
     $consoleID = (Invoke-Docker image inspect --format '{{.Id}}' $consoleImage).Trim()

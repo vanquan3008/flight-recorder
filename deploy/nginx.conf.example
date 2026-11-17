@@ -1,5 +1,3 @@
-# Install on the Linux host behind a real DNS name and trusted TLS certificate.
-# Backend/console ports below are bound only to the host loopback interface.
 server {
     listen 80;
     server_name tracepilot.example.com otlp.example.com;
