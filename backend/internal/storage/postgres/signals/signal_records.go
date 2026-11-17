@@ -2,6 +2,7 @@ package signals
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/vanquan3008/tracepilot/internal/config"
@@ -10,8 +11,13 @@ import (
 	sqlcstore "github.com/vanquan3008/tracepilot/internal/storage/postgres/sqlc"
 )
 
-// queueSignalRecord queues the span or log row that keeps the full OTLP shape
-// of an event. Events without a signal (detector output) have none.
+// errLogsNotStored rejects logs sent to PostgreSQL: raw logs live only in
+// ClickHouse, and a caller that routes them here has a wiring bug. It is not an
+// invalid-event error, so the batch fails instead of being split and dropped.
+var errLogsNotStored = errors.New("logs are stored only in ClickHouse")
+
+// queueSignalRecord queues the span row that keeps the full OTLP shape of an
+// event. Events without a signal (detector output) have none.
 func queueSignalRecord(ctx context.Context, writes *sqlcstore.Queries, ingestion config.IngestionConfig, event telemetry.Event) error {
 	switch event.Signal {
 	case "":
@@ -19,7 +25,7 @@ func queueSignalRecord(ctx context.Context, writes *sqlcstore.Queries, ingestion
 	case telemetry.SignalTrace:
 		return queueSpan(ctx, writes, ingestion, event)
 	case telemetry.SignalLog:
-		return queueLog(ctx, writes, ingestion, event)
+		return errLogsNotStored
 	default:
 		return fmt.Errorf("unsupported telemetry signal %q", event.Signal)
 	}
@@ -60,38 +66,6 @@ func queueSpan(ctx context.Context, writes *sqlcstore.Queries, ingestion config.
 		DroppedAttributesCount: pgvalue.ClampInt32(event.DroppedAttributes),
 		DroppedEventsCount:     pgvalue.ClampInt32(event.DroppedEvents),
 		DroppedLinksCount:      pgvalue.ClampInt32(event.DroppedLinks),
-	})
-	return nil
-}
-
-func queueLog(ctx context.Context, writes *sqlcstore.Queries, ingestion config.IngestionConfig, event telemetry.Event) error {
-	resourceAttributes, resourceError := pgvalue.MarshalJSONObject(event.ResourceAttributes)
-	if resourceError != nil {
-		return fmt.Errorf("encode log resource attributes: %w", resourceError)
-	}
-	scopeAttributes, scopeError := pgvalue.MarshalJSONObject(event.ScopeAttributes)
-	if scopeError != nil {
-		return fmt.Errorf("encode log scope attributes: %w", scopeError)
-	}
-	logAttributes, recordError := pgvalue.MarshalJSONObject(event.RecordAttributes)
-	if recordError != nil {
-		return fmt.Errorf("encode log attributes: %w", recordError)
-	}
-	body, bodyError := pgvalue.MarshalJSON(event.LogBody)
-	if bodyError != nil {
-		return fmt.Errorf("encode log body: %w", bodyError)
-	}
-	writes.InsertLog(ctx, sqlcstore.InsertLogParams{
-		EventID: event.ID, ProjectID: ingestion.ProjectID, EnvironmentID: ingestion.EnvironmentID,
-		OccurredAt: event.Timestamp, ObservedAt: pgvalue.TimeOrNil(event.ObservedTimestamp),
-		TraceID: pgvalue.OrNil(event.TraceID), SpanID: pgvalue.OrNil(event.SpanID),
-		TraceFlags: int64(event.TraceFlags), SeverityNumber: event.SeverityNumber, SeverityText: event.Severity,
-		Body: body, EventName: event.LogEventName,
-		ServiceName: event.ServiceName, ServiceVersion: pgvalue.OrNil(event.ServiceVersion),
-		ResourceSchemaURL: event.ResourceSchemaURL, ResourceAttributes: resourceAttributes,
-		ScopeName: event.ScopeName, ScopeVersion: event.ScopeVersion, ScopeSchemaURL: event.ScopeSchemaURL,
-		ScopeAttributes: scopeAttributes, LogAttributes: logAttributes,
-		DroppedAttributesCount: pgvalue.ClampInt32(event.DroppedAttributes),
 	})
 	return nil
 }

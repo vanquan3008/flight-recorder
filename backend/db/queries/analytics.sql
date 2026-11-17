@@ -1,9 +1,7 @@
--- Edges between services (parent span -> child span in another service) and
--- from services to the databases, queues and external targets they call.
--- A parent starts before its child, so the parent lookup is bounded to the
--- window plus one hour before it (parent_window_start, set by the caller). Without that bound each child probed every
--- daily partition, including the empty ones for future days, and a parent that
--- began more than an hour before the window is no longer matched.
+-- Edges between services and the dependencies they call. Parent lookups include
+-- one hour before the requested window to bound daily partition scans. OFFSET
+-- 0 keeps each parent lookup parameterized by trace/span ID even when a new
+-- scope is absent from statistics; an unrestricted join can become quadratic.
 -- name: ListTopologyEdges :many
 WITH window_spans AS (
     SELECT spans.project_id, spans.environment_id, spans.trace_id, spans.parent_span_id, spans.service_name,
@@ -18,13 +16,16 @@ WITH window_spans AS (
            'service' AS edge_kind, child.trace_id, child.status_code,
            extract(epoch FROM child.ended_at - child.started_at) * 1000000000 AS duration_ns
     FROM window_spans AS child
-    JOIN spans AS parent
-      ON parent.project_id = child.project_id
-     AND parent.environment_id = child.environment_id
-     AND parent.trace_id = child.trace_id
-     AND parent.span_id = child.parent_span_id
-     AND parent.started_at >= @parent_window_start::timestamptz
-     AND parent.started_at < @to_time::timestamptz
+    CROSS JOIN LATERAL (
+        SELECT parent.service_name FROM spans AS parent
+        WHERE parent.project_id = child.project_id
+          AND parent.environment_id = child.environment_id
+          AND parent.trace_id = child.trace_id
+          AND parent.span_id = child.parent_span_id
+          AND parent.started_at >= @parent_window_start::timestamptz
+          AND parent.started_at < @to_time::timestamptz
+        OFFSET 0
+    ) AS parent
     WHERE parent.service_name <> child.service_name
     UNION ALL
     SELECT window_spans.service_name, span_dependency_type(window_spans.span_attributes),
@@ -78,15 +79,6 @@ SELECT
              AND p.trace_id = s.trace_id AND p.span_id = s.parent_span_id
              AND p.started_at >= @parent_window_start::timestamptz
              AND p.started_at <= @to_time::timestamptz)) AS orphan_spans,
-    (SELECT count(*) FROM logs AS l
-     WHERE l.project_id = @project_id AND l.environment_id = @environment_id
-       AND l.occurred_at BETWEEN @from_time::timestamptz AND @to_time::timestamptz
-       AND (sqlc.narg(service)::text IS NULL OR l.service_name = sqlc.narg(service))) AS logs,
-    (SELECT count(*) FROM logs AS l
-     WHERE l.project_id = @project_id AND l.environment_id = @environment_id
-       AND l.occurred_at BETWEEN @from_time::timestamptz AND @to_time::timestamptz
-       AND l.trace_id IS NULL
-       AND (sqlc.narg(service)::text IS NULL OR l.service_name = sqlc.narg(service))) AS uncorrelated_logs,
     (SELECT count(*) FROM metric_data_points AS m
      WHERE m.project_id = @project_id AND m.environment_id = @environment_id
        AND m.occurred_at BETWEEN @from_time::timestamptz AND @to_time::timestamptz

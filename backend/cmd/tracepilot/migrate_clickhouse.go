@@ -13,20 +13,17 @@ import (
 func parseClickHouseMigrationCommand(arguments []string) (string, error) {
 	if len(arguments) == 1 {
 		switch arguments[0] {
-		case "up", "status", "backfill":
+		case "up", "status":
 			return arguments[0], nil
 		}
 	}
-	return "", errors.New("ClickHouse expects up, status, or backfill")
+	return "", errors.New("ClickHouse expects up or status")
 }
 
 func runClickHouseMigrations(arguments []string) int {
 	operation, err := parseClickHouseMigrationCommand(arguments)
 	if err != nil {
 		return invalidMigrationArguments(err)
-	}
-	if operation == "backfill" {
-		return runMigrationCommand("all", operation, migrateLogBackfill)
 	}
 	return runMigrationCommand("clickhouse", operation, func(ctx context.Context, cfg config.Config) (string, error) {
 		return migrateClickHouse(ctx, cfg.ClickHouse, cfg.Retention.MaxAge, operation)

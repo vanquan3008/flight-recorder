@@ -38,13 +38,14 @@ func TestPostgresMigrationParsesItsOwnCommands(t *testing.T) {
 }
 
 func TestClickHouseMigrationParsesItsOwnCommands(t *testing.T) {
-	for _, operation := range []string{"up", "status", "backfill"} {
+	for _, operation := range []string{"up", "status"} {
 		got, err := parseClickHouseMigrationCommand([]string{operation})
 		if err != nil || got != operation {
 			t.Errorf("clickhouse %s: operation=%s error=%v", operation, got, err)
 		}
 	}
-	for _, arguments := range [][]string{{"down", "1"}, {"version"}, {"all"}} {
+	// backfill copied legacy PostgreSQL logs; logs now live only in ClickHouse.
+	for _, arguments := range [][]string{{"down", "1"}, {"version"}, {"all"}, {"backfill"}} {
 		if _, err := parseClickHouseMigrationCommand(arguments); err == nil {
 			t.Errorf("ClickHouse accepted unsupported command %v", arguments)
 		}

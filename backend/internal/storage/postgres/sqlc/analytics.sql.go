@@ -837,13 +837,16 @@ WITH window_spans AS (
            'service' AS edge_kind, child.trace_id, child.status_code,
            extract(epoch FROM child.ended_at - child.started_at) * 1000000000 AS duration_ns
     FROM window_spans AS child
-    JOIN spans AS parent
-      ON parent.project_id = child.project_id
-     AND parent.environment_id = child.environment_id
-     AND parent.trace_id = child.trace_id
-     AND parent.span_id = child.parent_span_id
-     AND parent.started_at >= $6::timestamptz
-     AND parent.started_at < $5::timestamptz
+    CROSS JOIN LATERAL (
+        SELECT parent.service_name FROM spans AS parent
+        WHERE parent.project_id = child.project_id
+          AND parent.environment_id = child.environment_id
+          AND parent.trace_id = child.trace_id
+          AND parent.span_id = child.parent_span_id
+          AND parent.started_at >= $6::timestamptz
+          AND parent.started_at < $5::timestamptz
+        OFFSET 0
+    ) AS parent
     WHERE parent.service_name <> child.service_name
     UNION ALL
     SELECT window_spans.service_name, span_dependency_type(window_spans.span_attributes),
@@ -890,12 +893,10 @@ type ListTopologyEdgesRow struct {
 	TraceIDs            []string
 }
 
-// Edges between services (parent span -> child span in another service) and
-// from services to the databases, queues and external targets they call.
-// A parent starts before its child, so the parent lookup is bounded to the
-// window plus one hour before it (parent_window_start, set by the caller). Without that bound each child probed every
-// daily partition, including the empty ones for future days, and a parent that
-// began more than an hour before the window is no longer matched.
+// Edges between services and the dependencies they call. Parent lookups include
+// one hour before the requested window to bound daily partition scans. OFFSET
+// 0 keeps each parent lookup parameterized by trace/span ID even when a new
+// scope is absent from statistics; an unrestricted join can become quadratic.
 func (q *Queries) ListTopologyEdges(ctx context.Context, arg ListTopologyEdgesParams) ([]ListTopologyEdgesRow, error) {
 	rows, err := q.db.Query(ctx, listTopologyEdges,
 		arg.Service,
@@ -950,15 +951,6 @@ SELECT
              AND p.trace_id = s.trace_id AND p.span_id = s.parent_span_id
              AND p.started_at >= $6::timestamptz
              AND p.started_at <= $4::timestamptz)) AS orphan_spans,
-    (SELECT count(*) FROM logs AS l
-     WHERE l.project_id = $1 AND l.environment_id = $2
-       AND l.occurred_at BETWEEN $3::timestamptz AND $4::timestamptz
-       AND ($5::text IS NULL OR l.service_name = $5)) AS logs,
-    (SELECT count(*) FROM logs AS l
-     WHERE l.project_id = $1 AND l.environment_id = $2
-       AND l.occurred_at BETWEEN $3::timestamptz AND $4::timestamptz
-       AND l.trace_id IS NULL
-       AND ($5::text IS NULL OR l.service_name = $5)) AS uncorrelated_logs,
     (SELECT count(*) FROM metric_data_points AS m
      WHERE m.project_id = $1 AND m.environment_id = $2
        AND m.occurred_at BETWEEN $3::timestamptz AND $4::timestamptz
@@ -975,11 +967,9 @@ type TelemetryQualityParams struct {
 }
 
 type TelemetryQualityRow struct {
-	Spans            int64
-	OrphanSpans      int64
-	Logs             int64
-	UncorrelatedLogs int64
-	MetricPoints     int64
+	Spans        int64
+	OrphanSpans  int64
+	MetricPoints int64
 }
 
 func (q *Queries) TelemetryQuality(ctx context.Context, arg TelemetryQualityParams) (TelemetryQualityRow, error) {
@@ -992,12 +982,6 @@ func (q *Queries) TelemetryQuality(ctx context.Context, arg TelemetryQualityPara
 		arg.ParentWindowStart,
 	)
 	var i TelemetryQualityRow
-	err := row.Scan(
-		&i.Spans,
-		&i.OrphanSpans,
-		&i.Logs,
-		&i.UncorrelatedLogs,
-		&i.MetricPoints,
-	)
+	err := row.Scan(&i.Spans, &i.OrphanSpans, &i.MetricPoints)
 	return i, err
 }

@@ -52,6 +52,6 @@ func runMigrationCommand(database, operation string, execute func(context.Contex
 
 func invalidMigrationArguments(err error) int {
 	slog.Error("invalid migration arguments", "error", err,
-		"usage", "tracepilot migrate <all|postgres up|postgres down STEPS|postgres version|postgres status|clickhouse up|clickhouse status|clickhouse backfill> (postgres is the default)")
+		"usage", "tracepilot migrate <all|postgres up|postgres down STEPS|postgres version|postgres status|clickhouse up|clickhouse status> (postgres is the default)")
 	return 2
 }

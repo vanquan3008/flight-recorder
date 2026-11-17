@@ -8,8 +8,21 @@ import (
 
 	"github.com/vanquan3008/tracepilot/internal/config"
 	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
+	"github.com/vanquan3008/tracepilot/internal/query"
 	"github.com/vanquan3008/tracepilot/internal/storage/postgres"
 )
+
+// postgresBackend serves the API from PostgreSQL alone. Logs live only in
+// ClickHouse, whose integration suite covers log reads, so they are empty here.
+type postgresBackend struct{ *postgres.Database }
+
+func (postgresBackend) ListLogs(context.Context, string, query.LogFilter) ([]query.LogRecord, error) {
+	return nil, nil
+}
+
+func (postgresBackend) GetLog(context.Context, string, string, string) (query.LogRecord, error) {
+	return query.LogRecord{}, nil
+}
 
 func newQueryIntegrationDatabase(t *testing.T) (*postgres.Database, config.IngestionConfig, string) {
 	t.Helper()

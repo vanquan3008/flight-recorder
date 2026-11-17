@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -20,7 +21,7 @@ import (
 	"github.com/vanquan3008/tracepilot/internal/storage/postgres"
 )
 
-func TestHybridLogsPreserveIncidentsRetryAndLegacyBackfill(t *testing.T) {
+func TestHybridLogsPreserveIncidentsAndRetry(t *testing.T) {
 	if os.Getenv("TRACEPILOT_INTEGRATION_TEST") != "1" || os.Getenv("TRACEPILOT_CLICKHOUSE_INTEGRATION_TEST") != "1" {
 		t.Skip("requires disposable PostgreSQL and ClickHouse integration environments")
 	}
@@ -73,7 +74,7 @@ func TestHybridLogsPreserveIncidentsRetryAndLegacyBackfill(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		defer pool.Close()
-		for _, table := range []string{"incidents", "span_rollup_buckets", "span_minute_rollups", "spans", "logs", "events", "projects"} {
+		for _, table := range []string{"incidents", "span_rollup_buckets", "span_minute_rollups", "spans", "events", "projects"} {
 			column := "project_id"
 			if table == "projects" {
 				column = "id"
@@ -99,9 +100,11 @@ func TestHybridLogsPreserveIncidentsRetryAndLegacyBackfill(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	var rawLogs, envelopes int
-	if err := pool.QueryRow(ctx, "SELECT (SELECT count(*) FROM logs WHERE project_id=$1), (SELECT count(*) FROM events WHERE project_id=$1)", project).Scan(&rawLogs, &envelopes); err != nil || rawLogs != 0 || envelopes != 2 {
-		t.Fatalf("normal log reached PG: logs=%d events=%d error=%v", rawLogs, envelopes, err)
+	// PostgreSQL has no logs table; it keeps only the span and the error log's incident envelope.
+	var logsTableExists bool
+	var envelopes int
+	if err := pool.QueryRow(ctx, "SELECT to_regclass('logs') IS NOT NULL, (SELECT count(*) FROM events WHERE project_id=$1)", project).Scan(&logsTableExists, &envelopes); err != nil || logsTableExists || envelopes != 2 {
+		t.Fatalf("logs reached PG: logs table=%v events=%d error=%v", logsTableExists, envelopes, err)
 	}
 	// A PostgreSQL failure after ClickHouse commits must not ACK; retry repairs it.
 	broken, err := postgres.Open(ctx, cfg.Database)
@@ -127,29 +130,12 @@ func TestHybridLogsPreserveIncidentsRetryAndLegacyBackfill(t *testing.T) {
 	if err != nil || quality.Spans != 1 || quality.Logs != 3 || quality.UncorrelatedLogs != 0 {
 		t.Fatalf("hybrid quality mixed stores incorrectly: %+v, %v", quality, err)
 	}
-	legacy := make([]telemetry.Event, 503)
-	for index := range legacy {
-		legacy[index] = info
-		legacy[index].ID = telemetry.DeterministicID(at, project, fmt.Sprint(index))
-		legacy[index].Timestamp = at.Add(-time.Hour).Add(time.Duration(index) * time.Nanosecond)
+	// A log routed straight to PostgreSQL is refused as a storage error, never dropped as invalid.
+	if err := database.StoreEvents(ctx, scope, []telemetry.Event{info}); err == nil || errors.Is(err, telemetry.ErrInvalidEvent) {
+		t.Fatalf("PostgreSQL accepted or dropped a log: %v", err)
 	}
-	if err := database.StoreEvents(ctx, scope, legacy); err != nil {
-		t.Fatal(err)
-	}
-	for range 2 {
-		if count, err := backfillLogs(ctx, database, ch); err != nil || count < len(legacy) {
-			t.Fatalf("backfill across a page boundary: count=%d, %v", count, err)
-		}
-	}
-	if err := backend.StoreEvents(ctx, scope, legacy[:1]); err != nil {
-		t.Fatal(err)
-	}
-	logs, _, err := ch.LogQuality(ctx, project, scope.EnvironmentID, "", at.Add(-2*time.Hour), at.Add(time.Minute))
-	if err != nil || logs != 506 {
-		t.Fatalf("backfill/retry duplicated or lost logs: %d, %v", logs, err)
-	}
-	if record, err := backend.GetLog(ctx, project, scope.EnvironmentID, legacy[502].ID); err != nil || record.EventID == "" {
-		t.Fatalf("last backfill page missing: %+v, %v", record, err)
+	if record, err := backend.GetLog(ctx, project, scope.EnvironmentID, info.ID); err != nil || record.EventID != info.ID {
+		t.Fatalf("log missing from ClickHouse: %+v, %v", record, err)
 	}
 	if traces, err := backend.ListTraces(ctx, project, query.TraceFilter{EnvironmentID: scope.EnvironmentID, Limit: 10}); err != nil || len(traces) != 1 {
 		t.Fatalf("trace lookup regressed: %+v, %v", traces, err)

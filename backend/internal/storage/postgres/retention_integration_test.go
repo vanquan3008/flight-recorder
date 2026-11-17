@@ -25,7 +25,7 @@ func retentionTestEvents(projectID, environmentName, label string, timestamp tim
 	return spanEvent, logEvent
 }
 
-type retentionCounts struct{ events, spans, logs, occurrences, links, incidents int }
+type retentionCounts struct{ events, spans, occurrences, links, incidents int }
 
 func countRetention(t *testing.T, database *Database, projectID string) retentionCounts {
 	t.Helper()
@@ -34,11 +34,10 @@ func countRetention(t *testing.T, database *Database, projectID string) retentio
 		SELECT
 			(SELECT count(*) FROM events WHERE project_id = $1),
 			(SELECT count(*) FROM spans WHERE project_id = $1),
-			(SELECT count(*) FROM logs WHERE project_id = $1),
 			(SELECT count(*) FROM incident_occurrences WHERE project_id = $1),
 			(SELECT count(*) FROM incident_events WHERE project_id = $1),
 			(SELECT count(*) FROM incidents WHERE project_id = $1)`, projectID).Scan(
-		&counts.events, &counts.spans, &counts.logs, &counts.occurrences, &counts.links, &counts.incidents); queryError != nil {
+		&counts.events, &counts.spans, &counts.occurrences, &counts.links, &counts.incidents); queryError != nil {
 		t.Fatal(queryError)
 	}
 	return counts
@@ -63,19 +62,23 @@ func TestRetentionDropsExpiredPartitionsIntegration(t *testing.T) {
 	if ensureError := database.EnsurePartitions(ctx, oldDay, 3); ensureError != nil {
 		t.Fatal(ensureError)
 	}
-	var stored []telemetry.Event
+	// Raw logs live in ClickHouse; PostgreSQL keeps each error log's incident envelope in events.
+	var spans, logs []telemetry.Event
 	for _, day := range []struct {
 		label string
 		at    time.Time
 	}{{"old", oldDay}, {"kept", keptDay}, {"stray", strayDay}} {
 		span, log := retentionTestEvents(projectID, ingestion.EnvironmentName, day.label, day.at)
-		stored = append(stored, span, log)
+		spans, logs = append(spans, span), append(logs, log)
 	}
-	if storeError := database.StoreEvents(ctx, ingestion, stored); storeError != nil {
+	if storeError := database.StoreEvents(ctx, ingestion, spans); storeError != nil {
+		t.Fatal(storeError)
+	}
+	if storeError := database.StoreLogIncidents(ctx, ingestion, logs); storeError != nil {
 		t.Fatal(storeError)
 	}
 	before := countRetention(t, database, projectID)
-	if before.events != 6 || before.spans != 3 || before.logs != 3 || before.incidents == 0 {
+	if before.events != 6 || before.spans != 3 || before.incidents == 0 {
 		t.Fatalf("seed counts = %+v", before)
 	}
 
@@ -90,7 +93,7 @@ func TestRetentionDropsExpiredPartitionsIntegration(t *testing.T) {
 		t.Fatalf("removed events = %d, want 4", removed)
 	}
 	after := countRetention(t, database, projectID)
-	if after.events != 2 || after.spans != 1 || after.logs != 1 {
+	if after.events != 2 || after.spans != 1 {
 		t.Fatalf("telemetry after retention = %+v, want only the kept day", after)
 	}
 	if after.occurrences != before.occurrences || after.links != before.links || after.incidents != before.incidents {

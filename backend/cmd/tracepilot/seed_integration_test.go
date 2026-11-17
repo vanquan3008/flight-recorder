@@ -82,7 +82,7 @@ func TestSeedCreatesOnlySuperAdminAndPreservesAccountOnRerunIntegration(t *testi
 	}
 	for table, want := range map[string]int{
 		"users": 1, "projects": 0, "environments": 0, "project_members": 0, "ingest_tokens": 0,
-		"services": 0, "events": 0, "spans": 0, "logs": 0, "metric_data_points": 0, "incidents": 0,
+		"services": 0, "events": 0, "spans": 0, "metric_data_points": 0, "incidents": 0,
 	} {
 		var count int
 		if err := connection.QueryRow(ctx, "SELECT count(*) FROM "+pgx.Identifier{table}.Sanitize()).Scan(&count); err != nil {
