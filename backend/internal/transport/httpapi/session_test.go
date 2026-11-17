@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/vanquan3008/tracepilot/internal/auth"
+	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/middleware"
 )
 
 func post(handler http.Handler, path, body string, headers map[string]string) *httptest.ResponseRecorder {
@@ -150,7 +151,7 @@ func TestLoginAttemptsAreLimitedPerAccount(t *testing.T) {
 	server.backend = newIdentityBackend(auth.RoleUser)
 	// Each attempt hashes a password, which is slow on a busy machine; a long window keeps the count from
 	// resetting while the test runs.
-	server.rateLimiter = newRequestRateLimiter(time.Hour)
+	server.rateLimiter = middleware.NewRequestRateLimiter(time.Hour)
 	router := http.NewServeMux()
 	server.registerAPIRoutes(router)
 	var handler http.Handler = router

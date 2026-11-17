@@ -11,11 +11,6 @@ func IssueAccessToken(secret []byte, userID string, now time.Time) (string, time
 	return IssueAccessTokenWithOptions(secret, userID, now, AccessTokenTTL, "", "", 0)
 }
 
-// IssueAccessTokenWithTTL signs the console access token with the specified duration.
-func IssueAccessTokenWithTTL(secret []byte, userID string, now time.Time, ttl time.Duration) (string, time.Time, error) {
-	return IssueAccessTokenWithOptions(secret, userID, now, ttl, "", "", 0)
-}
-
 // IssueAccessTokenWithOptions signs the console token using custom TTL, issuer, and audience.
 func IssueAccessTokenWithOptions(secret []byte, userID string, now time.Time, ttl time.Duration, issuer, audience string, tokenVersion int64) (string, time.Time, error) {
 	if ttl <= 0 {

@@ -10,14 +10,15 @@ import (
 
 	"github.com/vanquan3008/tracepilot/internal/auth"
 	"github.com/vanquan3008/tracepilot/internal/query"
+	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/openapi"
 )
 
 var traceRoutes = []apiRouteDefinition{
-	{path: "/api/v1/traces", method: http.MethodGet, scope: "read", tags: []string{"traces"}, operationID: "listTraces", handler: (*Server).listTraces},
-	{path: "/api/v1/traces/{traceID}", method: http.MethodGet, scope: "read", tags: []string{"traces"}, operationID: "getTrace", handler: (*Server).getTrace},
-	{path: "/api/v1/traces/{traceID}/logs", method: http.MethodGet, scope: "read", tags: []string{"traces", "logs"}, operationID: "listTraceLogs", handler: (*Server).listTraceLogs},
-	{path: "/api/v1/logs", method: http.MethodGet, scope: "read", tags: []string{"logs"}, operationID: "listLogs", handler: (*Server).listLogs},
-	{path: "/api/v1/logs/{eventID}", method: http.MethodGet, scope: "read", tags: []string{"logs"}, operationID: "getLog", handler: (*Server).getLog},
+	{path: "/api/v1/traces", method: http.MethodGet, scope: "read", tags: []string{"traces"}, operationID: "listTraces", query: []string{"Limit", "Cursor", "TraceListFrom", "To", "Service", "Operation", "Status", "TraceID", "MinDuration", "MaxDuration"}, handler: (*Server).listTraces, response: openapi.Page[query.TraceSummary]()},
+	{path: "/api/v1/traces/{traceID}", method: http.MethodGet, scope: "read", tags: []string{"traces"}, operationID: "getTrace", query: []string{"SpanLimit", "Cursor"}, handler: (*Server).getTrace, response: openapi.Object[traceResponse]()},
+	{path: "/api/v1/traces/{traceID}/logs", method: http.MethodGet, scope: "read", tags: []string{"traces", "logs"}, operationID: "listTraceLogs", query: []string{"Limit", "Cursor", "From", "To", "Service", "LogSeverity", "SpanID", "Search"}, handler: (*Server).listTraceLogs, response: openapi.Page[query.LogRecord]()},
+	{path: "/api/v1/logs", method: http.MethodGet, scope: "read", tags: []string{"logs"}, operationID: "listLogs", query: []string{"Limit", "Cursor", "From", "To", "Service", "LogSeverity", "TraceID", "SpanID", "Search"}, handler: (*Server).listLogs, response: openapi.Page[query.LogRecord]()},
+	{path: "/api/v1/logs/{eventID}", method: http.MethodGet, scope: "read", tags: []string{"logs"}, operationID: "getLog", handler: (*Server).getLog, response: openapi.Object[query.LogRecord]()},
 }
 
 func (server *Server) listTraces(responseWriter http.ResponseWriter, request *http.Request, principal auth.Principal) {
@@ -96,10 +97,10 @@ func (server *Server) getTrace(responseWriter http.ResponseWriter, request *http
 	if spans == nil {
 		spans = []query.SpanRecord{} // clients concatenate pages, so never send null
 	}
-	response := map[string]any{"trace_id": traceID, "spans": spans}
+	response := traceResponse{TraceID: traceID, Spans: spans}
 	if hasMore {
 		last := spans[len(spans)-1]
-		response["next_cursor"] = encodeCursor(pageCursor{At: last.StartedAt, ID: last.EventID})
+		response.NextCursor = encodeCursor(pageCursor{At: last.StartedAt, ID: last.EventID})
 	}
 	writeJSONValue(responseWriter, http.StatusOK, response)
 }

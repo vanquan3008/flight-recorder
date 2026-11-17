@@ -9,6 +9,7 @@ import (
 	sessionapp "github.com/vanquan3008/tracepilot/internal/application/session"
 	"github.com/vanquan3008/tracepilot/internal/auth"
 	"github.com/vanquan3008/tracepilot/internal/config"
+	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/openapi"
 )
 
 const (
@@ -21,18 +22,21 @@ const (
 	refreshPath   = "/api/v1/auth"
 )
 
+// refreshParameters document the header and cookie a refresh-cookie route reads.
+var refreshParameters = []string{"RefreshHeader", "RefreshCookie"}
+
 var authRoutes = []apiRouteDefinition{
-	{path: "/api/v1/auth/status", method: http.MethodGet, scope: "public", public: true, tags: []string{"auth"}, operationID: "getAuthStatus", handler: (*Server).authStatus},
-	{path: "/api/v1/auth/register", method: http.MethodPost, scope: "public", public: true, tags: []string{"auth"}, operationID: "register", successStatus: http.StatusCreated, requestBody: true, handler: (*Server).authRegister},
-	{path: "/api/v1/auth/refresh", method: http.MethodPost, scope: "public", public: true, tags: []string{"auth"}, operationID: "refreshSession", successStatus: http.StatusOK, handler: (*Server).authRefresh},
-	{path: "/api/v1/auth/login", method: http.MethodPost, scope: "public", public: true, tags: []string{"auth"}, operationID: "login", successStatus: http.StatusOK, requestBody: true, handler: (*Server).authLogin},
-	{path: "/api/v1/auth/logout", method: http.MethodPost, scope: "public", public: true, tags: []string{"auth"}, operationID: "logout", successStatus: http.StatusNoContent, handler: (*Server).authLogout},
-	{path: "/api/v1/auth/me", method: http.MethodGet, scope: auth.ScopeSession, tags: []string{"auth"}, operationID: "getCurrentUser", handler: (*Server).authMe},
-	{path: "/api/v1/auth/password", method: http.MethodPost, scope: auth.ScopeSession, tags: []string{"auth"}, operationID: "changePassword", successStatus: http.StatusOK, requestBody: true, handler: (*Server).authChangePassword},
+	{path: "/api/v1/auth/status", method: http.MethodGet, scope: "public", public: true, tags: []string{"auth"}, operationID: "getAuthStatus", handler: (*Server).authStatus, response: openapi.Object[authStatusResponse]()},
+	{path: "/api/v1/auth/register", method: http.MethodPost, scope: "public", public: true, tags: []string{"auth"}, operationID: "register", successStatus: http.StatusCreated, requestBody: true, handler: (*Server).authRegister, request: openapi.TypeOf[registerRequest](), response: openapi.Object[sessionView]()},
+	{path: "/api/v1/auth/refresh", method: http.MethodPost, scope: "public", public: true, tags: []string{"auth"}, operationID: "refreshSession", successStatus: http.StatusOK, handler: (*Server).authRefresh, headers: refreshParameters, response: openapi.Object[sessionView]()},
+	{path: "/api/v1/auth/login", method: http.MethodPost, scope: "public", public: true, tags: []string{"auth"}, operationID: "login", successStatus: http.StatusOK, requestBody: true, handler: (*Server).authLogin, request: openapi.TypeOf[loginRequest](), response: openapi.Object[sessionView]()},
+	{path: "/api/v1/auth/logout", method: http.MethodPost, scope: "public", public: true, tags: []string{"auth"}, operationID: "logout", successStatus: http.StatusNoContent, handler: (*Server).authLogout, headers: refreshParameters, response: openapi.Empty()},
+	{path: "/api/v1/auth/me", method: http.MethodGet, scope: auth.ScopeSession, tags: []string{"auth"}, operationID: "getCurrentUser", handler: (*Server).authMe, response: openapi.Object[sessionView]()},
+	{path: "/api/v1/auth/password", method: http.MethodPost, scope: auth.ScopeSession, tags: []string{"auth"}, operationID: "changePassword", successStatus: http.StatusOK, requestBody: true, handler: (*Server).authChangePassword, request: openapi.TypeOf[changePasswordRequest](), response: openapi.Object[sessionView]()},
 }
 
 func (server *Server) authStatus(responseWriter http.ResponseWriter, _ *http.Request, _ auth.Principal) {
-	writeJSONValue(responseWriter, http.StatusOK, map[string]any{"registration_open": server.allowRegistration, "first_account": false})
+	writeJSONValue(responseWriter, http.StatusOK, authStatusResponse{RegistrationOpen: server.allowRegistration, FirstAccount: false})
 }
 
 // signInView finishes a sign-in: it opens a refresh session, sets its cookie and answers with the
@@ -126,11 +130,7 @@ func (server *Server) clearRefreshCookie(responseWriter http.ResponseWriter, req
 // authRegister creates an ordinary account when registration is open and signs the user in.
 // Platform administrators can promote ordinary accounts or grant them project access.
 func (server *Server) authRegister(responseWriter http.ResponseWriter, request *http.Request, _ auth.Principal) {
-	var payload struct {
-		Email       string `json:"email"`
-		DisplayName string `json:"display_name"`
-		Password    string `json:"password"`
-	}
+	var payload registerRequest
 	if decodeError := decodeIdentityBody(request, &payload); decodeError != nil {
 		writeAPIError(responseWriter, http.StatusBadRequest, "INVALID_REQUEST", decodeError.Error())
 		return
@@ -146,10 +146,7 @@ func (server *Server) authRegister(responseWriter http.ResponseWriter, request *
 }
 
 func (server *Server) authLogin(responseWriter http.ResponseWriter, request *http.Request, _ auth.Principal) {
-	var payload struct {
-		Email    string `json:"email"`
-		Password string `json:"password"`
-	}
+	var payload loginRequest
 	if decodeError := decodeIdentityBody(request, &payload); decodeError != nil {
 		writeAPIError(responseWriter, http.StatusBadRequest, "INVALID_REQUEST", decodeError.Error())
 		return
@@ -220,10 +217,7 @@ func (server *Server) authMe(responseWriter http.ResponseWriter, request *http.R
 // authChangePassword replaces the password, ends every other session and the access tokens issued so
 // far, and answers with a new access token so this one stays signed in.
 func (server *Server) authChangePassword(responseWriter http.ResponseWriter, request *http.Request, principal auth.Principal) {
-	var payload struct {
-		CurrentPassword string `json:"current_password"`
-		NewPassword     string `json:"new_password"`
-	}
+	var payload changePasswordRequest
 	if decodeError := decodeIdentityBody(request, &payload); decodeError != nil {
 		writeAPIError(responseWriter, http.StatusBadRequest, "INVALID_REQUEST", decodeError.Error())
 		return
