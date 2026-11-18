@@ -9,7 +9,9 @@ import { AuthContext, projectStorageKey, type ProjectDetail, type SessionView, s
 import { ThemeToggle } from "./theme";
 import { Navigation } from "./navigation";
 import { SessionControls } from "./session-controls";
-import { ErrorState } from "../shared/ui";
+import { MobileTabBar } from "./mobile-nav";
+import { ScopeChip } from "./scope-sheet";
+import { ErrorState, useIsMobile } from "../shared/ui";
 
 function BrandIcon() {
   return <div className="brand-icon relative flex items-center justify-center w-[34px] h-[34px] rounded-[11px] bg-gradient-to-tr from-sky-400 via-sky-500 to-blue-600 ring-1 ring-white/60 ring-inset shadow-[0_4px_18px_rgba(14,165,233,0.5)] overflow-hidden shrink-0 group-hover:scale-105 active:scale-95 transition-transform duration-200">
@@ -28,6 +30,7 @@ export function AppShell() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem("tracepilot-sidebar-collapsed") === "true");
   const location = useLocation();
+  const mobile = useIsMobile();
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   // The access token lives in memory, so a reload starts signed out. A hint left at sign-in says a refresh
@@ -180,6 +183,8 @@ export function AppShell() {
 
   const isAuthenticated = Boolean(session);
   const showSidebar = isAuthenticated || location.pathname === "/flow";
+  // Phones swap the sidebar for a bottom bar once someone is signed in and able to move between sections.
+  const tabBar = mobile && isAuthenticated && !mustChangePassword;
 
   // A session the server no longer accepts (refresh failed, signed out elsewhere, account disabled) ends here.
   useEffect(() => {
@@ -193,33 +198,36 @@ export function AppShell() {
   if (booting) return <div className="app-shell relative flex h-screen items-center justify-center" role="status"><span className="loading-label inline-flex items-center gap-2 text-xs font-semibold text-muted [&_svg]:text-accent">Restoring your session…</span></div>;
 
   return <AuthContext.Provider value={{ credential, isAuthenticated, signIn, session: sessionState }}>
-    <div className="app-shell relative flex flex-col h-screen max-h-screen overflow-hidden">
+    <div className="app-shell relative flex flex-col h-dvh max-h-dvh overflow-hidden">
       <a className="fixed -top-24 left-4 z-100 rounded-lg border-2 border-accent bg-surface-solid px-3 py-2 text-text! focus:top-2" href="#content">Skip to content</a>
 
-      {/* Floating Dynamic Island Topbar */}
-      <header className="topbar relative z-30 mx-3 mt-2.5 flex h-[58px] shrink-0 items-center justify-between gap-4 rounded-[18px] border border-glass-edge bg-glass px-4 backdrop-glass shadow-glass md:mx-4 md:px-6 max-[620px]:h-auto max-[620px]:flex-wrap max-[620px]:gap-2 max-[620px]:px-3 max-[620px]:py-2">
-        <div className="topbar-title flex min-w-0 items-center gap-3.5 max-[620px]:w-full">
-          {showSidebar && <button className="mobile-menu flex size-8 shrink-0 items-center justify-center rounded-full text-muted hover:bg-glass-hover min-[901px]:hidden" onClick={() => setMenuOpen((open) => !open)} aria-label="Toggle navigation" aria-expanded={menuOpen}>{menuOpen ? <X size={16} /> : <Menu size={16} />}</button>}
-          <NavLink className="brand group flex items-center gap-2.5 text-slate-950 dark:text-white font-semibold text-[15px] tracking-tight no-underline whitespace-nowrap" to="/overview">
+      {/* Floating topbar; on phones a single row with the brand and a scope chip. */}
+      <header className="topbar relative z-30 mx-3 mt-2.5 flex h-[58px] shrink-0 items-center justify-between gap-4 rounded-[18px] border border-glass-edge bg-glass px-4 backdrop-glass shadow-glass md:mx-4 md:px-6 max-md:mx-2.5 max-md:mt-[max(8px,env(safe-area-inset-top))] max-md:h-14 max-md:gap-2.5 max-md:px-2.5">
+        <div className="topbar-title flex shrink-0 items-center gap-3.5">
+          {showSidebar && !mobile && <button className="mobile-menu flex size-8 shrink-0 items-center justify-center rounded-full text-muted hover:bg-glass-hover min-[901px]:hidden" onClick={() => setMenuOpen((open) => !open)} aria-label="Toggle navigation" aria-expanded={menuOpen}>{menuOpen ? <X size={16} /> : <Menu size={16} />}</button>}
+          <NavLink className="brand group flex items-center gap-2.5 text-slate-950 dark:text-white font-semibold text-[15px] tracking-tight no-underline whitespace-nowrap" to="/overview" aria-label="TracePilot overview">
             <BrandIcon />
-            <span className="text-slate-950 dark:text-white font-semibold tracking-tight">TracePilot</span>
-            <span className="rounded-full border border-glass-edge bg-glass-nested px-2 py-0.5 text-[10px] font-semibold tracking-wider text-muted uppercase">Console</span>
+            <span className={`text-slate-950 dark:text-white font-semibold tracking-tight ${mobile && session ? "max-[389px]:sr-only" : ""}`}>TracePilot</span>
+            <span className="rounded-full border border-glass-edge bg-glass-nested px-2 py-0.5 text-[10px] font-semibold tracking-wider text-muted uppercase max-md:hidden">Console</span>
           </NavLink>
         </div>
-        <div className="topbar-actions flex min-w-0 items-center gap-3 max-[620px]:w-full max-[620px]:flex-nowrap max-[620px]:gap-1.5 [&>.theme-toggle]:shrink-0">
-          <ThemeToggle />
-          {session ? <SessionControls status={status} dot={statusDotBg} environment={environment} onEnvironment={switchEnvironment} />
-            : <NavLink to="/flow" className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-700 dark:text-sky-300 hover:text-slate-950 dark:hover:text-white px-3.5 py-1.5 rounded-full backdrop-blur-2xl bg-white/70 dark:bg-white/5 border border-white/80 dark:border-white/10 shadow-xs active:scale-95 transition-all no-underline"><GitBranch size={13} /> Architecture</NavLink>}
+        <div className={`topbar-actions flex min-w-0 items-center gap-3 [&>.theme-toggle]:shrink-0 ${mobile ? "flex-1 justify-end gap-2" : ""}`}>
+          {mobile && session ? <ScopeChip environment={environment} onEnvironment={switchEnvironment} dot={statusDotBg} /> : <>
+            <ThemeToggle />
+            {session ? <SessionControls status={status} dot={statusDotBg} environment={environment} onEnvironment={switchEnvironment} />
+              : <NavLink to="/flow" aria-label="Architecture" className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-700 dark:text-sky-300 hover:text-slate-950 dark:hover:text-white px-3.5 py-1.5 rounded-full backdrop-blur-2xl bg-white/70 dark:bg-white/5 border border-white/80 dark:border-white/10 shadow-xs active:scale-95 transition-all no-underline max-md:size-9 max-md:justify-center max-md:p-0"><GitBranch size={13} /><span className="max-md:sr-only">Architecture</span></NavLink>}
+          </>}
         </div>
       </header>
       <main className={`flex-1 min-h-0 overflow-hidden w-full relative z-10 ${showSidebar ? `grid gap-3.5 p-3 md:p-4 min-[901px]:pr-0 max-[900px]:grid-cols-1 transition-[grid-template-columns] duration-200 ease-in-out ${collapsed ? "grid-cols-[56px_minmax(0,1fr)] sidebar-collapsed" : "grid-cols-[208px_minmax(0,1fr)]"}` : "flex flex-col"}`}>
-        {showSidebar && <Navigation open={menuOpen} collapsed={collapsed} onToggle={toggleCollapsed} />}
-        <section id="content" tabIndex={-1} className={`w-full h-full min-w-0 flex flex-col ${showSidebar ? "overflow-y-auto overflow-x-hidden min-[901px]:pr-4" : "overflow-hidden items-center justify-center"}`}>
+        {showSidebar && !mobile && <Navigation open={menuOpen} collapsed={collapsed} onToggle={toggleCollapsed} />}
+        <section id="content" tabIndex={-1} className={`w-full h-full min-w-0 flex flex-col ${showSidebar ? "overflow-y-auto overflow-x-hidden min-[901px]:pr-4" : "overflow-hidden items-center justify-center"} ${tabBar ? "pb-[calc(64px+env(safe-area-inset-bottom))]" : ""}`}>
           <div key={scopeKey} className="page-flow flex-1 flex flex-col min-h-0 w-full [&>*]:shrink-0">
             {mustChangePassword ? <ChangePasswordGate onChanged={adopt} /> : unknownProject ? <ErrorState error={new APIError(403, "Choose a project you have access to.")} /> : needsProject ? <NoProject /> : <AppRoutes isAuthenticated={isAuthenticated} />}
           </div>
         </section>
       </main>
+      {tabBar && <MobileTabBar status={status} dot={statusDotBg} />}
     </div>
   </AuthContext.Provider>;
 }

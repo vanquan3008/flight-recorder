@@ -103,23 +103,37 @@ test("renders 5000 spans with bounded rows and an inspector that cannot overlap 
   expect(mobileOverlap).toBe(false);
 });
 
-test("keeps scope controls usable on mobile in both themes", async ({ page }, testInfo) => {
+/** Phones keep the theme under More; wider screens show it in the header. */
+async function chooseTheme(page: Page, theme: string) {
+  const more = page.getByRole("navigation", { name: "Console sections" }).getByRole("button", { name: "More", exact: true });
+  await expect(more.or(page.getByRole("group", { name: "Color theme" }))).toBeVisible(); // the session has been restored
+  const onPhone = await more.isVisible();
+  if (onPhone) await more.click();
+  await page.getByRole("button", { name: `${theme} theme` }).click();
+  if (onPhone) await page.keyboard.press("Escape");
+}
+
+test("keeps the scope chip and the bottom bar usable on mobile in both themes", async ({ page }, testInfo) => {
   await mockConsole(page);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(`/overview?project=${projectID}&environment=production`);
   await expect(page.getByRole("heading", { name: "Errors observed in this window" })).toBeVisible();
   const header = await page.locator(".topbar").boundingBox();
-  expect(header!.height).toBeLessThan(130);
+  expect(header!.height).toBeLessThanOrEqual(64);
   expect(await page.evaluate(() => document.body.scrollWidth)).toBeLessThanOrEqual(390);
-  await expect(page.getByLabel("Project", { exact: true })).toBeVisible();
-  await expect(page.getByLabel("Environment", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Scope: Alpha, production\./ })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Toggle navigation" })).toHaveCount(0);
   for (const theme of ["Dark", "Light"]) {
-    await page.getByRole("button", { name: `${theme} theme` }).click();
+    await chooseTheme(page, theme);
     await expect(page.locator("html")).toHaveAttribute("data-theme", theme.toLowerCase());
+    await expect(page.getByRole("dialog")).toHaveCount(0);
     await page.screenshot({ path: testInfo.outputPath(`mobile-${theme.toLowerCase()}.png`), animations: "disabled" });
   }
-  await page.getByRole("button", { name: "Toggle navigation" }).click();
-  await expect(page.getByRole("navigation", { name: "Console sections" })).toBeVisible();
+  const bar = page.getByRole("navigation", { name: "Console sections" });
+  await expect(bar).toBeInViewport();
+  await bar.getByRole("link", { name: "Logs" }).click();
+  await expect(page.getByRole("heading", { name: "Log explorer" })).toBeVisible();
+  expect(new URL(page.url()).searchParams.get("environment")).toBe("production");
 });
 
 test("shows themed scope dropdowns above the page and keeps keyboard selection scoped", async ({ page }, testInfo) => {
@@ -154,20 +168,62 @@ test("shows themed scope dropdowns above the page and keeps keyboard selection s
   await expect(page.getByRole("listbox")).toHaveCount(0);
 });
 
-test("keeps the open environment menu inside narrow mobile viewports", async ({ page }, testInfo) => {
+test("keeps the scope sheet inside narrow mobile viewports", async ({ page }, testInfo) => {
   await mockConsole(page);
   for (const width of [390, 320]) {
     await page.setViewportSize({ width, height: 844 });
     await page.goto(`/logs?project=${projectID}`);
-    await page.getByRole("combobox", { name: "Environment", exact: true }).click();
-    const menu = await page.getByRole("listbox", { name: "Environment options" }).boundingBox();
-    expect(menu!.x).toBeGreaterThanOrEqual(12);
-    expect(menu!.x + menu!.width).toBeLessThanOrEqual(width - 12);
+    await page.getByRole("button", { name: /^Scope: Alpha/ }).click();
+    const sheet = page.getByRole("dialog", { name: "Project and environment" });
+    const box = await sheet.boundingBox();
+    expect(box!.x).toBeGreaterThanOrEqual(0);
+    expect(box!.x + box!.width).toBeLessThanOrEqual(width);
     expect(await page.evaluate(() => document.body.scrollWidth)).toBeLessThanOrEqual(width);
-    await page.screenshot({ path: testInfo.outputPath(`scope-dropdown-mobile-${width}.png`), animations: "disabled" });
-    await page.getByRole("option", { name: "development", exact: true }).click();
-    await expect(page.getByRole("listbox")).toHaveCount(0);
-    expect(new URL(page.url()).searchParams.get("environment")).toBe("development");
+    await page.screenshot({ path: testInfo.outputPath(`scope-sheet-mobile-${width}.png`), animations: "disabled" });
+    await sheet.getByRole("button", { name: "development", exact: true }).click();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect.poll(() => new URL(page.url()).searchParams.get("environment")).toBe("development");
+  }
+});
+
+test("keeps log filters, environment actions and topology controls inside their panels", async ({ page }) => {
+  await mockConsole(page);
+  for (const width of [768, 901]) {
+    await page.setViewportSize({ width, height: 780 });
+    await page.goto(`/logs?project=${projectID}&service=checkout`);
+    await expect(page.getByRole("button", { name: "Clear filters", exact: true })).toBeVisible();
+    const clipped = await page.locator(".log-toolbar-bar").evaluate((toolbar) => {
+      const bounds = toolbar.getBoundingClientRect();
+      return [...toolbar.querySelectorAll('input:not([type="hidden"]), button')].some((control) => {
+        const box = control.getBoundingClientRect();
+        return box.width === 0 || box.left < bounds.left - 1 || box.right > bounds.right + 1;
+      });
+    });
+    expect(clipped).toBe(false);
+  }
+
+  await page.setViewportSize({ width: 1024, height: 780 });
+  await page.goto(`/settings?project=${projectID}`);
+  const add = page.getByRole("button", { name: "Add environment", exact: true });
+  await expect(add).toBeVisible();
+  expect(await add.evaluate((button) => {
+    const form = button.closest("form")!.getBoundingClientRect();
+    const box = button.getBoundingClientRect();
+    return box.left >= form.left - 1 && box.right <= form.right + 1;
+  })).toBe(true);
+
+  for (const width of [320, 768]) {
+    await page.setViewportSize({ width, height: 780 });
+    await page.goto(`/topology?project=${projectID}`);
+    await page.getByRole("button", { name: "Graph", exact: true }).click();
+    await page.getByRole("button", { name: "SERVICE payments", exact: true }).click();
+    const graph = page.getByRole("region", { name: "Dependency graph" });
+    await expect(graph.getByText(/2 nodes.*1 relationship/)).toBeVisible();
+    const drawer = page.getByRole("complementary", { name: "Details for payments" });
+    await drawer.getByRole("link", { name: "Trace ↗", exact: true }).click({ trial: true });
+    expect(await graph.locator("header").first().evaluate((header) => header.scrollWidth - header.clientWidth)).toBeLessThanOrEqual(1);
+    expect(await drawer.evaluate((panel) => panel.scrollWidth - panel.clientWidth)).toBeLessThanOrEqual(1);
+    expect(await drawer.evaluate((panel) => panel.scrollHeight - panel.clientHeight)).toBeLessThanOrEqual(1);
   }
 });
 
@@ -177,7 +233,7 @@ for (const theme of ["Light", "Dark"] as const) {
       await mockConsole(page);
       await page.setViewportSize({ width, height: 1000 });
       await page.goto(`/overview?project=${projectID}`);
-      await page.getByRole("button", { name: `${theme} theme` }).click();
+      await chooseTheme(page, theme);
       const routes = [
         ["overview", "Telemetry overview"], ["performance", "Performance"], ["logs", "Log explorer"],
         ["topology", "Service and dependency topology"], ["settings", "Settings"], ["incidents", "Incidents"],

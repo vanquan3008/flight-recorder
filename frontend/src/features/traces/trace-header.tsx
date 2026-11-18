@@ -14,13 +14,14 @@ export function TraceHeader({ model, traceID }: { model: TraceModel; traceID: st
     { label: "Errors", value: String(model.errors), Icon: CircleAlert },
   ];
   return <header className="min-w-0">
-    <div className="mb-4 flex flex-wrap items-center justify-between gap-3 text-xs text-muted">
-      <div className="[&_.back-link]:inline-flex [&_.back-link]:items-center [&_.back-link]:gap-1.5"><BackLink fallback="/traces" fallbackLabel="traces" /></div>
-      <div className="flex min-w-0 items-center gap-2"><span className="text-[10px] font-semibold uppercase tracking-wider">Trace ID</span><code className="truncate text-[11px] text-muted">{traceID}</code><CopyButton value={traceID} label="Copy trace ID" /></div>
+    <div className="mb-4 flex flex-wrap items-center justify-between gap-3 text-xs text-muted max-md:mb-3">
+      <div className="[&_.back-link]:inline-flex [&_.back-link]:min-h-9 [&_.back-link]:items-center [&_.back-link]:gap-1.5"><BackLink fallback="/traces" fallbackLabel="traces" /></div>
+      <div className="flex min-w-0 max-w-full items-center gap-2"><span className="shrink-0 text-[10px] font-semibold uppercase tracking-wider">Trace ID</span><code className="min-w-0 truncate text-[11px] text-muted">{traceID}</code><CopyButton value={traceID} label="Copy trace ID" /></div>
     </div>
     <div className="overflow-hidden rounded-2xl border border-line bg-surface-solid shadow-sm">
-      <div className="flex flex-wrap items-start justify-between gap-4 px-5 py-5 sm:px-6">
-        <div className="min-w-0 flex-1">
+      <div className="flex flex-wrap items-start justify-between gap-4 px-5 py-5 sm:px-6 max-md:gap-3 max-md:px-4 max-md:py-4">
+        {/* Wrap the status badges below the title before the title gets narrower than 18rem. */}
+        <div className="min-w-0 flex-[1_1_18rem]">
           <div className="mb-2.5 flex flex-wrap items-center gap-2 text-xs text-muted">
             <span className="inline-flex items-center gap-1.5 font-semibold text-text"><Activity size={14} className="text-accent" />Trace detail</span>
             <span aria-hidden="true">/</span><span>{root?.service_name || "No service recorded"}</span>

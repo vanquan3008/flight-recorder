@@ -64,13 +64,19 @@ for (const theme of ["Light", "Dark"]) {
   });
 }
 
-test("keeps every column reachable on mobile without clipping page content", async ({ page }, testInfo) => {
+test("stacks each record on mobile so every field is reachable without sideways scrolling", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await openLogs(page);
+  const logs = await openLogs(page);
   const viewport = page.getByRole("region", { name: "Log records, scrollable" });
   expect(await page.evaluate(() => document.body.scrollWidth)).toBeLessThanOrEqual(390);
-  expect(await viewport.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
-  await viewport.evaluate((element) => { element.scrollLeft = element.scrollWidth; });
-  await expect(page.locator(".log-table-row").first().getByRole("button", { name: "Copy log body" })).toBeVisible();
+  expect(await viewport.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+  const row = page.locator(".log-table-row").nth(1);
+  for (const field of [row.locator(".log-col-service"), row.locator(".log-col-severity"), row.getByRole("button", { name: "Copy log body" }), row.getByRole("link", { name: "Open trace" })]) {
+    await expect(field).toBeInViewport();
+  }
+  const box = await row.boundingBox();
+  expect(box!.x + box!.width).toBeLessThanOrEqual(390);
+  await page.locator(".log-table-row").nth(3).getByRole("button", { name: "Expand log details" }).click();
+  await expect(page.locator(".log-detail-row pre")).toHaveText(logs[3].body);
   await page.screenshot({ path: testInfo.outputPath("logs-mobile.png"), animations: "disabled" });
 });
