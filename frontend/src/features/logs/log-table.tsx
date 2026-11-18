@@ -19,10 +19,11 @@ export function LogTable({ logs, expanded, hasMore, loading, limitReached, onLoa
   }, [hasMore, loading, onLoadMore]);
 
   return <div ref={viewport} className="table-wrap log-table-wrap min-h-0 w-full flex-1 overflow-auto overscroll-contain focus-visible:-outline-offset-2" tabIndex={0} role="region" aria-label="Log records, scrollable">
-    <table className="log-table w-full min-w-[960px] table-fixed border-collapse text-xs">
-      <caption className="sr-only">Log records. Scroll horizontally on smaller screens to see all columns. Expand a row to read the full message and request metadata.</caption>
+    {/* Phones stack each record into a compact block instead of scrolling a 960px table sideways. */}
+    <table className="log-table w-full table-fixed border-collapse text-xs md:min-w-[960px] max-md:block">
+      <caption className="sr-only">Log records. Expand a row to read the full message and request metadata.</caption>
       <colgroup><col className="w-10" /><col className="w-32" /><col className="w-[148px]" /><col className="w-[100px]" /><col /><col className="w-[110px]" /><col className="w-[52px]" /></colgroup>
-      <thead><tr>
+      <thead className="max-md:hidden"><tr>
         <th scope="col" className={`${heading} px-1.5`}><span className="sr-only">Expand</span></th>
         <th scope="col" className={heading}>Time</th>
         <th scope="col" className={heading}>Service</th>
@@ -31,9 +32,9 @@ export function LogTable({ logs, expanded, hasMore, loading, limitReached, onLoa
         <th scope="col" className={heading}>Trace</th>
         <th scope="col" className={heading}><span className="sr-only">Copy</span></th>
       </tr></thead>
-      <tbody>
+      <tbody className="max-md:block">
         {logs.map((log) => <LogRow key={log.event_id} log={log} forceOpen={expanded} />)}
-        {hasMore && <tr ref={sentinel} className="border-t border-line-soft"><td colSpan={7} className="px-4 py-4 text-center text-xs text-muted">
+        {hasMore && <tr ref={sentinel} className="border-t border-line-soft max-md:block"><td colSpan={7} className="px-4 py-4 text-center text-xs text-muted max-md:block">
           <button type="button" disabled={loading} onClick={() => void onLoadMore()} className="inline-flex items-center gap-2 rounded-lg border border-line bg-glass-field px-3 py-1.5 text-[11px] font-medium hover:bg-hover">
             {loading ? <><LoaderCircle size={13} className="animate-spin" aria-hidden="true" />Loading more logs…</> : "Load more logs"}
           </button>

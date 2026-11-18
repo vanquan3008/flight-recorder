@@ -31,14 +31,15 @@ export function CreateProjectForm({ onCreated }: { onCreated?: (project: Project
     create.mutate({ name: name.trim(), slug: slug || slugFrom(name), environment: String(values.get("environment") || "").trim() });
   };
   return (
-    <div className="border-b border-black/5 dark:border-white/10 bg-slate-500/[0.02] dark:bg-white/[0.015] p-5 sm:p-6">
-      <form className={`settings-form ${settingsFormClass} project-form max-w-[980px] border-b-0 px-0 pt-3.5 pb-0 min-[901px]:grid-cols-[minmax(180px,1.2fr)_minmax(160px,1fr)_minmax(160px,1fr)_auto] max-w-5xl`} onSubmit={submit}>
+    // Columns follow the form's own width: the first-project gate is a narrow panel even on a wide screen.
+    <div className="@container border-b border-black/5 dark:border-white/10 bg-slate-500/[0.02] dark:bg-white/[0.015] p-4 sm:p-6">
+      <form className={`settings-form ${settingsFormClass} project-form max-w-[980px] border-b-0 px-0 pt-3.5 pb-0 @min-[720px]:grid-cols-[minmax(180px,1.2fr)_minmax(160px,1fr)_minmax(160px,1fr)_auto]`} onSubmit={submit}>
         <div className="col-span-full mb-1">
           <div className="flex items-center gap-2">
             <span className="p-1.5 rounded-lg bg-indigo-500/10 text-indigo-600 dark:text-indigo-400">
               <FolderPlus size={16} />
             </span>
-            <h3 className="settings-form-title col-span-full m-0 text-[11px] font-bold uppercase tracking-wider text-faint !m-0 !text-[12px] !font-bold ">New project</h3>
+            <h3 className="settings-form-title m-0 text-[12px] font-bold uppercase tracking-wider text-faint">New project</h3>
           </div>
           <p className="text-[12.5px] text-slate-500 dark:text-slate-400 mt-1 m-0">Create a dedicated space to collect traces, spans, and metrics for your team.</p>
         </div>
@@ -54,7 +55,7 @@ export function CreateProjectForm({ onCreated }: { onCreated?: (project: Project
           First environment
           <input name="environment" maxLength={63} placeholder="production" />
         </label>
-        <div className="settings-submit flex items-end [&>button]:inline-flex [&>button]:items-center [&>button]:justify-center [&>button]:gap-1.5 [&>button]:whitespace-nowrap [&>button]:rounded-lg [&>button]:border [&>button]:border-btn-border [&>button]:bg-btn [&>button]:px-5.5 [&>button]:py-2 [&>button]:text-[13px] [&>button]:font-semibold [&>button]:text-btn-text [&>button:hover]:bg-btn-hover max-[900px]:[&>button]:w-full">
+        <div className="settings-submit flex items-end [&>button]:inline-flex [&>button]:items-center [&>button]:justify-center [&>button]:gap-1.5 [&>button]:whitespace-nowrap [&>button]:rounded-lg [&>button]:border [&>button]:border-btn-border [&>button]:bg-btn [&>button]:px-5.5 [&>button]:py-2 [&>button]:text-[13px] [&>button]:font-semibold [&>button]:text-btn-text [&>button:hover]:bg-btn-hover @max-[719px]:[&>button]:w-full">
           <button type="submit" disabled={create.isPending} className="inline-flex items-center justify-center gap-1.5 shadow-sm">
             <Plus size={15} />
             <span>{create.isPending ? "Creating…" : "Create project"}</span>
@@ -150,7 +151,7 @@ export function ProjectsSection() {
         <div className="p-5 sm:p-6 border-b border-black/5 dark:border-white/10 bg-slate-500/[0.015] dark:bg-white/[0.01]">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
             {/* Card 1: Rename project */}
-            <div className="rounded-2xl p-5 bg-white/70 dark:bg-slate-900/50 border border-black/5 dark:border-white/10 shadow-xs">
+            <div className="@container min-w-0 rounded-2xl p-5 bg-white/70 dark:bg-slate-900/50 border border-black/5 dark:border-white/10 shadow-xs">
               <div className="flex items-center gap-2 mb-1">
                 <span className="p-1.5 rounded-lg bg-slate-500/10 text-slate-700 dark:text-slate-300">
                   <Pencil size={15} />
@@ -158,12 +159,12 @@ export function ProjectsSection() {
                 <h3 className="settings-form-title col-span-full m-0 text-[11px] font-bold uppercase tracking-wider text-faint !m-0 !text-[12px] !font-bold">Rename project</h3>
               </div>
               <p className="text-[12px] text-slate-500 dark:text-slate-400 mb-4">Change the display name of this project across the console.</p>
-              <form className={`settings-form ${settingsFormClass} single-field-form w-full justify-start min-[901px]:grid-cols-[minmax(180px,1fr)_auto] !p-0 !border-0 !gap-3`} onSubmit={submitRename} key={current.project.name}>
+              <form className={`settings-form ${settingsFormClass} single-field-form w-full @min-[22rem]:grid-cols-[minmax(0,1fr)_auto] !p-0 !border-0 !gap-3`} onSubmit={submitRename} key={current.project.name}>
                 <label className="w-full">
                   Name
                   <input name="name" defaultValue={current.project.name} required maxLength={100} className="w-full" />
                 </label>
-                <div className="settings-submit flex items-end [&>button]:inline-flex [&>button]:items-center [&>button]:justify-center [&>button]:gap-1.5 [&>button]:whitespace-nowrap [&>button]:rounded-lg [&>button]:border [&>button]:border-btn-border [&>button]:bg-btn [&>button]:px-5.5 [&>button]:py-2 [&>button]:text-[13px] [&>button]:font-semibold [&>button]:text-btn-text [&>button:hover]:bg-btn-hover max-[900px]:[&>button]:w-full">
+                <div className="settings-submit flex items-end [&>button]:inline-flex [&>button]:items-center [&>button]:justify-center [&>button]:gap-1.5 [&>button]:whitespace-nowrap [&>button]:rounded-lg [&>button]:border [&>button]:border-btn-border [&>button]:bg-btn [&>button]:px-5.5 [&>button]:py-2 [&>button]:text-[13px] [&>button]:font-semibold [&>button]:text-btn-text [&>button:hover]:bg-btn-hover @max-[22rem]:[&>button]:w-full">
                   <button type="submit" disabled={rename.isPending} className="!bg-slate-900 hover:!bg-slate-800 dark:!bg-slate-100 dark:!text-slate-900 dark:hover:!bg-white !text-white !font-bold !text-xs !px-4 !py-2.5 !rounded-xl transition-all shadow-xs">
                     {rename.isPending ? "Saving…" : "Save name"}
                   </button>
@@ -173,7 +174,7 @@ export function ProjectsSection() {
             </div>
 
             {/* Card 2: Add an environment */}
-            <div className="rounded-2xl p-5 bg-white/70 dark:bg-slate-900/50 border border-black/5 dark:border-white/10 shadow-xs">
+            <div className="@container min-w-0 rounded-2xl p-5 bg-white/70 dark:bg-slate-900/50 border border-black/5 dark:border-white/10 shadow-xs">
               <div className="flex items-center gap-2 mb-1">
                 <span className="p-1.5 rounded-lg bg-indigo-500/10 text-indigo-600 dark:text-indigo-400">
                   <Layers size={15} />
@@ -181,12 +182,12 @@ export function ProjectsSection() {
                 <h3 className="settings-form-title col-span-full m-0 text-[11px] font-bold uppercase tracking-wider text-faint !m-0 !text-[12px] !font-bold">Add an environment</h3>
               </div>
               <p className="text-[12px] text-slate-500 dark:text-slate-400 mb-4">Create partitions like staging, production, or testing.</p>
-              <form className={`settings-form ${settingsFormClass} single-field-form w-full justify-start min-[901px]:grid-cols-[minmax(180px,1fr)_auto] !p-0 !border-0 !gap-3`} onSubmit={submitEnvironment}>
+              <form className={`settings-form ${settingsFormClass} single-field-form w-full @min-[22rem]:grid-cols-[minmax(0,1fr)_auto] !p-0 !border-0 !gap-3`} onSubmit={submitEnvironment}>
                 <label className="w-full">
                   Name
                   <input name="environment" required maxLength={63} placeholder="e.g. staging" className="w-full" />
                 </label>
-                <div className="settings-submit flex items-end [&>button]:inline-flex [&>button]:items-center [&>button]:justify-center [&>button]:gap-1.5 [&>button]:whitespace-nowrap [&>button]:rounded-lg [&>button]:border [&>button]:border-btn-border [&>button]:bg-btn [&>button]:px-5.5 [&>button]:py-2 [&>button]:text-[13px] [&>button]:font-semibold [&>button]:text-btn-text [&>button:hover]:bg-btn-hover max-[900px]:[&>button]:w-full">
+                <div className="settings-submit flex items-end [&>button]:inline-flex [&>button]:items-center [&>button]:justify-center [&>button]:gap-1.5 [&>button]:whitespace-nowrap [&>button]:rounded-lg [&>button]:border [&>button]:border-btn-border [&>button]:bg-btn [&>button]:px-5.5 [&>button]:py-2 [&>button]:text-[13px] [&>button]:font-semibold [&>button]:text-btn-text [&>button:hover]:bg-btn-hover @max-[22rem]:[&>button]:w-full">
                   <button type="submit" disabled={addEnvironment.isPending} className="inline-flex items-center gap-1.5 !text-xs !font-bold !px-4 !py-2.5 !rounded-xl shadow-xs">
                     <Plus size={15} />
                     <span>{addEnvironment.isPending ? "Adding…" : "Add environment"}</span>

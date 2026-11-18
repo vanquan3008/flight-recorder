@@ -1,5 +1,5 @@
-import { secondaryButtonClass, toolbarClass } from "../../shared/ui/styles";
-import { Columns, Radio, Rows, Search, X } from "lucide-react";
+import { secondaryButtonClass } from "../../shared/ui/styles";
+import { Columns, Radio, Rows } from "lucide-react";
 import type { FormEvent } from "react";
 import { useCallback, useState } from "react";
 import { useSearchParams } from "react-router-dom";
@@ -16,7 +16,7 @@ import {
   useTimeWindow,
 } from "../../shared/ui";
 import { matchesLogFilters, mergeLogs } from "./log-model";
-import { severityGroups } from "./log-format";
+import { LogFilters } from "./log-filters";
 import { LogTable } from "./log-table";
 
 const filterNames = ["service", "severity", "search", "traceId", "spanId"];
@@ -101,80 +101,11 @@ export function LogsPage() {
       )}
       {streamError && <ErrorState error={streamError} />}
 
-      <div className="log-toolbar-bar mb-4 flex w-full flex-wrap items-center justify-between gap-3 max-[960px]:flex-col max-[960px]:items-stretch">
-        <div className="log-toolbar-left flex flex-1 flex-wrap items-center gap-2.5">
-          <div className="severity-chips inline-flex h-9 shrink-0 items-center gap-0.5 self-start rounded-xl border border-glass-field-edge bg-glass-field p-0.75" role="group" aria-label="Quick severity filter">
-            {["", ...severityGroups.slice(2)].map((severity) => {
-              const selected = (params.get("severity") || "") === severity;
-              const toneColor = !selected && (
-                severity === "ERROR" || severity === "FATAL"
-                  ? "text-rose-500"
-                  : severity === "WARN"
-                    ? "text-amber-500"
-                    : severity === "INFO"
-                      ? "text-sky-500"
-                      : "text-muted"
-              );
-              return (
-                <button
-                  type="button"
-                  key={severity || "all"}
-                  className={`severity-chip inline-flex h-full cursor-pointer items-center justify-center rounded-lg border px-3 text-[11px] leading-none font-bold tracking-wide uppercase transition-colors hover:bg-glass-hover hover:text-text ${
-                    selected
-                      ? "border-btn-border bg-btn text-btn-text"
-                      : `border-transparent ${toneColor || "text-muted"}`
-                  } ${severity}`}
-                  aria-pressed={selected}
-                  onClick={() => pick(severity)}
-                >
-                  {severity || "All"}
-                </button>
-              );
-            })}
-          </div>
+      <div className="log-toolbar-bar mb-4 flex w-full flex-wrap items-start justify-between gap-3 max-md:mb-3">
+        <LogFilters params={params} formKey={filterNames.map((name) => params.get(name) || "").join("|")} active={active}
+          onSubmit={submit} onPick={pick} onClear={clear} />
 
-          <form
-            className={`toolbar ${toolbarClass} log-filters m-0 flex flex-1 min-w-0 max-w-full flex-wrap items-center gap-2 [&_input]:h-9 [&_input]:min-w-0 [&_input]:rounded-lg [&_input]:border [&_input]:border-glass-field-edge [&_input]:bg-glass-field [&_input]:px-3 [&_input]:text-[12.5px] [&_input:focus]:border-accent [&_input:focus]:ring-2 [&_input:focus]:ring-accent/15 [&_input:focus]:outline-none [&_input[name=service]]:max-w-[170px] [&_input[name=service]]:flex-[1_1_130px] [&_input[name=search]]:max-w-[360px] [&_input[name=search]]:flex-[2_1_200px] [&_input[name=traceId]]:max-w-[190px] [&_input[name=traceId]]:flex-[1.2_1_140px] [&_input[name=traceId]]:font-mono [&_input[name=spanId]]:max-w-[140px] [&_input[name=spanId]]:flex-[1_1_110px] [&_input[name=spanId]]:font-mono [&_button]:h-9 [&_button]:shrink-0 [&_button]:px-4 [&_button:not(.button-secondary)]:inline-flex [&_button:not(.button-secondary)]:items-center [&_button:not(.button-secondary)]:gap-1.5 [&_button:not(.button-secondary)]:rounded-lg [&_button:not(.button-secondary)]:bg-btn [&_button:not(.button-secondary)]:text-xs [&_button:not(.button-secondary)]:font-semibold [&_button:not(.button-secondary)]:text-btn-text max-[960px]:grid max-[960px]:w-full max-[960px]:grid-cols-2 max-[960px]:[&_input]:max-w-none max-[960px]:[&_input[name=search]]:col-span-full`}
-            key={filterNames.map((name) => params.get(name) || "").join("|")}
-            onSubmit={submit}
-          >
-            <input
-              name="service"
-              placeholder="Service"
-              aria-label="Filter logs by service"
-              defaultValue={params.get("service") || ""}
-            />
-            <input type="hidden" name="severity" value={params.get("severity") || ""} />
-            <input
-              name="search"
-              placeholder="Search body text"
-              aria-label="Search log body"
-              defaultValue={search}
-            />
-            <input
-              name="traceId"
-              placeholder="Trace ID"
-              aria-label="Filter logs by trace ID"
-              defaultValue={traceID}
-            />
-            <input
-              name="spanId"
-              placeholder="Span ID"
-              aria-label="Filter logs by span ID"
-              defaultValue={params.get("spanId") || ""}
-            />
-            <button type="submit">
-              <Search size={15} /> Search logs
-            </button>
-            {active.length > 0 && (
-              <button type="button" className={`button-secondary ${secondaryButtonClass}`} onClick={clear}>
-                <X size={15} /> Clear filters
-              </button>
-            )}
-          </form>
-        </div>
-
-        <div className="log-toolbar-actions inline-flex items-center gap-2">
+        <div className="log-toolbar-actions inline-flex items-center gap-2 max-md:hidden">
           <button
             type="button"
             className={`density-toggle-btn ${secondaryButtonClass} h-9 ${density === "expanded" ? "border-accent bg-accent/12 text-accent active" : "text-muted"}`}

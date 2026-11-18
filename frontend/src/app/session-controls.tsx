@@ -1,9 +1,7 @@
-import { useQuery } from "@tanstack/react-query";
 import { LogOut, RefreshCw } from "lucide-react";
-import { api } from "../shared/api";
-import type { ProjectDetail } from "../shared/session";
 import { useAuth } from "../shared/session";
 import { ScopeSelect } from "./scope-select";
+import { initialOf, useEnvironmentOptions } from "./use-environments";
 
 export function SessionControls({
   status,
@@ -16,23 +14,11 @@ export function SessionControls({
   environment: string;
   onEnvironment: (value: string) => void;
 }) {
-  const { credential, session } = useAuth();
-  const projectID = session?.project?.project.id;
-  const detail = useQuery({
-    queryKey: ["project", projectID],
-    enabled: Boolean(projectID) && !session?.user.must_change_password,
-    queryFn: ({ signal }) => api<ProjectDetail>(`/api/v1/projects/${projectID}`, credential, { signal }),
-  });
+  const { session } = useAuth();
+  const { detail, options: environmentOptions, projectID } = useEnvironmentOptions(environment);
 
   if (!session) return null;
-  const environments = detail.data?.environments ?? [];
-  const environmentOptions = [
-    { value: "", label: "Default environment" },
-    ...(environment && !environments.some((item) => item.name === environment || item.id === environment)
-      ? [{ value: environment, label: environment }] : []),
-    ...environments.map((item) => ({ value: environment === item.id ? item.id : item.name, label: item.name })),
-  ];
-  const initial = session.user.display_name ? session.user.display_name.trim().charAt(0).toUpperCase() : "U";
+  const initial = initialOf(session.user.display_name);
 
   return (
     <div className="session-controls flex min-w-0 items-center gap-2 max-[620px]:flex-1 max-[620px]:gap-1">

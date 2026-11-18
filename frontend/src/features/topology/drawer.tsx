@@ -67,7 +67,7 @@ export function ServiceDrawer({ node, callers, callees, logs, logLink, onSelect,
     ["Calls in", total(callers, "call_count")], ["Calls out", total(callees, "call_count")],
     ["Errors on calls out", total(callees, "error_count")], ["Errors on calls in", total(callers, "error_count")],
   ] as const;
-  return <aside className="topology-drawer flex h-full max-h-none min-h-0 min-w-0 flex-col overflow-y-auto border-l border-glass-divider bg-glass-nested max-[900px]:border-t max-[900px]:border-l-0" aria-label={`Details for ${node.name}`} onKeyDown={(event) => { if (event.key === "Escape") onClose(); }}>
+  return <aside className="topology-drawer @container/drawer flex h-full max-h-none min-h-0 min-w-0 flex-col overflow-y-auto border-l border-glass-divider bg-glass-nested max-[900px]:h-auto max-[900px]:overflow-visible max-[900px]:border-t max-[900px]:border-l-0" aria-label={`Details for ${node.name}`} onKeyDown={(event) => { if (event.key === "Escape") onClose(); }}>
     <header className="drawer-head flex items-start justify-between gap-2.5 border-b border-glass-divider px-4.5 pt-3.5 pb-2.5">
       <div className="flex min-w-0 flex-col gap-1">
         <div className="flex items-center gap-2">
@@ -104,7 +104,7 @@ export function ServiceDrawer({ node, callers, callees, logs, logLink, onSelect,
       {!logs ? <Empty>{node.type} dependencies do not write logs. Select a caller to read its logs.</Empty>
         : logs.isPending ? <Loading />
         : logs.isError ? <ErrorState error={logs.error} retry={() => void logs.refetch()} />
-        : logs.data.data.length ? <ul className="drawer-log-list m-0 flex list-none flex-col gap-1 p-0 [&>li]:grid [&>li]:grid-cols-[135px_76px_1fr] [&>li]:items-center [&>li]:gap-x-2.5 [&>li]:gap-y-1 [&>li]:rounded-lg [&>li]:border [&>li]:border-glass-divider [&>li]:bg-glass-field [&>li]:px-2.5 [&>li]:py-1.75 [&>li]:text-[11.5px] [&>li:hover]:bg-glass-hover [&_time]:flex [&_time]:min-w-0 [&_time]:overflow-hidden [&_time]:font-mono [&_time]:text-[10.5px] [&_time]:text-muted [&_.badge]:justify-center [&_.badge]:text-[9.5px] [&_.log-line-code]:col-span-full [&_.log-line-code]:text-[11px] [&_.log-trace-pill]:justify-self-end">{logs.data.data.slice(0, shownLogs).map((log) => <li key={log.event_id}>
+        : logs.data.data.length ? <ul className="drawer-log-list m-0 flex list-none flex-col gap-1 p-0 [&>li]:grid [&>li]:grid-cols-[minmax(0,1fr)_auto] @min-[21rem]/drawer:[&>li]:grid-cols-[minmax(0,1fr)_auto_auto] [&>li]:items-center [&>li]:gap-x-2.5 [&>li]:gap-y-1 [&>li]:rounded-lg [&>li]:border [&>li]:border-glass-divider [&>li]:bg-glass-field [&>li]:px-2.5 [&>li]:py-1.75 [&>li]:text-[11.5px] [&>li:hover]:bg-glass-hover [&_time]:min-w-0 [&_time]:font-mono [&_time]:text-[10.5px] [&_time]:text-muted [&_.badge]:justify-center [&_.badge]:text-[9.5px] [&_.log-line-code]:col-span-full [&_.log-line-code]:text-[11px] [&_.log-trace-pill]:justify-self-end @max-[21rem]/drawer:[&_.log-trace-pill]:col-start-2 @max-[21rem]/drawer:[&_.log-trace-pill]:row-start-3">{logs.data.data.slice(0, shownLogs).map((log) => <li key={log.event_id}>
           <time title={formatTime(log.occurred_at)}><TimeCell value={log.occurred_at} /></time>
           <Badge value={normalizeSeverity(log.severity_text)} />
           {log.trace_id && <DetailLink to={`/traces/${log.trace_id}`} className={`log-trace-pill ${secondaryButtonClass} rounded-full px-2.25 py-0.5 text-[11px] text-accent no-underline`}>Trace ↗</DetailLink>}

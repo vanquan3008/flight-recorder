@@ -65,15 +65,15 @@ export function KeyValueTable({ data, placeholder }: { data?: Record<string, unk
   return (
     <div className="min-w-0">
       {entries.length > 4 && (
-        <div className="relative mx-3 my-3">
-          <Search size={12} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-faint" />
-          <input className="border border-glass-field-edge bg-glass-field text-text focus:border-accent focus:ring-2 focus:ring-accent/15 h-8 w-full rounded-md py-1 pr-7 pl-8 text-[11px]" aria-label={placeholder || "Filter properties"} placeholder={placeholder || "Filter properties…"} value={filter} onChange={(e) => setFilter(e.target.value)} />
-          {filter && <button type="button" className="absolute right-2 top-1/2 -translate-y-1/2 text-muted" aria-label="Clear property filter" onClick={() => setFilter("")}><X size={12} /></button>}
+        <div className="relative mx-4 my-3">
+          <Search size={13} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-faint" />
+          <input className="h-9 w-full rounded-lg border border-glass-field-edge bg-glass-field py-1 pr-9 pl-8 text-xs text-text focus:border-accent focus:ring-2 focus:ring-accent/15" aria-label={placeholder || "Filter properties"} placeholder={placeholder || "Filter properties…"} value={filter} onChange={(e) => setFilter(e.target.value)} />
+          {filter && <button type="button" className="absolute right-1 top-1/2 grid size-7 -translate-y-1/2 place-items-center rounded-md text-muted hover:bg-hover" aria-label="Clear property filter" onClick={() => setFilter("")}><X size={13} /></button>}
         </div>
       )}
-      <dl className="m-0 divide-y divide-line-soft">{filtered.map(([k, v]) => <div key={k} className="grid grid-cols-[minmax(0,45%)_minmax(0,1fr)] items-start gap-3 px-4 py-2.5 text-[11px]">
-        <dt className="break-words font-mono leading-relaxed text-muted">{k}</dt>
-        <dd className="m-0 flex min-w-0 items-start justify-between gap-1"><span className="min-w-0 break-all font-mono leading-relaxed">{renderVal(v)}</span><span className="shrink-0 opacity-50 hover:opacity-100 focus-within:opacity-100"><CopyButton value={typeof v === "object" ? JSON.stringify(v) : String(v)} label={`Copy ${k}`} /></span></dd>
+      <dl className="m-0 divide-y divide-line-soft">{filtered.map(([k, v]) => <div key={k} className="relative px-4 py-2 font-mono text-xs leading-relaxed">
+        <dt className="flex min-h-7 items-center pr-9 font-medium text-muted wrap-anywhere">{k}</dt>
+        <dd className="m-0 whitespace-pre-wrap wrap-anywhere">{renderVal(v)}<span className="absolute top-2 right-3"><CopyButton value={typeof v === "object" ? JSON.stringify(v) : String(v)} label={`Copy ${k}`} compact /></span></dd>
       </div>)}</dl>
       {filtered.length === 0 && <p className="m-0 px-4 py-6 text-center text-xs text-muted">No matching properties for “{filter}”.</p>}
     </div>

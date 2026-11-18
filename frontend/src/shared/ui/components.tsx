@@ -89,8 +89,8 @@ export function Loading({ page = false }: { page?: boolean }) {
   );
   if (!page) return <div className="loading grid gap-3 px-4 py-4.5 motion-safe:animate-appear" role="status">{label}<SkeletonRows /></div>;
   return (
-    <div className="loading grid gap-3 px-4 py-4.5 motion-safe:animate-appear loading-page gap-3.5 p-0" role="status">
-      <div className="sk-head grid gap-2.5 pt-1 pb-1.5" aria-hidden="true">
+    <div className="loading grid grid-cols-[minmax(0,1fr)] gap-3 px-4 py-4.5 motion-safe:animate-appear loading-page gap-3.5 p-0" role="status">
+      <div className="sk-head grid grid-cols-[minmax(0,1fr)] gap-2.5 pt-1 pb-1.5" aria-hidden="true">
         <i className="sk block h-3 rounded-md bg-linear-to-r from-text/7 via-text/14 to-text/7 bg-size-[240%_100%] motion-safe:animate-skeleton" style={{ width: 240, height: 24 }} />
         <i className="sk block h-3 rounded-md bg-linear-to-r from-text/7 via-text/14 to-text/7 bg-size-[240%_100%] motion-safe:animate-skeleton" style={{ width: 380, maxWidth: "70%", height: 12 }} />
       </div>

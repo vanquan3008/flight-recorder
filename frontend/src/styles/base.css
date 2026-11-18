@@ -10,6 +10,10 @@
   --animate-graph-flow: graph-flow .9s linear infinite;
   --animate-telemetry-drift: telemetry-drift 7s ease-in-out infinite;
   --animate-telemetry-flow: telemetry-flow 9s linear infinite;
+  --animate-sheet-up: sheet-up .22s cubic-bezier(.2, .8, .2, 1) both;
+  --animate-fade-in: fade-in .18s ease both;
+  @keyframes sheet-up { from { transform: translateY(100%); } to { transform: none; } }
+  @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
   @keyframes appear { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
   @keyframes skeleton { from { background-position: 120% 0; } to { background-position: -120% 0; } }
   @keyframes graph-flow { to { stroke-dashoffset: -14; } }
@@ -248,4 +252,17 @@
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
+}
+
+/*
+ * Phones: desktop pages fill the viewport and scroll their tables inside panels. On a phone that leaves
+ * one card visible in a nested scroller, so these pages grow with their content and the page scrolls.
+ * The log explorer keeps its own scroller: its infinite scroll observes that element.
+ */
+@media (max-width: 767px) {
+  :is(.trace-explorer-page, .incidents-page, .performance-page, .topology-page) { height: auto; max-height: none; overflow: visible; }
+  :is(.trace-explorer-page, .incidents-page, .performance-page, .topology-page, .overview-page) :is(.panel, .panel-fit) { flex: none; min-height: 0; }
+  :is(.trace-explorer-page, .incidents-page, .performance-page, .topology-page, .overview-page) .table-wrap { flex: none; max-height: none; overflow: visible; }
+  .page-header > :not(:first-child) { width: 100%; justify-content: flex-start; }
+  input, select, textarea { font-size: max(16px, 1em); } /* iOS zooms into fields below 16px */
 }
