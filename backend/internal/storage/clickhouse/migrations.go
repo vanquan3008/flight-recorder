@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/vanquan3008/tracepilot/db"
+	"github.com/vanquan3008/tracepilot/internal/config"
 	"github.com/vanquan3008/tracepilot/internal/storage/migrations"
 )
 
@@ -44,6 +46,26 @@ FROM tracepilot_schema_migrations GROUP BY version ORDER BY version DESC LIMIT 1
 		}
 	}
 	return migrations.NewStatus(history, state.Version, state.Dirty), nil
+}
+
+// RunMigration opens a short-lived client and applies ("up") or reports ("status") the log schema.
+func RunMigration(ctx context.Context, cfg config.ClickHouseConfig, maxAge time.Duration, operation string) (string, error) {
+	if operation != "up" && operation != "status" {
+		return "", fmt.Errorf("unsupported ClickHouse migration operation %q", operation)
+	}
+	store, err := New(cfg, maxAge)
+	if err != nil {
+		return "", err
+	}
+	defer store.Close()
+	if operation == "status" {
+		state, err := store.MigrationStatus(ctx)
+		return state.String(), err
+	}
+	if err := store.Migrate(ctx); err != nil {
+		return "", err
+	}
+	return "migrations applied", nil
 }
 
 // Migrate manages ClickHouse independently of PostgreSQL.

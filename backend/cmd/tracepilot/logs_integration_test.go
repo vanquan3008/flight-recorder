@@ -18,6 +18,7 @@ import (
 	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
 	"github.com/vanquan3008/tracepilot/internal/query"
 	"github.com/vanquan3008/tracepilot/internal/storage/clickhouse"
+	"github.com/vanquan3008/tracepilot/internal/storage/hybrid"
 	"github.com/vanquan3008/tracepilot/internal/storage/postgres"
 )
 
@@ -59,12 +60,12 @@ func TestHybridLogsPreserveIncidentsAndRetry(t *testing.T) {
 			t.Error("ClickHouse test cleanup failed", response.StatusCode)
 		}
 	})
-	backend, err := openStorageBackend(ctx, cfg)
+	store, err := hybrid.Open(ctx, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer backend.Close()
-	database := backend.Database
+	defer store.Close()
+	database := store.Database
 	if err := database.EnsureIngestionScope(ctx, scope); err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +95,8 @@ func TestHybridLogsPreserveIncidentsAndRetry(t *testing.T) {
 	span := info
 	span.ID, span.Signal, span.Type, span.SpanKind = telemetry.DeterministicID(at, project, "span"), telemetry.SignalTrace, telemetry.EventRPC, 2
 	span.Status, span.Duration, span.Operation = "OK", time.Millisecond, "GET /orders"
-	write := storeEventsByScope(newScopeCatalog(scope, database), backend.StoreEvents)
+	writer := eventWriter{store: store}
+	write := storeEventsByScope(newScopeCatalog(scope, database), writer.StoreEvents)
 	for range 2 {
 		if err := write(ctx, []telemetry.Event{info, span, failure}); err != nil {
 			t.Fatal(err)
@@ -112,21 +114,21 @@ func TestHybridLogsPreserveIncidentsAndRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	broken.Close()
-	backend.Database = broken
+	store.Database = broken
 	retry := failure
 	retry.ID = telemetry.DeterministicID(at, project, "retry")
-	if err := backend.StoreEvents(ctx, scope, []telemetry.Event{retry}); err == nil {
+	if err := writer.StoreEvents(ctx, scope, []telemetry.Event{retry}); err == nil {
 		t.Fatal("ACK despite PostgreSQL failure after ClickHouse commit")
 	}
-	backend.Database = database
-	if err := backend.StoreEvents(ctx, scope, []telemetry.Event{retry}); err != nil {
+	store.Database = database
+	if err := writer.StoreEvents(ctx, scope, []telemetry.Event{retry}); err != nil {
 		t.Fatal(err)
 	}
-	incidents, err := backend.ListIncidents(ctx, project, incident.Filter{EnvironmentID: scope.EnvironmentID, Limit: 10})
+	incidents, err := store.ListIncidents(ctx, project, incident.Filter{EnvironmentID: scope.EnvironmentID, Limit: 10})
 	if err != nil || len(incidents) != 1 || incidents[0].OccurrenceCount != 2 {
 		t.Fatalf("incident retries changed counts: %+v, %v", incidents, err)
 	}
-	quality, err := backend.TelemetryQuality(ctx, project, analysis.Filter{EnvironmentID: scope.EnvironmentID, From: at.Add(-time.Minute), To: at.Add(time.Minute)})
+	quality, err := store.TelemetryQuality(ctx, project, analysis.Filter{EnvironmentID: scope.EnvironmentID, From: at.Add(-time.Minute), To: at.Add(time.Minute)})
 	if err != nil || quality.Spans != 1 || quality.Logs != 3 || quality.UncorrelatedLogs != 0 {
 		t.Fatalf("hybrid quality mixed stores incorrectly: %+v, %v", quality, err)
 	}
@@ -134,10 +136,10 @@ func TestHybridLogsPreserveIncidentsAndRetry(t *testing.T) {
 	if err := database.StoreEvents(ctx, scope, []telemetry.Event{info}); err == nil || errors.Is(err, telemetry.ErrInvalidEvent) {
 		t.Fatalf("PostgreSQL accepted or dropped a log: %v", err)
 	}
-	if record, err := backend.GetLog(ctx, project, scope.EnvironmentID, info.ID); err != nil || record.EventID != info.ID {
+	if record, err := store.GetLog(ctx, project, scope.EnvironmentID, info.ID); err != nil || record.EventID != info.ID {
 		t.Fatalf("log missing from ClickHouse: %+v, %v", record, err)
 	}
-	if traces, err := backend.ListTraces(ctx, project, query.TraceFilter{EnvironmentID: scope.EnvironmentID, Limit: 10}); err != nil || len(traces) != 1 {
+	if traces, err := store.ListTraces(ctx, project, query.TraceFilter{EnvironmentID: scope.EnvironmentID, Limit: 10}); err != nil || len(traces) != 1 {
 		t.Fatalf("trace lookup regressed: %+v, %v", traces, err)
 	}
 }

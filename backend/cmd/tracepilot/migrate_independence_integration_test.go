@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"net/http"
+	"net/url"
 	"os"
 	"testing"
 	"time"
@@ -45,5 +47,23 @@ func TestClickHouseMigrationCommandDoesNotRequirePostgresIntegration(t *testing.
 		if code := runMigrations([]string{"clickhouse", operation}); code != 0 {
 			t.Fatalf("ClickHouse %s depended on PostgreSQL: exit %d", operation, code)
 		}
+	}
+}
+
+func dropClickHouseTestDatabase(t *testing.T, cfg config.ClickHouseConfig) {
+	t.Helper()
+	request, err := http.NewRequest(http.MethodPost, cfg.URL+"/?query="+url.QueryEscape("DROP DATABASE IF EXISTS `"+cfg.Database+"`"), nil)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	response, err := (&http.Client{Timeout: 5 * time.Second}).Do(request)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Error("ClickHouse test cleanup failed", response.StatusCode)
 	}
 }

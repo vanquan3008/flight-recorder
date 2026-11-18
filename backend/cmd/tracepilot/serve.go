@@ -12,6 +12,7 @@ import (
 	"github.com/vanquan3008/tracepilot/internal/application/intelligence"
 	"github.com/vanquan3008/tracepilot/internal/application/live"
 	"github.com/vanquan3008/tracepilot/internal/application/notification"
+	"github.com/vanquan3008/tracepilot/internal/application/partition"
 	"github.com/vanquan3008/tracepilot/internal/application/retention"
 	"github.com/vanquan3008/tracepilot/internal/auth"
 	"github.com/vanquan3008/tracepilot/internal/cache"
@@ -19,6 +20,7 @@ import (
 	ingestotlp "github.com/vanquan3008/tracepilot/internal/ingest/otlp"
 	"github.com/vanquan3008/tracepilot/internal/observability/logging"
 	"github.com/vanquan3008/tracepilot/internal/observability/metrics"
+	"github.com/vanquan3008/tracepilot/internal/storage/hybrid"
 	"github.com/vanquan3008/tracepilot/internal/transport/httpapi"
 )
 
@@ -60,15 +62,15 @@ func runServer(arguments []string) int {
 	// 1. Database initialization
 	// ---------------------------------------------------------
 
-	backend, err := openStorageBackend(appCtx, cfg)
+	store, err := hybrid.Open(appCtx, cfg)
 	if err != nil {
 		logger.Error("storage initialization failed", "error", err)
 		return 1
 	}
-	defer backend.Close()
-	database := backend.Database
+	defer store.Close()
+	database := store.Database
 
-	if err := ensureTelemetryPartitions(appCtx, database, cfg.Database.PartitionWindowDays); err != nil {
+	if err := partition.Ensure(appCtx, database, cfg.Database.PartitionWindowDays); err != nil {
 		logger.Error("telemetry partition initialization failed", "error", err)
 		return 1
 	}
@@ -104,7 +106,7 @@ func runServer(arguments []string) int {
 	// request; the configured project keeps working without a lookup.
 	scopes := newScopeCatalog(cfg.Ingestion, database)
 
-	ingestionPipeline := buildIngestionPipeline(cfg, backend, scopes, selfMetrics)
+	ingestionPipeline := buildIngestionPipeline(cfg, eventWriter{store: store}, scopes, selfMetrics)
 	metricsPipeline := buildMetricsPipeline(cfg, database, scopes, selfMetrics)
 
 	// ---------------------------------------------------------
@@ -130,9 +132,9 @@ func runServer(arguments []string) int {
 	managementServer := httpapi.New(
 		cfg,
 		logger,
-		buildReadinessCheck(backend, ingestionPipeline, metricsPipeline, otlpServer),
+		buildReadinessCheck(store, ingestionPipeline, metricsPipeline, otlpServer),
 		selfMetrics,
-		backend,
+		store,
 		replayService,
 	).WithTokenInvalidator(tokenCache).WithStreamHub(streamHub)
 
@@ -147,7 +149,7 @@ func runServer(arguments []string) int {
 			return intelligence.Run(ctx, logger, buildObservabilityDetectionFunc(scopes, database, selfMetrics), intelligence.DefaultInterval)
 		}},
 		{"partition-maintenance", false, func(ctx context.Context) error {
-			return runPartitionMaintenance(ctx, logger, database, cfg.Database.PartitionWindowDays, cfg.Database.PartitionCheckInterval)
+			return partition.Run(ctx, logger, database, cfg.Database.PartitionWindowDays, cfg.Database.PartitionCheckInterval)
 		}},
 	}
 

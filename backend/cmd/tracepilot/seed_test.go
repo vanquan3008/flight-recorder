@@ -1,104 +1,48 @@
 package main
 
 import (
-	"regexp"
-	"strings"
+	"context"
+	"errors"
+	"fmt"
 	"testing"
+
+	"github.com/vanquan3008/tracepilot/internal/auth"
 )
 
-var seedUUIDPattern = regexp.MustCompile(`[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}`)
-
-func TestRenderSeedSQLCreatesOnlySuperAdmin(t *testing.T) {
-	t.Parallel()
-
-	sql, err := renderSeedSQL()
+func TestSeedAdminParamsDescribeOnlyTheDocumentedSuperAdmin(t *testing.T) {
+	params, err := auth.NormalizeCreateUserParams(seedAdminParams())
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("seed account fails account validation: %v", err)
 	}
+	if params.Email != adminEmail || params.Password != "admin-password-123" || !params.PlatformAdmin || params.MustChangePassword {
+		t.Fatalf("seed account = %+v, want the documented super admin", params)
+	}
+}
 
-	for _, want := range []string{
-		"INSERT INTO users (id, email, display_name, password_hash, platform_admin)",
-		adminEmail,
-		"'Admin'",
-		"true",
-		"ON CONFLICT (email) DO NOTHING",
+func TestSeedAdminKeepsAnExistingAccount(t *testing.T) {
+	unavailable := errors.New("database unavailable")
+	for name, test := range map[string]struct {
+		result      error
+		wantCreated bool
+		wantErr     error
+	}{
+		"new account":       {nil, true, nil},
+		"existing account":  {fmt.Errorf("create user: %w", auth.ErrEmailExists), false, nil},
+		"database failure":  {unavailable, false, unavailable},
+		"invalid parameter": {auth.ErrInvalidIdentity, false, auth.ErrInvalidIdentity},
 	} {
-		if !strings.Contains(sql, want) {
-			t.Errorf("rendered seed SQL does not contain %q", want)
-		}
+		t.Run(name, func(t *testing.T) {
+			var calls int
+			created, err := seedAdmin(context.Background(), func(_ context.Context, params auth.CreateUserParams, actor auth.Actor) (auth.User, error) {
+				calls++
+				if params != seedAdminParams() || actor != (auth.Actor{}) {
+					t.Fatalf("seed created %+v as %+v", params, actor)
+				}
+				return auth.User{}, test.result
+			})
+			if calls != 1 || created != test.wantCreated || !errors.Is(err, test.wantErr) || (test.wantErr == nil) != (err == nil) {
+				t.Fatalf("seedAdmin = %t, %v after %d calls; want %t, %v", created, err, calls, test.wantCreated, test.wantErr)
+			}
+		})
 	}
-	for _, forbidden := range []string{
-		"tracepilot-sample",
-		"INSERT INTO projects",
-		"INSERT INTO environments",
-		"INSERT INTO project_members",
-		"INSERT INTO services",
-		"INSERT INTO events",
-		"INSERT INTO spans",
-		"INSERT INTO logs",
-		"INSERT INTO incidents",
-	} {
-		if strings.Contains(sql, forbidden) {
-			t.Errorf("development account seed unexpectedly contains %q", forbidden)
-		}
-	}
-	if strings.Contains(sql, "{{") || strings.Contains(sql, "}}") {
-		t.Fatal("rendered seed SQL contains an unresolved placeholder")
-	}
-
-	ids := seedUUIDs(sql)
-	if len(ids) != 1 {
-		t.Fatalf("rendered admin seed has %d unique UUIDs, want only the admin", len(ids))
-	}
-}
-
-func TestRenderSeedSQLGeneratesDifferentAdminIDs(t *testing.T) {
-	t.Parallel()
-
-	first, err := renderSeedSQL()
-	if err != nil {
-		t.Fatal(err)
-	}
-	second, err := renderSeedSQL()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	firstIDs := seedUUIDs(first)
-	secondIDs := seedUUIDs(second)
-	if len(firstIDs) != 1 || len(secondIDs) != 1 {
-		t.Fatalf("generated admin ID counts = %d and %d, want one per seed", len(firstIDs), len(secondIDs))
-	}
-	for id := range firstIDs {
-		if _, reused := secondIDs[id]; reused {
-			t.Fatalf("seed runs reused admin UUID %q", id)
-		}
-	}
-}
-
-func TestNewSeedUUIDsAreV4AndUnique(t *testing.T) {
-	t.Parallel()
-
-	seen := make(map[string]struct{}, 100)
-	for range 100 {
-		id, err := newSeedUUID()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !seedUUIDPattern.MatchString(id) {
-			t.Fatalf("generated UUID is not a canonical UUID v4: %q", id)
-		}
-		if _, exists := seen[id]; exists {
-			t.Fatalf("duplicate UUID generated: %q", id)
-		}
-		seen[id] = struct{}{}
-	}
-}
-
-func seedUUIDs(sql string) map[string]struct{} {
-	ids := make(map[string]struct{})
-	for _, id := range seedUUIDPattern.FindAllString(sql, -1) {
-		ids[id] = struct{}{}
-	}
-	return ids
 }

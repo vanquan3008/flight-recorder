@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"io"
 	"log/slog"
 	"strings"
@@ -51,19 +52,14 @@ func runCreateAdmin(arguments []string, input io.Reader) int {
 		slog.Error("invalid PostgreSQL configuration", "error", err)
 		return 2
 	}
-	cfg.Database.MaxConnections, cfg.Database.MinConnections = 2, 0
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	database, err := postgres.Open(ctx, cfg.Database)
+	database, err := openOperatorDatabase(ctx, cfg.Database)
 	if err != nil {
 		slog.Error("open PostgreSQL", "error", err)
 		return 1
 	}
 	defer database.Close()
-	if err := database.Ready(ctx); err != nil {
-		slog.Error("schema is not ready; run migrations first", "error", err)
-		return 1
-	}
 	user, err := database.CreateUser(ctx, params, auth.Actor{})
 	if err != nil {
 		slog.Error("create administrator failed", "error", err)
@@ -71,4 +67,18 @@ func runCreateAdmin(arguments []string, input io.Reader) int {
 	}
 	slog.Info("administrator created", "id", user.ID, "email", user.Email)
 	return 0
+}
+
+// openOperatorDatabase opens a small pool for one-off account commands and requires a migrated schema.
+func openOperatorDatabase(ctx context.Context, cfg config.DatabaseConfig) (*postgres.Database, error) {
+	cfg.MaxConnections, cfg.MinConnections = 2, 0
+	database, err := postgres.Open(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+	if err := database.Ready(ctx); err != nil {
+		database.Close()
+		return nil, fmt.Errorf("schema is not ready; run migrations first: %w", err)
+	}
+	return database, nil
 }
