@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM --platform=$BUILDPLATFORM node:24-alpine AS build
+FROM --platform=$BUILDPLATFORM node:26-alpine AS build
 WORKDIR /src
 COPY package.json package-lock.json ./
 RUN --mount=type=cache,target=/root/.npm npm ci --no-audit --no-fund
@@ -10,7 +10,7 @@ ARG VITE_API_BASE_URL=
 ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
 RUN npm run build
 
-FROM nginxinc/nginx-unprivileged:1.29-alpine AS console
+FROM nginxinc/nginx-unprivileged:1.31-alpine AS console
 ARG VERSION=dev
 ARG COMMIT=unknown
 ARG BUILD_TIME=unknown
