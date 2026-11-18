@@ -1,37 +1,40 @@
-# Cách làm việc trong repo
+# Working in this repository
 
-- Trao đổi và giải thích với chủ repo bằng tiếng Việt.
-- Trước một phạm vi phát triển mới, đưa 2–3 phương án thực tế, nêu đánh đổi và
-  đề xuất một phương án. Tiếp tục các việc đã được chọn mà không hỏi lại.
-- Hướng đã chọn: một ứng dụng Go + React, phân module theo trách nhiệm;
-  PostgreSQL riêng. Chỉ tách tiến trình khi có yêu cầu hoặc số đo chứng minh.
-- Giữ các thay đổi chưa commit của người dùng. Không tự reset, commit, push,
-  deploy hoặc chạy migration trên database thật.
+- Communicate with the repository owner in Vietnamese. Write Markdown files in English.
+- Before starting a new area of development, present two or three practical approaches,
+  explain the trade-offs, and recommend one. Continue with work that has already been
+  agreed on without asking again.
+- The agreed architecture is a Go and React application organized into modules by
+  responsibility, with a separate PostgreSQL database. Split processes only when a
+  requirement or measurement justifies it.
+- Preserve the user's uncommitted changes. Leave resets, commits, pushes, deployments,
+  and migrations on real databases to the user unless they explicitly authorize them.
 
-# Ranh giới source
+## Source boundaries
 
-- `backend/cmd/tracepilot`: cấu hình, nối dependency, vòng đời tiến trình.
-- `backend/internal/application`: use case và background workflow qua interface nhỏ.
-- `backend/internal/domain`: model và quy tắc thuần, không phụ thuộc adapter/runtime.
-- `backend/internal/ingest`: giao thức OTLP, normalization và queue có giới hạn.
-- `backend/internal/transport/httpapi`: REST, auth boundary và response contract.
-- `backend/internal/storage`: SQL, transaction, migration và partition.
-- `frontend/src/features`: giao diện theo chức năng; phần dùng chung ở `shared`.
-- Cấu hình backend duy nhất: `backend/.env`, mẫu `backend/.env.example`. Console có file riêng
-  `frontend/.env.example` (biến build `VITE_*` và địa chỉ backend của nginx). PostgreSQL
-  và ClickHouse là dịch vụ ngoài; Compose không dựng database cho production. Chạy backend
-  bằng `go run` hoặc image build từ `backend/Dockerfile`, console bằng `npm run dev` hoặc
-  image từ `frontend/Dockerfile`. Production dùng `deploy/compose.yaml` (migrate, backend,
-  console; đọc thẳng `backend/.env` và `frontend/.env`). `docker-compose/` chỉ dựng
-  ClickHouse cho máy dev. Không thêm env riêng cho dev/prod.
+- `backend/cmd/tracepilot` owns configuration, dependency wiring, and process lifecycle.
+- `backend/internal/application` owns use cases and background workflows through small interfaces.
+- `backend/internal/domain` owns models and pure rules and stays independent of adapters and the runtime.
+- `backend/internal/ingest` handles OTLP, normalization, and bounded queuing.
+- `backend/internal/transport/httpapi` owns REST, the auth boundary, and response contracts.
+- `backend/internal/storage` owns SQL, transactions, migrations, and partitions.
+- `frontend/src/features` organizes the UI by feature. Reusable code belongs in `shared`.
+- Use `backend/.env` for all backend configuration, with `backend/.env.example` as its template.
+  The console has its own `frontend/.env.example` for `VITE_*` build variables and the nginx
+  backend address. PostgreSQL and ClickHouse run as external services in production and
+  are configured separately on development machines. Run the backend with `go run` or an
+  image built from `backend/Dockerfile`. Run the console with `npm run dev` or an image
+  built from `frontend/Dockerfile`. Production uses `deploy/compose.yaml` for migration,
+  the backend, and the console. It reads `backend/.env` and `frontend/.env` directly.
+  Use the same configuration file paths for development and production.
 
-# Kiểm tra
+## Verification
 
-- Thay đổi logic phải có test hồi quy nhỏ; chạy test liên quan, Go vet/build.
-- Thay đổi frontend: typecheck, tests và build.
-- SQL/migration: chạy integration trên PostgreSQL test có thể bỏ đi.
-- Không gọi kết quả unit test là chứng nhận production. Ghi rõ kiểm tra bỏ qua.
-- Bộ docs hiện hành: `README.md` (chạy, phát triển, đóng góp, bảo mật),
-  `docs/FLOW.md` (mô tả luồng) và `docs/diagrams.html` (sơ đồ hoạt động, Mermaid).
-  Đổi luồng thì cập nhật cả hai file này; tránh thêm báo cáo chồng chéo. `docs/tracepilot.postman_collection.json`
-  là bộ kiểm tra API; cập nhật cùng khi đổi route hoặc hành vi ingest.
+- For logic changes, add a small regression test and run the relevant tests, Go vet, and Go build.
+- For frontend changes, run type checking, tests, and the build.
+- For SQL and migration changes, run integration tests against a disposable PostgreSQL database.
+- Report skipped checks. Unit test results alone cannot establish production readiness.
+- Keep `README.md` for setup, development, contribution, and security. Update both
+  `docs/FLOW.md` and its Mermaid diagrams in `docs/diagrams.html` when an application flow changes.
+  Keep the documentation focused and update `docs/tracepilot.postman_collection.json` when API
+  routes or ingestion behavior change.
