@@ -63,11 +63,21 @@ function buildRequest(path: string, init: RequestInit, signedIn: boolean, contex
 
 let refreshing: Promise<SessionView | null> | undefined;
 
-/** Trades the refresh cookie for a new access token. Concurrent callers share one request. */
+// Every tab shares one refresh cookie and each refresh replaces it. Tabs take turns under this lock,
+// so a tab waiting its turn (e.g. all of them after the computer wakes) sends the cookie the previous
+// refresh set instead of the one that refresh just retired.
+const refreshLock = "tracepilot-refresh";
+
+function requestRefresh(): Promise<Response> {
+  return fetch(`${apiBase}${authPrefix}refresh`, buildRequest(`${authPrefix}refresh`, { method: "POST" }, false));
+}
+
+/** Trades the refresh cookie for a new access token. Callers in this tab share one request; tabs queue. */
 export function refreshAccess(): Promise<SessionView | null> {
   refreshing ??= (async () => {
     try {
-      const response = await fetch(`${apiBase}${authPrefix}refresh`, buildRequest(`${authPrefix}refresh`, { method: "POST" }, false));
+      const locks = typeof navigator === "undefined" ? undefined : navigator.locks;
+      const response = locks ? await locks.request(refreshLock, requestRefresh) : await requestRefresh();
       if (!response.ok) return null;
       const view = (await response.json()) as SessionView;
       if (view.access_token) setAccessToken(view.access_token);

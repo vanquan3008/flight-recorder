@@ -165,7 +165,8 @@ func (server *Server) authLogin(responseWriter http.ResponseWriter, request *htt
 func (server *Server) authRefresh(responseWriter http.ResponseWriter, request *http.Request, _ auth.Principal) {
 	next, user, refreshError := server.backend.RefreshSession(request.Context(), refreshToken(request))
 	if errors.Is(refreshError, auth.ErrSessionNotFound) {
-		server.clearRefreshCookie(responseWriter, request)
+		// Leave the cookie alone: when tabs refresh at once, the losing request carries the
+		// token another request just rotated, and the browser may already hold its successor.
 		writeAPIError(responseWriter, http.StatusUnauthorized, "UNAUTHORIZED", "sign in again")
 		return
 	}

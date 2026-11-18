@@ -104,8 +104,9 @@ func TestRefreshNeedsTheCookieAndTheConsoleHeader(t *testing.T) {
 	if stale.Code != http.StatusUnauthorized {
 		t.Fatalf("a token that was already used: status %d, want 401", stale.Code)
 	}
-	if cleared := cookieNamed(stale, refreshCookieName); cleared == nil || cleared.MaxAge >= 0 {
-		t.Fatal("a dead refresh cookie must be cleared so the console returns to sign-in")
+	// Concurrent refreshes race: the loser must not clear the successor cookie the winner just set.
+	if cookie := cookieNamed(stale, refreshCookieName); cookie != nil {
+		t.Fatalf("a failed refresh must leave the browser's cookie alone, got %+v", cookie)
 	}
 }
 

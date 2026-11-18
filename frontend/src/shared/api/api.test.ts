@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { APIError, api, queryString, sessionCredential, setAccessToken, setProjectContext } from "./index";
+import { APIError, api, queryString, refreshAccess, sessionCredential, setAccessToken, setProjectContext } from "./index";
 import { compactSearchParams } from "./params";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -59,6 +59,18 @@ describe("api", () => {
     const calls = fetchMock.mock.calls as [string, RequestInit][];
     expect(calls[1][0]).toContain("/api/v1/auth/refresh");
     expect(new Headers(calls[2][1].headers).get("Authorization")).toBe("Bearer jwt-2");
+    setAccessToken("");
+  });
+
+  it("refreshes under a lock shared by every tab, so tabs never send the same cookie at once", async () => {
+    const view = { user: { id: "u1" }, memberships: [], access_token: "jwt-3", expires_at: "2099-01-01T00:00:00Z" };
+    const order: string[] = [];
+    const fetchMock = vi.fn().mockImplementation(async () => { order.push("fetch"); return new Response(JSON.stringify(view), { status: 200 }); });
+    const request = vi.fn(async (name: string, callback: () => Promise<Response>) => { order.push(`lock:${name}`); const result = await callback(); order.push("unlock"); return result; });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("navigator", { ...navigator, locks: { request } });
+    await expect(refreshAccess()).resolves.toMatchObject({ access_token: "jwt-3" });
+    expect(order).toEqual(["lock:tracepilot-refresh", "fetch", "unlock"]);
     setAccessToken("");
   });
 
