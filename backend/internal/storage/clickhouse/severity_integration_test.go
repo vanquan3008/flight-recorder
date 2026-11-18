@@ -10,7 +10,7 @@ import (
 )
 
 func TestLogSeverityGroupsIntegration(t *testing.T) {
-	store, ctx := integrationStore(t, 0), context.Background()
+	store, ctx := integrationStore(t), context.Background()
 	at := time.Now().UTC()
 	cases := []struct {
 		text   string

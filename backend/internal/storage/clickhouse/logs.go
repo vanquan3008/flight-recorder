@@ -57,11 +57,27 @@ func (store *Store) scope(projectID, environmentID string) ([]string, map[string
 	}
 	where := []string{"project_id = {project:UUID}", "environment_id = {environment:UUID}"}
 	parameters := map[string]string{"project": projectID, "environment": environmentID}
-	if store.maxAge > 0 {
-		where = append(where, "occurred_at >= now64(9, 'UTC') - toIntervalSecond({retention:UInt64})")
-		parameters["retention"] = strconv.FormatInt(max(1, int64(store.maxAge.Seconds())), 10)
-	}
 	return where, parameters, nil
+}
+
+// ExpireProjectLogs rewrites the affected parts so cleanup also removes the log payloads from storage.
+// Check for matching rows before submitting a mutation on every retention tick.
+func (store *Store) ExpireProjectLogs(ctx context.Context, projectID string, before time.Time) error {
+	if !validUUID(projectID) || before.IsZero() {
+		return errors.New("invalid ClickHouse log retention scope")
+	}
+	if !before.After(time.Date(1900, 1, 1, 0, 0, 0, 0, time.UTC)) {
+		return nil // DateTime64 cannot represent any earlier log.
+	}
+	params := map[string]string{"project": projectID}
+	where := addTime([]string{"project_id = {project:UUID}"}, params, "occurred_at", "before", "<", before)
+	predicate := strings.Join(where, " AND ")
+	data, err := store.execute(ctx, "SELECT 1 FROM tracepilot_logs WHERE "+predicate+" LIMIT 1 FORMAT TabSeparated", params, nil, false)
+	if err != nil || len(data) == 0 {
+		return err
+	}
+	_, err = store.execute(ctx, "ALTER TABLE tracepilot_logs DELETE WHERE "+predicate+" SETTINGS mutations_sync = 1", params, nil, false)
+	return err
 }
 
 func addTime(where []string, parameters map[string]string, column, name, comparison string, at time.Time) []string {
@@ -136,6 +152,10 @@ func logSeverityPredicate(value string, parameters map[string]string) string {
 }
 
 func (store *Store) GetLog(ctx context.Context, projectID, environmentID, eventID string) (query.LogRecord, error) {
+	return store.GetLogSince(ctx, projectID, environmentID, eventID, time.Time{})
+}
+
+func (store *Store) GetLogSince(ctx context.Context, projectID, environmentID, eventID string, since time.Time) (query.LogRecord, error) {
 	if !validUUID(eventID) {
 		return query.LogRecord{}, errors.New("invalid log ID")
 	}
@@ -145,6 +165,7 @@ func (store *Store) GetLog(ctx context.Context, projectID, environmentID, eventI
 	}
 	where = append(where, "event_id = {event:UUID}")
 	parameters["event"] = eventID
+	where = addTime(where, parameters, "occurred_at", "retention_cutoff", ">=", since)
 	rows, err := store.readLogs(ctx, "SELECT "+logColumns+" FROM tracepilot_logs FINAL WHERE "+strings.Join(where, " AND ")+
 		" LIMIT 1 FORMAT JSONEachRow", parameters)
 	if err != nil || len(rows) == 0 {

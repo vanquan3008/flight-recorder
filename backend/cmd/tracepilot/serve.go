@@ -170,11 +170,9 @@ func runServer(arguments []string) int {
 		Audit:      cfg.Retention.AuditMaxAge,
 		Deliveries: cfg.Retention.DeliveryMaxAge,
 	}
-	if policy.Enabled() {
-		components = append(components, component{"retention", false, func(ctx context.Context) error {
-			return retention.Run(ctx, logger, database, selfMetrics, policy, cfg.Retention.CheckInterval, cfg.Retention.BatchSize)
-		}})
-	}
+	components = append(components, component{"retention", false, func(ctx context.Context) error {
+		return retention.Run(ctx, logger, store, selfMetrics, policy, cfg.Retention.CheckInterval, cfg.Retention.BatchSize)
+	}})
 
 	// ---------------------------------------------------------
 	// 7. Start application

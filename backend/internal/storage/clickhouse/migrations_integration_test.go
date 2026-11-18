@@ -9,7 +9,7 @@ import (
 )
 
 func TestClickHouseAdoptsLegacySchemaWithoutLosingLogsIntegration(t *testing.T) {
-	store, ctx := integrationStore(t, 0), context.Background()
+	store, ctx := integrationStore(t), context.Background()
 	event := testLog(time.Now().UTC(), "legacy-migration")
 	if err := store.StoreLogs(ctx, testProject, testEnvironment, []telemetry.Event{event}); err != nil {
 		t.Fatal(err)
@@ -18,7 +18,7 @@ func TestClickHouseAdoptsLegacySchemaWithoutLosingLogsIntegration(t *testing.T) 
 		t.Fatal(err)
 	}
 	state, err := store.MigrationStatus(ctx)
-	if err != nil || state.Version != 0 || len(state.Pending) != 1 {
+	if err != nil || state.Version != 0 || len(state.Pending) != 2 {
 		t.Fatalf("legacy status: %+v, %v", state, err)
 	}
 	if err := store.Ready(ctx); err == nil {
@@ -40,7 +40,7 @@ func TestClickHouseAdoptsLegacySchemaWithoutLosingLogsIntegration(t *testing.T) 
 }
 
 func TestClickHouseRefusesNewerSchemaIntegration(t *testing.T) {
-	store, ctx := integrationStore(t, 0), context.Background()
+	store, ctx := integrationStore(t), context.Background()
 	state, err := store.MigrationStatus(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -57,7 +57,7 @@ func TestClickHouseRefusesNewerSchemaIntegration(t *testing.T) {
 }
 
 func TestClickHouseRejectsIncompatibleLegacySchemaIntegration(t *testing.T) {
-	store, ctx := integrationStore(t, 0), context.Background()
+	store, ctx := integrationStore(t), context.Background()
 	for _, sql := range []string{"DROP TABLE tracepilot_schema_migrations", "DROP TABLE tracepilot_logs",
 		"CREATE TABLE tracepilot_logs (body String) ENGINE = MergeTree ORDER BY tuple()"} {
 		if _, err := store.execute(ctx, sql, nil, nil, false); err != nil {
@@ -73,5 +73,34 @@ func TestClickHouseRejectsIncompatibleLegacySchemaIntegration(t *testing.T) {
 	}
 	if err := store.Migrate(ctx); err == nil {
 		t.Fatal("dirty migration was retried automatically")
+	}
+}
+
+func TestClickHouseRemovesGlobalTTLFromVersionOneIntegration(t *testing.T) {
+	store, ctx := integrationStore(t), context.Background()
+	for _, stmt := range []string{
+		"ALTER TABLE tracepilot_logs MODIFY TTL occurred_at + INTERVAL 7 DAY",
+		"TRUNCATE TABLE tracepilot_schema_migrations",
+		"INSERT INTO tracepilot_schema_migrations VALUES (1, false)",
+	} {
+		if _, err := store.execute(ctx, stmt, nil, nil, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.Ready(ctx); err == nil {
+		t.Fatal("version one accepted with global TTL")
+	}
+	recent := testLog(time.Now().UTC(), "legacy-ttl")
+	if err := store.StoreLogs(ctx, testProject, testEnvironment, []telemetry.Event{recent}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Ready(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if row, err := store.GetLog(ctx, testProject, testEnvironment, recent.ID); err != nil || row.EventID != recent.ID {
+		t.Fatalf("migration changed existing logs: row=%s err=%v", row.EventID, err)
 	}
 }

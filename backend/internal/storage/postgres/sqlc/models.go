@@ -236,11 +236,12 @@ type MetricDataPointsDefault struct {
 }
 
 type Project struct {
-	ID        string
-	Slug      string
-	Name      string
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID                     string
+	Slug                   string
+	Name                   string
+	CreatedAt              time.Time
+	UpdatedAt              time.Time
+	TelemetryRetentionDays *int32
 }
 
 type ProjectMember struct {

@@ -55,7 +55,7 @@ func TestAutoMigrationInitializesBothDatabasesOnlyWhenEnabledIntegration(t *test
 	if err != nil || state.Version != 0 {
 		t.Fatalf("disabled startup changed PostgreSQL: %+v, %v", state, err)
 	}
-	logs, err := clickhouse.New(cfg.ClickHouse, 0)
+	logs, err := clickhouse.New(cfg.ClickHouse)
 	if err != nil {
 		t.Fatal(err)
 	}

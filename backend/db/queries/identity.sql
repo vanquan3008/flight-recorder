@@ -106,6 +106,14 @@ UPDATE projects SET name = @name, updated_at = now()
 WHERE id = @id
 RETURNING *;
 
+-- name: GetProjectRetention :one
+SELECT telemetry_retention_days FROM projects WHERE id = @project_id;
+
+-- name: UpdateProjectRetention :one
+UPDATE projects SET telemetry_retention_days = sqlc.narg(retention_days), updated_at = now()
+WHERE id = @project_id
+RETURNING telemetry_retention_days;
+
 -- name: ListEnvironments :many
 SELECT * FROM environments WHERE project_id = @project_id ORDER BY created_at, id;
 

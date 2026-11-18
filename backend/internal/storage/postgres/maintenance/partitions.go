@@ -20,8 +20,7 @@ import (
 // Partitions are named <table>_pYYYYMMDD (UTC day). Rows whose day has no
 // partition go to <table>_default, so a missing partition never rejects data.
 
-// partitionedTables is every table that is partitioned by day. Logs live in
-// ClickHouse, which expires them with its own TTL.
+// partitionedTables is every PostgreSQL table partitioned by day. Logs live in ClickHouse.
 var partitionedTables = []string{"events", "spans", "metric_data_points"}
 
 // eventPartitionedTables expire together: a span is only useful next to its

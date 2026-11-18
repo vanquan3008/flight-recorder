@@ -28,6 +28,7 @@ async function mockConsole(page: Page) {
     let body: unknown = { data: [] };
     if (url.pathname === "/api/v1/auth/refresh") body = session;
     else if (url.pathname === `/api/v1/projects/${projectID}`) body = { project, role: "owner", environments: [{ id: "env-dev", name: "development" }, { id: "env-prod", name: "production" }] };
+    else if (url.pathname === `/api/v1/projects/${projectID}/retention`) body = { retention_days: null, default_age_seconds: 604800, max_days: 106751 };
     else if (url.pathname === "/api/v1/traces") body = { data: [{ trace_id: traceID, started_at: now, root_service: "checkout", duration_nanos: 5100000000, span_count: 5000, error_count: 0 }] };
     else if (url.pathname === `/api/v1/traces/${traceID}`) {
       const offset = Number(url.searchParams.get("cursor") || "0");

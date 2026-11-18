@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/vanquan3008/tracepilot/db"
 	"github.com/vanquan3008/tracepilot/internal/config"
@@ -49,11 +48,11 @@ FROM tracepilot_schema_migrations GROUP BY version ORDER BY version DESC LIMIT 1
 }
 
 // RunMigration opens a short-lived client and applies ("up") or reports ("status") the log schema.
-func RunMigration(ctx context.Context, cfg config.ClickHouseConfig, maxAge time.Duration, operation string) (string, error) {
+func RunMigration(ctx context.Context, cfg config.ClickHouseConfig, operation string) (string, error) {
 	if operation != "up" && operation != "status" {
 		return "", fmt.Errorf("unsupported ClickHouse migration operation %q", operation)
 	}
-	store, err := New(cfg, maxAge)
+	store, err := New(cfg)
 	if err != nil {
 		return "", err
 	}
@@ -100,22 +99,15 @@ version UInt64, dirty Bool) ENGINE = MergeTree ORDER BY (version, dirty)`, nil, 
 		if err := store.recordMigration(ctx, migration.Version, true); err != nil {
 			return err
 		}
-		ddl := strings.NewReplacer("__PARTITION__", store.cfg.LogPartition.PartitionExpr(), "__TTL__", store.ttl()).Replace(string(data))
-		if _, err := store.execute(ctx, ddl, nil, nil, false); err != nil {
+		if err := store.applyMigration(ctx, migration.Version, string(data)); err != nil {
 			return fmt.Errorf("ClickHouse migration %d: %w", migration.Version, err)
-		}
-		if migration.Version == state.Target {
-			// Validate legacy tables before adopting them into the version history.
-			if err := store.prepareSchema(ctx); err != nil {
-				return err
-			}
 		}
 		if err := store.recordMigration(ctx, migration.Version, false); err != nil {
 			return err
 		}
 	}
 	if len(state.Pending) == 0 {
-		return store.prepareSchema(ctx)
+		return store.readySchema(ctx)
 	}
 	return nil
 }
@@ -125,13 +117,29 @@ func (store *Store) recordMigration(ctx context.Context, version uint, dirty boo
 	return err
 }
 
-func (store *Store) prepareSchema(ctx context.Context) error {
+func (store *Store) applyMigration(ctx context.Context, version uint, ddl string) error {
+	if version == 1 {
+		ddl = strings.NewReplacer("__PARTITION__", store.cfg.LogPartition.PartitionExpr(), "__TTL__", "").Replace(ddl)
+		if _, err := store.execute(ctx, ddl, nil, nil, false); err != nil {
+			return err
+		}
+		// Validate an unversioned table before adopting it.
+		if _, err := store.schema(ctx); err != nil {
+			return err
+		}
+		return store.checkLogColumns(ctx)
+	}
+	if version != 2 {
+		_, err := store.execute(ctx, ddl, nil, nil, false)
+		return err
+	}
+	// REMOVE TTL fails when a fresh table was created without one.
 	state, err := store.schema(ctx)
 	if err != nil {
 		return err
 	}
-	if change := store.ttlChange(state); change != "" {
-		if _, err := store.execute(ctx, "ALTER TABLE tracepilot_logs "+change, nil, nil, false); err != nil {
+	if state.hasTTL() {
+		if _, err := store.execute(ctx, ddl, nil, nil, false); err != nil {
 			return err
 		}
 		return store.readySchema(ctx)

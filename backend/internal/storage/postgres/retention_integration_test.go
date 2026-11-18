@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/vanquan3008/tracepilot/internal/auth"
 	"github.com/vanquan3008/tracepilot/internal/config"
 	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
 )
@@ -41,6 +42,73 @@ func countRetention(t *testing.T, database *Database, projectID string) retentio
 		t.Fatal(queryError)
 	}
 	return counts
+}
+
+func TestProjectRetentionPreservesSharedPartitionsAndInheritedPolicyIntegration(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2001, 2, 20, 12, 0, 30, 0, time.UTC)
+	old, shared, fresh := now.AddDate(0, 0, -16), now.AddDate(0, 0, -9), now.AddDate(0, 0, -1)
+	short, long := int32(1), int32(14)
+	projects := []struct {
+		name string
+		days *int32
+		kept int
+	}{{"short", &short, 1}, {"long", &long, 2}, {"inherited", nil, 1}}
+	worker := openIntegrationDatabase(t)
+	t.Cleanup(worker.Close)
+	if err := worker.EnsurePartitions(ctx, old, 17); err != nil {
+		t.Fatal(err)
+	}
+	for _, project := range projects {
+		database := openIntegrationDatabase(t)
+		id := telemetry.DeterministicID(now, "retention-project", project.name)
+		ingestion := config.IngestionConfig{ProjectID: id, ProjectSlug: "retention-" + project.name, ProjectName: project.name,
+			EnvironmentID: telemetry.DeterministicID(now, "retention-environment", project.name), EnvironmentName: "test"}
+		ensureIntegrationScope(t, database, ingestion)
+		t.Cleanup(func() { cleanupIntegrationScope(t, database, id) })
+		if project.days != nil {
+			if err := database.UpdateProjectRetention(ctx, id, project.days, auth.Actor{}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for _, at := range []time.Time{old, shared, fresh} {
+			span, _ := retentionTestEvents(id, ingestion.EnvironmentName, project.name, at)
+			if err := database.StoreEvents(ctx, ingestion, []telemetry.Event{span}); err != nil {
+				t.Fatal(err)
+			}
+			value := 1.0
+			if err := database.StoreMetrics(ctx, ingestion, []telemetry.MetricDataPoint{{
+				ID: telemetry.DeterministicID(at, "retention-point", project.name), ProjectID: id, EnvironmentID: ingestion.EnvironmentID,
+				ServiceName: "retention-service", MetricName: "requests", MetricType: telemetry.MetricTypeGauge, OccurredAt: at, Value: &value,
+			}}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if events, points, err := worker.DropExpiredTelemetryPartitions(ctx, now, 0); err != nil || events != 0 || points != 0 {
+		t.Fatalf("indefinite inherited policy allowed global deletion: events=%d points=%d err=%v", events, points, err)
+	}
+	const defaultAge = 7 * 24 * time.Hour
+	if events, points, err := worker.DropExpiredTelemetryPartitions(ctx, now, defaultAge); err != nil || events != 3 || points != 3 {
+		t.Fatalf("shared expired partition: events=%d points=%d err=%v", events, points, err)
+	}
+	for _, project := range projects {
+		id := telemetry.DeterministicID(now, "retention-project", project.name)
+		if _, _, err := worker.PruneProjectTelemetry(ctx, id, now, defaultAge, 1); err != nil {
+			t.Fatalf("prune %s: %v", project.name, err)
+		}
+		if counts := countRetention(t, worker, id); counts.events != project.kept || counts.spans != project.kept {
+			t.Fatalf("%s telemetry after cleanup = %+v, want %d events and spans", project.name, counts, project.kept)
+		}
+		var points, buckets int
+		if err := worker.pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM metric_data_points WHERE project_id=$1),
+			(SELECT count(*) FROM span_rollup_buckets WHERE project_id=$1)`, id).Scan(&points, &buckets); err != nil {
+			t.Fatal(err)
+		}
+		if points != project.kept || buckets != project.kept {
+			t.Fatalf("%s has %d points and %d buckets, want %d each", project.name, points, buckets, project.kept)
+		}
+	}
 }
 
 // Retention drops whole daily partitions. Incident rows reference events
