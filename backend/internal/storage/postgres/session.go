@@ -18,7 +18,12 @@ func applySessionParameters(connection *pgx.ConnConfig, configuration config.Dat
 	if connection.RuntimeParams == nil {
 		connection.RuntimeParams = make(map[string]string)
 	}
-	parameters := map[string]string{"application_name": applicationName}
+	// JIT compiles a plan once its estimated cost passes jit_above_cost, and the
+	// planner's estimates for span aggregates are often far above the real work.
+	// Measured on 150k spans in a 24 hour trace list: 2.7 s with JIT, of which
+	// 2.1 s was LLVM compilation, against 1.0 s without it. These short queries
+	// never recover that compile time.
+	parameters := map[string]string{"application_name": applicationName, "jit": "off"}
 	for name, limit := range map[string]time.Duration{
 		"statement_timeout":                   configuration.StatementTimeout,
 		"lock_timeout":                        configuration.LockTimeout,

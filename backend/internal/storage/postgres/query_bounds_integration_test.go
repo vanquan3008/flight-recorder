@@ -2,9 +2,12 @@ package postgres
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/vanquan3008/tracepilot/internal/config"
 	"github.com/vanquan3008/tracepilot/internal/domain/analysis"
 	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
 	"github.com/vanquan3008/tracepilot/internal/query"
@@ -57,5 +60,68 @@ func TestTopologyFindsParentsThatStartedWithinAnHourBeforeTheWindow(t *testing.T
 	}
 	if len(edges) != 1 || edges[0] != "service:gateway>service:worker" {
 		t.Fatalf("edges = %v, want only gateway>worker (the batch>loader parent began 3 hours before the window)", edges)
+	}
+}
+
+// pageTraces stores one single-span trace per offset, newest last, and returns
+// their trace IDs newest first: the order a trace list must show them.
+func pageTraces(t *testing.T, database *Database, scope config.IngestionConfig, now time.Time, durations []time.Duration) []string {
+	t.Helper()
+	events := make([]telemetry.Event, 0, len(durations))
+	ids := make([]string, len(durations))
+	for index, duration := range durations {
+		span := flowSpan(scope, "api", now.Add(time.Duration(index-len(durations))*time.Minute), fmt.Sprintf("%016x", index+1), "")
+		span.TraceID = fmt.Sprintf("%032x", index+1)
+		span.Duration = duration
+		events = append(events, span)
+		ids[len(durations)-1-index] = span.TraceID
+	}
+	if err := database.StoreEvents(context.Background(), scope, events); err != nil {
+		t.Fatal(err)
+	}
+	return ids
+}
+
+func TestTraceListPagesWalkEveryTraceOnceNewestFirst(t *testing.T) {
+	database, scope := newFlowTestDatabase(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	want := pageTraces(t, database, scope, now, []time.Duration{time.Millisecond, time.Millisecond, time.Millisecond, time.Millisecond, time.Millisecond})
+	filter := query.TraceFilter{EnvironmentID: scope.EnvironmentID, From: now.Add(-time.Hour), To: now, Limit: 2}
+	var got []string
+	for range len(want) {
+		traces, err := database.ListTraces(context.Background(), scope.ProjectID, filter)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// The store reads one row past the limit so the caller can tell a last page.
+		page := traces[:min(len(traces), filter.Limit)]
+		for _, trace := range page {
+			got = append(got, trace.TraceID)
+		}
+		if len(traces) <= filter.Limit {
+			break
+		}
+		last := page[len(page)-1]
+		filter.Before, filter.CursorID = last.CursorAt, last.TraceID
+	}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("pages = %v, want %v", got, want)
+	}
+}
+
+func TestTraceListDurationFilterLooksPastTheFirstPage(t *testing.T) {
+	database, scope := newFlowTestDatabase(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	// Only the oldest trace is slow, so a page cut before the duration filter would be empty.
+	ids := pageTraces(t, database, scope, now, []time.Duration{3 * time.Second, time.Millisecond, time.Millisecond, time.Millisecond})
+	minimum := int64(time.Second)
+	traces, err := database.ListTraces(context.Background(), scope.ProjectID, query.TraceFilter{
+		EnvironmentID: scope.EnvironmentID, From: now.Add(-time.Hour), To: now, MinDurationNs: &minimum, Limit: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(traces) != 1 || traces[0].TraceID != ids[len(ids)-1] {
+		t.Fatalf("traces = %#v, want only the slow trace %s", traces, ids[len(ids)-1])
 	}
 }
