@@ -1,25 +1,33 @@
-/bin/
-/data/
-/certs/
+# Local configuration and runtime data
 .env
 .env.*
 !.env.example
 *.local.yaml
+*.local.yml
+/data/
+/certs/
+
+# Go build and test outputs
+/bin/
+/backend/tracepilot
+/backend/loadgen
 *.exe
+*.test
 coverage.out
-/frontend/node_modules/
+
+# Frontend dependencies and generated output
+node_modules/
 /frontend/dist/
 /frontend/.vite/
 /frontend/coverage/
 /frontend/test-results/
 /frontend/playwright-report/
+/frontend/blob-report/
+*.tsbuildinfo
 
+# Local logs, editors, and OS files
 *.log
-
-!**/.dockerignore
-
 .idea/
 .vscode/
-
 .DS_Store
 Thumbs.db

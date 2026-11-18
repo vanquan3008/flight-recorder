@@ -7,6 +7,7 @@ import { useAuth } from "../../shared/session";
 import { canManageRole, type Project, type ProjectDetail, roleLabels } from "../../shared/session";
 import { api } from "../../shared/api";
 import { DataTable, ErrorState, Loading, Panel, formatTime } from "../../shared/ui";
+import { ProjectRetention } from "./project-retention";
 
 /** Slugs are lowercase words joined by hyphens; the name is a good start for one. */
 const slugFrom = (name: string) => name.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 63);
@@ -99,6 +100,7 @@ export function ProjectsSection() {
     rename.mutate(String(new FormData(event.currentTarget).get("name") || "").trim());
   };
   return <>
+    {current && <ProjectRetention key={current.project.id} projectID={current.project.id} projectName={current.project.name} credential={credential} editable={canManageRole(session.role)} />}
     <Panel title="Your projects" meta={`${session.memberships.length} accessible`}>
       <CreateProjectForm />
       <DataTable headers={["Project", "Slug", "Your role", "Created", ""]} empty="You are not a member of any project yet."

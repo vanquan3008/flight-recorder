@@ -1,7 +1,5 @@
 version: 2
 
-# One weekly pull request updates every ecosystem together (Go, GitHub Actions, npm, Docker).
-# Security updates still arrive as their own pull requests, so they are never held back by the batch.
 multi-ecosystem-groups:
   dependencies:
     schedule:
@@ -16,7 +14,6 @@ updates:
     patterns: ["*"]
     multi-ecosystem-group: "dependencies"
 
-  # Workflows live under "/"; the shared composite action needs its own directory.
   - package-ecosystem: "github-actions"
     directories:
       - "/"

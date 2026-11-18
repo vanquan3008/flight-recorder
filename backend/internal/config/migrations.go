@@ -13,7 +13,7 @@ func LoadMigrations(database string) (Config, error) {
 		scopes = append(scopes, "database")
 	}
 	if includeClickHouse {
-		scopes = append(scopes, "clickhouse", "retention.max_age")
+		scopes = append(scopes, "clickhouse")
 	}
 	return loadConfiguration(func(cfg Config) error {
 		var v validator
@@ -26,9 +26,6 @@ func LoadMigrations(database string) (Config, error) {
 		}
 		if includeClickHouse {
 			cfg.ClickHouse.validate(&v, cfg.Production)
-			if cfg.Retention.MaxAge < 0 {
-				v.add("retention.max_age", "must not be negative")
-			}
 		}
 		return v.err()
 	}, scopes...)

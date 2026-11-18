@@ -32,6 +32,22 @@ func (q *Queries) CountEventsBefore(ctx context.Context, before time.Time) (int6
 	return count, err
 }
 
+const countProjectEventsBefore = `-- name: CountProjectEventsBefore :one
+SELECT count(*) FROM events WHERE project_id = $1 AND occurred_at < $2
+`
+
+type CountProjectEventsBeforeParams struct {
+	ProjectID  string
+	BeforeTime time.Time
+}
+
+func (q *Queries) CountProjectEventsBefore(ctx context.Context, arg CountProjectEventsBeforeParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countProjectEventsBefore, arg.ProjectID, arg.BeforeTime)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const deleteExpiredAuditEvents = `-- name: DeleteExpiredAuditEvents :execrows
 DELETE FROM audit_events
 WHERE id IN (
@@ -113,6 +129,80 @@ func (q *Queries) DeleteExpiredWebhookDeliveries(ctx context.Context, arg Delete
 	return result.RowsAffected(), nil
 }
 
+const deleteProjectEventsBefore = `-- name: DeleteProjectEventsBefore :execrows
+DELETE FROM events AS target USING (
+    SELECT e.tableoid, e.ctid FROM events AS e
+    WHERE e.project_id = $1 AND e.occurred_at < $2
+    LIMIT $3::integer
+) AS expired WHERE target.tableoid = expired.tableoid AND target.ctid = expired.ctid
+`
+
+type DeleteProjectEventsBeforeParams struct {
+	ProjectID  string
+	BeforeTime time.Time
+	BatchSize  int32
+}
+
+// tableoid and ctid together identify a tuple across the daily partitions.
+func (q *Queries) DeleteProjectEventsBefore(ctx context.Context, arg DeleteProjectEventsBeforeParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteProjectEventsBefore, arg.ProjectID, arg.BeforeTime, arg.BatchSize)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteProjectMetricsBefore = `-- name: DeleteProjectMetricsBefore :execrows
+DELETE FROM metric_data_points AS target USING (
+    SELECT p.tableoid, p.ctid FROM metric_data_points AS p
+    WHERE p.project_id = $1 AND p.occurred_at < $2
+    LIMIT $3::integer
+) AS expired WHERE target.tableoid = expired.tableoid AND target.ctid = expired.ctid
+`
+
+type DeleteProjectMetricsBeforeParams struct {
+	ProjectID  string
+	BeforeTime time.Time
+	BatchSize  int32
+}
+
+func (q *Queries) DeleteProjectMetricsBefore(ctx context.Context, arg DeleteProjectMetricsBeforeParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteProjectMetricsBefore, arg.ProjectID, arg.BeforeTime, arg.BatchSize)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteProjectSpansBefore = `-- name: DeleteProjectSpansBefore :one
+WITH removed AS (
+    DELETE FROM spans AS target USING (
+        SELECT s.tableoid, s.ctid FROM spans AS s
+        WHERE s.project_id = $1 AND s.started_at < $2
+        LIMIT $3::integer
+    ) AS expired WHERE target.tableoid = expired.tableoid AND target.ctid = expired.ctid
+    RETURNING target.project_id, target.environment_id, target.started_at
+), invalidated AS (
+    DELETE FROM span_rollup_buckets AS b USING removed AS s
+    WHERE b.project_id = s.project_id AND b.environment_id = s.environment_id
+        AND b.bucket_start = date_bin('1 minute', s.started_at, TIMESTAMPTZ '2000-01-01 00:00:00+00')
+)
+SELECT count(*) FROM removed
+`
+
+type DeleteProjectSpansBeforeParams struct {
+	ProjectID  string
+	BeforeTime time.Time
+	BatchSize  int32
+}
+
+func (q *Queries) DeleteProjectSpansBefore(ctx context.Context, arg DeleteProjectSpansBeforeParams) (int64, error) {
+	row := q.db.QueryRow(ctx, deleteProjectSpansBefore, arg.ProjectID, arg.BeforeTime, arg.BatchSize)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const listChildPartitions = `-- name: ListChildPartitions :many
 SELECT child.relname::text AS name
 FROM pg_catalog.pg_inherits
@@ -140,4 +230,53 @@ func (q *Queries) ListChildPartitions(ctx context.Context, parentTable string) (
 		return nil, err
 	}
 	return items, nil
+}
+
+const listProjectRetention = `-- name: ListProjectRetention :many
+SELECT id, telemetry_retention_days FROM projects ORDER BY id
+`
+
+type ListProjectRetentionRow struct {
+	ID                     string
+	TelemetryRetentionDays *int32
+}
+
+func (q *Queries) ListProjectRetention(ctx context.Context) ([]ListProjectRetentionRow, error) {
+	rows, err := q.db.Query(ctx, listProjectRetention)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListProjectRetentionRow{}
+	for rows.Next() {
+		var i ListProjectRetentionRow
+		if err := rows.Scan(&i.ID, &i.TelemetryRetentionDays); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockProjectRetention = `-- name: LockProjectRetention :one
+SELECT telemetry_retention_days FROM projects WHERE id = $1 FOR NO KEY UPDATE
+`
+
+func (q *Queries) LockProjectRetention(ctx context.Context, projectID string) (*int32, error) {
+	row := q.db.QueryRow(ctx, lockProjectRetention, projectID)
+	var telemetry_retention_days *int32
+	err := row.Scan(&telemetry_retention_days)
+	return telemetry_retention_days, err
+}
+
+const lockProjectRetentionCatalog = `-- name: LockProjectRetentionCatalog :exec
+LOCK TABLE projects IN SHARE MODE
+`
+
+func (q *Queries) LockProjectRetentionCatalog(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, lockProjectRetentionCatalog)
+	return err
 }

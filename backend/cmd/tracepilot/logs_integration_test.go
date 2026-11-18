@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/vanquan3008/tracepilot/internal/auth"
 	"github.com/vanquan3008/tracepilot/internal/config"
 	"github.com/vanquan3008/tracepilot/internal/domain/analysis"
 	"github.com/vanquan3008/tracepilot/internal/domain/incident"
@@ -31,11 +32,12 @@ func TestHybridLogsPreserveIncidentsAndRetry(t *testing.T) {
 	scope := config.IngestionConfig{ProjectID: project, ProjectSlug: "hybrid-" + project[24:], ProjectName: "Hybrid test",
 		EnvironmentID: telemetry.DeterministicID(at, project, "env"), EnvironmentName: "test"}
 	cfg := config.Config{Ingestion: scope,
+		Retention: config.RetentionConfig{MaxAge: 7 * 24 * time.Hour},
 		Database: config.DatabaseConfig{URL: os.Getenv("TRACEPILOT_DATABASE_URL"), MaxConnections: 4,
 			MaxConnectionLifetime: time.Minute, MaxConnectionIdleTime: time.Minute, HealthCheckPeriod: time.Minute},
 		ClickHouse: config.ClickHouseConfig{URL: os.Getenv("TRACEPILOT_CLICKHOUSE_TEST_URL"),
 			Database: fmt.Sprintf("tracepilot_test_hybrid_%d", time.Now().UnixNano()), Username: "default", RequestTimeout: 10 * time.Second, MaxConnections: 2}}
-	ch, err := clickhouse.New(cfg.ClickHouse, 0)
+	ch, err := clickhouse.New(cfg.ClickHouse)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,4 +144,39 @@ func TestHybridLogsPreserveIncidentsAndRetry(t *testing.T) {
 	if traces, err := store.ListTraces(ctx, project, query.TraceFilter{EnvironmentID: scope.EnvironmentID, Limit: 10}); err != nil || len(traces) != 1 {
 		t.Fatalf("trace lookup regressed: %+v, %v", traces, err)
 	}
+
+	t.Run("saved retention governs reads and deletes", func(t *testing.T) {
+		old := info
+		old.Timestamp = at.AddDate(0, 0, -10)
+		old.ID = telemetry.DeterministicID(old.Timestamp, project, "old")
+		if err := store.StoreLogs(ctx, project, scope.EnvironmentID, []telemetry.Event{old}); err != nil {
+			t.Fatal(err)
+		}
+		visible := func(want bool) {
+			t.Helper()
+			row, err := store.GetLog(ctx, project, scope.EnvironmentID, old.ID)
+			if err != nil || (row.EventID == old.ID) != want {
+				t.Fatalf("old log visible=%t, want %t, error=%v", row.EventID == old.ID, want, err)
+			}
+			rows, err := store.ListLogs(ctx, project, query.LogFilter{EnvironmentID: scope.EnvironmentID, From: old.Timestamp, To: old.Timestamp, Limit: 10})
+			if err != nil || (len(rows) == 1) != want {
+				t.Fatalf("list returned %d old logs, want visible=%t, error=%v", len(rows), want, err)
+			}
+		}
+		setDays := func(days int32) {
+			t.Helper()
+			if err := store.UpdateProjectRetention(ctx, project, &days, auth.Actor{}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		visible(false)
+		setDays(30)
+		visible(true)
+		setDays(1)
+		if err := store.PruneProjectLogs(ctx, project, at, cfg.Retention.MaxAge); err != nil {
+			t.Fatal(err)
+		}
+		setDays(30)
+		visible(false)
+	})
 }

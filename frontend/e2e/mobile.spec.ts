@@ -24,6 +24,7 @@ async function openPhone(page: Page, path: string) {
     let body: unknown = { data: [] };
     if (url.pathname === "/api/v1/auth/refresh") body = { user: { id: "operator", display_name: "Demo operator", email: "demo@example.test" }, memberships: [{ project, role: "owner" }], access_token: "synthetic-mobile-token", expires_at: "2099-01-01T00:00:00Z" };
     else if (url.pathname === `/api/v1/projects/${projectID}`) body = { project, role: "owner", environments: [{ id: "prod", name: "production" }, { id: "stage", name: "staging" }] };
+    else if (url.pathname === `/api/v1/projects/${projectID}/retention`) body = { retention_days: null, default_age_seconds: 604800, max_days: 106751 };
     else if (url.pathname === "/api/v1/logs") body = { data: logs };
     else if (url.pathname === "/api/v1/traces") body = { data: traces };
     await route.fulfill({ contentType: "application/json", body: JSON.stringify(body) });

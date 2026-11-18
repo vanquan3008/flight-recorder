@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestMigrationStatusIsReadOnlyForMissingDatabase(t *testing.T) {
@@ -26,7 +25,8 @@ func TestMigrationStatusIsReadOnlyForMissingDatabase(t *testing.T) {
 func TestClickHouseMigrationJournalAndRerun(t *testing.T) {
 	for _, fail := range []bool{false, true} {
 		t.Run(fmt.Sprintf("fail=%t", fail), func(t *testing.T) {
-			metadata, started, clean, applied := false, false, false, 0
+			metadata, clean, applied := false, false, 0
+			var version uint
 			schemaReads, columnReads := 0, 0
 			store := testStore(t, func(w http.ResponseWriter, r *http.Request) {
 				query := r.URL.Query().Get("query")
@@ -36,13 +36,15 @@ func TestClickHouseMigrationJournalAndRerun(t *testing.T) {
 						fmt.Fprintln(w, `{"name":"tracepilot_schema_migrations"}`)
 					}
 				case strings.HasPrefix(query, "SELECT version,"):
-					if started {
-						fmt.Fprintf(w, "{\"version\":1,\"dirty\":%t}\n", !clean)
+					if version > 0 {
+						fmt.Fprintf(w, "{\"version\":%d,\"dirty\":%t}\n", version, !clean)
 					}
 				case strings.HasPrefix(query, "CREATE TABLE IF NOT EXISTS tracepilot_schema_migrations"):
 					metadata = true
 				case strings.HasPrefix(query, "INSERT INTO tracepilot_schema_migrations"):
-					started = true
+					if _, err := fmt.Sscanf(query, "INSERT INTO tracepilot_schema_migrations VALUES (%d,", &version); err != nil {
+						t.Error(err)
+					}
 					if strings.Contains(query, "false") {
 						clean = true
 					}
@@ -64,14 +66,14 @@ func TestClickHouseMigrationJournalAndRerun(t *testing.T) {
 			if (err != nil) != fail || applied != 1 || clean == fail {
 				t.Fatalf("migration journal: applied=%d clean=%t error=%v", applied, clean, err)
 			}
-			if !fail && (schemaReads != 1 || columnReads != 1) {
+			if !fail && (version != 2 || schemaReads != 2 || columnReads != 2) {
 				t.Fatalf("migration repeated schema probes: schema=%d columns=%d", schemaReads, columnReads)
 			}
 			err = store.Migrate(context.Background())
 			if (err != nil) != fail || applied != 1 {
 				t.Fatalf("completed/dirty migration was replayed: applied=%d error=%v", applied, err)
 			}
-			if !fail && (schemaReads != 2 || columnReads != 2) {
+			if !fail && (schemaReads != 3 || columnReads != 3) {
 				t.Fatalf("rerun repeated schema probes: schema=%d columns=%d", schemaReads, columnReads)
 			}
 			if err := store.Ready(context.Background()); (err != nil) != fail {
@@ -95,30 +97,7 @@ func TestMigrationValidatesLegacyLayoutBeforeChangingTTL(t *testing.T) {
 			altered = true
 		}
 	})
-	store.maxAge = time.Hour
 	if err := store.Migrate(context.Background()); err == nil || !started || clean || altered {
 		t.Fatalf("invalid layout was changed or marked clean: started=%t clean=%t altered=%t error=%v", started, clean, altered, err)
-	}
-}
-
-func TestTTLChange(t *testing.T) {
-	for _, test := range []struct {
-		name string
-		age  time.Duration
-		ddl  string
-		want string
-	}{
-		{"no retention", 0, "", ""},
-		{"add retention", time.Hour, "", "MODIFY TTL occurred_at + toIntervalSecond(3600)"},
-		{"matching retention", time.Hour, "TTL occurred_at + toIntervalSecond(3600)", ""},
-		{"change retention", time.Hour, "TTL occurred_at + toIntervalSecond(7200)", "MODIFY TTL occurred_at + toIntervalSecond(3600)"},
-		{"remove retention", 0, "TTL occurred_at + toIntervalSecond(3600)", "REMOVE TTL"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			store := &Store{maxAge: test.age}
-			if got := store.ttlChange(schemaState{DDL: test.ddl}); got != test.want {
-				t.Fatalf("TTL change = %q, want %q", got, test.want)
-			}
-		})
 	}
 }

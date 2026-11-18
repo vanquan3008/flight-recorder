@@ -54,8 +54,8 @@ func (store *Store) readySchema(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if store.ttlChange(state) != "" {
-		return errors.New("ClickHouse log TTL differs from retention configuration; run migrate clickhouse up")
+	if state.hasTTL() {
+		return errors.New("ClickHouse logs still have a table TTL; remove it before using project retention")
 	}
 	return store.checkLogColumns(ctx)
 }
@@ -82,23 +82,7 @@ func (store *Store) checkLogColumns(ctx context.Context) error {
 	return err
 }
 
-func (store *Store) ttlChange(state schemaState) string {
-	ttl := store.ttl()
-	if ttl != "" && !strings.Contains(state.DDL, ttl) {
-		return "MODIFY " + ttl
-	}
-	if ttl == "" && strings.Contains(state.DDL, "TTL ") {
-		return "REMOVE TTL"
-	}
-	return ""
-}
-
-func (store *Store) ttl() string {
-	if store.maxAge <= 0 {
-		return ""
-	}
-	return fmt.Sprintf("TTL occurred_at + toIntervalSecond(%d)", max(1, int64(store.maxAge.Seconds())))
-}
+func (state schemaState) hasTTL() bool { return strings.Contains(state.DDL, "TTL ") }
 
 func validUUID(value string) bool {
 	if len(value) != 36 || value[8] != '-' || value[13] != '-' || value[18] != '-' || value[23] != '-' {

@@ -150,7 +150,7 @@ func (q *Queries) GetMemberRole(ctx context.Context, arg GetMemberRoleParams) (s
 }
 
 const getProjectByReference = `-- name: GetProjectByReference :one
-SELECT id, slug, name, created_at, updated_at FROM projects WHERE id::text = $1 OR slug = $1
+SELECT id, slug, name, created_at, updated_at, telemetry_retention_days FROM projects WHERE id::text = $1 OR slug = $1
 `
 
 func (q *Queries) GetProjectByReference(ctx context.Context, reference string) (Project, error) {
@@ -162,8 +162,20 @@ func (q *Queries) GetProjectByReference(ctx context.Context, reference string) (
 		&i.Name,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.TelemetryRetentionDays,
 	)
 	return i, err
+}
+
+const getProjectRetention = `-- name: GetProjectRetention :one
+SELECT telemetry_retention_days FROM projects WHERE id = $1
+`
+
+func (q *Queries) GetProjectRetention(ctx context.Context, projectID string) (*int32, error) {
+	row := q.db.QueryRow(ctx, getProjectRetention, projectID)
+	var telemetry_retention_days *int32
+	err := row.Scan(&telemetry_retention_days)
+	return telemetry_retention_days, err
 }
 
 const getSessionUser = `-- name: GetSessionUser :one
@@ -343,7 +355,7 @@ func (q *Queries) InsertIngestToken(ctx context.Context, arg InsertIngestTokenPa
 const insertProject = `-- name: InsertProject :one
 
 INSERT INTO projects (id, slug, name) VALUES ($1, $2, $3)
-RETURNING id, slug, name, created_at, updated_at
+RETURNING id, slug, name, created_at, updated_at, telemetry_retention_days
 `
 
 type InsertProjectParams struct {
@@ -362,6 +374,7 @@ func (q *Queries) InsertProject(ctx context.Context, arg InsertProjectParams) (P
 		&i.Name,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.TelemetryRetentionDays,
 	)
 	return i, err
 }
@@ -453,7 +466,7 @@ func (q *Queries) InsertUser(ctx context.Context, arg InsertUserParams) (User, e
 }
 
 const listAllProjects = `-- name: ListAllProjects :many
-SELECT id, slug, name, created_at, updated_at FROM projects ORDER BY name, id
+SELECT id, slug, name, created_at, updated_at, telemetry_retention_days FROM projects ORDER BY name, id
 `
 
 func (q *Queries) ListAllProjects(ctx context.Context) ([]Project, error) {
@@ -471,6 +484,7 @@ func (q *Queries) ListAllProjects(ctx context.Context) ([]Project, error) {
 			&i.Name,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.TelemetryRetentionDays,
 		); err != nil {
 			return nil, err
 		}
@@ -662,7 +676,7 @@ func (q *Queries) ListProjectMembers(ctx context.Context, projectID string) ([]L
 }
 
 const listScopes = `-- name: ListScopes :many
-SELECT p.id, p.slug, p.name, p.created_at, p.updated_at, e.id, e.project_id, e.name, e.created_at
+SELECT p.id, p.slug, p.name, p.created_at, p.updated_at, p.telemetry_retention_days, e.id, e.project_id, e.name, e.created_at
 FROM environments e
 JOIN projects p ON p.id = e.project_id
 ORDER BY p.id, e.created_at, e.id
@@ -689,6 +703,7 @@ func (q *Queries) ListScopes(ctx context.Context) ([]ListScopesRow, error) {
 			&i.Project.Name,
 			&i.Project.CreatedAt,
 			&i.Project.UpdatedAt,
+			&i.Project.TelemetryRetentionDays,
 			&i.Environment.ID,
 			&i.Environment.ProjectID,
 			&i.Environment.Name,
@@ -705,7 +720,7 @@ func (q *Queries) ListScopes(ctx context.Context) ([]ListScopesRow, error) {
 }
 
 const listUserProjects = `-- name: ListUserProjects :many
-SELECT p.id, p.slug, p.name, p.created_at, p.updated_at, m.role
+SELECT p.id, p.slug, p.name, p.created_at, p.updated_at, p.telemetry_retention_days, m.role
 FROM project_members m
 JOIN projects p ON p.id = m.project_id
 WHERE m.user_id = $1
@@ -732,6 +747,7 @@ func (q *Queries) ListUserProjects(ctx context.Context, userID string) ([]ListUs
 			&i.Project.Name,
 			&i.Project.CreatedAt,
 			&i.Project.UpdatedAt,
+			&i.Project.TelemetryRetentionDays,
 			&i.Role,
 		); err != nil {
 			return nil, err
@@ -844,7 +860,7 @@ func (q *Queries) RecordUserLogin(ctx context.Context, id string) error {
 const renameProject = `-- name: RenameProject :one
 UPDATE projects SET name = $1, updated_at = now()
 WHERE id = $2
-RETURNING id, slug, name, created_at, updated_at
+RETURNING id, slug, name, created_at, updated_at, telemetry_retention_days
 `
 
 type RenameProjectParams struct {
@@ -861,6 +877,7 @@ func (q *Queries) RenameProject(ctx context.Context, arg RenameProjectParams) (P
 		&i.Name,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.TelemetryRetentionDays,
 	)
 	return i, err
 }
@@ -951,6 +968,24 @@ type UpdateProjectMemberRoleParams struct {
 func (q *Queries) UpdateProjectMemberRole(ctx context.Context, arg UpdateProjectMemberRoleParams) error {
 	_, err := q.db.Exec(ctx, updateProjectMemberRole, arg.Role, arg.ProjectID, arg.UserID)
 	return err
+}
+
+const updateProjectRetention = `-- name: UpdateProjectRetention :one
+UPDATE projects SET telemetry_retention_days = $1, updated_at = now()
+WHERE id = $2
+RETURNING telemetry_retention_days
+`
+
+type UpdateProjectRetentionParams struct {
+	RetentionDays *int32
+	ProjectID     string
+}
+
+func (q *Queries) UpdateProjectRetention(ctx context.Context, arg UpdateProjectRetentionParams) (*int32, error) {
+	row := q.db.QueryRow(ctx, updateProjectRetention, arg.RetentionDays, arg.ProjectID)
+	var telemetry_retention_days *int32
+	err := row.Scan(&telemetry_retention_days)
+	return telemetry_retention_days, err
 }
 
 const updateUser = `-- name: UpdateUser :one

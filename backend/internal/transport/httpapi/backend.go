@@ -99,6 +99,8 @@ type IdentityBackend interface {
 	CreateProject(ctx context.Context, params auth.CreateProjectParams, creatorUserID string, ownedLimit int, actor auth.Actor) (auth.Project, auth.Environment, error)
 	GetProject(context.Context, string) (auth.Project, error)
 	RenameProject(ctx context.Context, projectID, name string, actor auth.Actor) (auth.Project, error)
+	GetProjectRetention(ctx context.Context, projectID string) (*int32, error)
+	UpdateProjectRetention(ctx context.Context, projectID string, days *int32, actor auth.Actor) error
 	ListMemberships(context.Context, string) ([]auth.Membership, error)
 	ListAllProjects(context.Context) ([]auth.Membership, error)
 	ListEnvironments(context.Context, string) ([]auth.Environment, error)

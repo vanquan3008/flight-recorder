@@ -25,7 +25,7 @@ func testStore(t *testing.T, handler http.HandlerFunc) *Store {
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
 	store, err := New(config.ClickHouseConfig{URL: server.URL, Database: "test", Username: "default", Password: "private",
-		RequestTimeout: time.Second, MaxConnections: 2}, 0)
+		RequestTimeout: time.Second, MaxConnections: 2})
 	if err != nil {
 		t.Fatal(err)
 	}

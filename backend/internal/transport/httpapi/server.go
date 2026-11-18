@@ -69,6 +69,7 @@ type Server struct {
 	certificateFile         string
 	privateKeyFile          string
 	webhooksEnabled         bool
+	defaultRetentionAge     time.Duration
 	streamHub               *live.Hub
 }
 
@@ -110,6 +111,7 @@ func New(configuration config.Config, logger *slog.Logger, readinessCheck func(c
 		certificateFile:         configuration.TLS.CertificateFile,
 		privateKeyFile:          configuration.TLS.PrivateKeyFile,
 		webhooksEnabled:         configuration.Notifications.Enabled,
+		defaultRetentionAge:     configuration.Retention.MaxAge,
 	}
 	if server.rateLimitRequests <= 0 {
 		server.rateLimitRequests = 120

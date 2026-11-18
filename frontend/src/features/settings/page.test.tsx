@@ -5,6 +5,7 @@ import { App } from "../../app/app";
 const respond = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status });
 const existing = { id: "01900000-0000-7000-8000-0000000000aa", name: "checkout-ingest", created_at: "2026-10-01T00:00:00Z", expires_at: "2099-10-01T00:00:00Z" };
 const project = { id: "01900000-0000-7000-8000-0000000000a1", slug: "alpha", name: "Alpha", created_at: "2026-01-01T00:00:00Z" };
+const retention = { retention_days: null, default_age_seconds: 604800, max_days: 106751 };
 const session = { user: { id: "u2", email: "user@example.com", display_name: "A User", platform_admin: false, must_change_password: false, created_at: "2026-01-01T00:00:00Z" }, access_token: "test-access-token", expires_at: "2099-01-01T00:00:00Z" };
 
 afterEach(() => { cleanup(); sessionStorage.clear(); window.location.hash = ""; vi.unstubAllGlobals(); });
@@ -27,12 +28,39 @@ it("shows a plain user only their projects, with no way into owner settings", as
   vi.stubGlobal("fetch", vi.fn().mockImplementation((input: string) => {
     const path = new URL(input, "http://localhost").pathname;
     if (path === "/api/v1/auth/refresh") return respond({ ...session, memberships: [{ project, role: "user" }] });
+    if (path === `/api/v1/projects/${project.id}`) return respond({ project, role: "user", environments: [] });
+    if (path.endsWith("/retention")) return respond(retention);
     return respond({ data: [] });
   }));
   render(<App />);
   expect(await screen.findByRole("button", { name: "Projects" })).toBeTruthy();
   for (const owner of ["Ingest tokens", "Webhooks", "Members", "Audit", "Accounts"]) expect(screen.queryByRole("button", { name: owner })).toBeNull();
   expect(screen.getByRole("heading", { name: "Your projects" })).toBeTruthy();
+  expect(await screen.findByText("System default (7 days)")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Save retention" })).toBeNull();
+});
+
+it("sets project retention, confirms a decrease and restores the default", async () => {
+  const updates: Array<number | null> = [];
+  open("#/settings?tab=projects", (path, init) => {
+    if (path === "/api/v1/auth/refresh") return respond({ ...session, memberships: [{ project, role: "owner" }] });
+    if (path.endsWith("/retention")) {
+      if (init?.method === "PUT") updates.push(JSON.parse(String(init.body)).retention_days);
+      return respond({ ...retention, retention_days: updates.at(-1) ?? null });
+    }
+    if (path === `/api/v1/projects/${project.id}`) return respond({ project, role: "owner", environments: [] });
+    return respond({ data: [] });
+  });
+  fireEvent.change(await screen.findByLabelText("Retention policy"), { target: { value: "custom" } });
+  fireEvent.change(screen.getByLabelText("Retention days"), { target: { value: "3" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save retention" }));
+  expect(updates).toEqual([]);
+  fireEvent.click(screen.getByRole("button", { name: "Confirm shorter retention" }));
+  expect(await screen.findByText("Retention saved.")).toBeTruthy();
+  expect(updates).toEqual([3]);
+  fireEvent.change(screen.getByLabelText("Retention policy"), { target: { value: "system" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save retention" }));
+  await waitFor(() => expect(updates).toEqual([3, null]));
 });
 
 it("creates an ingest token, shows its secret once and refreshes the list", async () => {
@@ -90,6 +118,7 @@ it("lets a user leave a project after confirming", async () => {
     if (init?.method === "DELETE") return new Response(null, { status: 204 });
     if (path === "/api/v1/auth/me") return respond({ user: session.user, memberships: [] });
     if (path === `/api/v1/projects/${project.id}`) return respond({ project, role: "user", environments: [] });
+    if (path.endsWith("/retention")) return respond(retention);
     return respond({ data: [] });
   });
   vi.stubGlobal("fetch", fetch);

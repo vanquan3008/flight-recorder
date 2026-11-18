@@ -24,6 +24,6 @@ func runClickHouseMigrations(arguments []string) int {
 		return invalidMigrationArguments(err)
 	}
 	return runMigrationCommand("clickhouse", operation, func(ctx context.Context, cfg config.Config) (string, error) {
-		return clickhouse.RunMigration(ctx, cfg.ClickHouse, cfg.Retention.MaxAge, operation)
+		return clickhouse.RunMigration(ctx, cfg.ClickHouse, operation)
 	})
 }

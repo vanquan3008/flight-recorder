@@ -1841,6 +1841,32 @@
           ]
         },
         {
+          "name": "Get project data retention",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": "{{baseUrl}}/api/v1/projects/{{projectId}}/retention",
+            "description": "Reads the override and the system default. A null retention_days inherits the default."
+          }
+        },
+        {
+          "name": "Set project data retention",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": "{{baseUrl}}/api/v1/projects/{{projectId}}/retention",
+            "description": "An owner sets the retention period for logs, traces, and metrics in the project. Use null to inherit the system default. Shortening retention deletes older data at the next cleanup.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"retention_days\": 30\n}",
+              "options": { "raw": { "language": "json" } }
+            }
+          }
+        },
+        {
           "name": "Add an environment",
           "request": {
             "method": "POST",

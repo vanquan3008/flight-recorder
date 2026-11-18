@@ -13,14 +13,14 @@ import (
 	"github.com/vanquan3008/tracepilot/internal/query"
 )
 
-func integrationStore(t *testing.T, age time.Duration) *Store {
+func integrationStore(t *testing.T) *Store {
 	t.Helper()
 	if os.Getenv("TRACEPILOT_CLICKHOUSE_INTEGRATION_TEST") != "1" {
 		t.Skip("set TRACEPILOT_CLICKHOUSE_INTEGRATION_TEST=1 and TRACEPILOT_CLICKHOUSE_TEST_URL to a disposable ClickHouse")
 	}
 	store, err := New(config.ClickHouseConfig{URL: os.Getenv("TRACEPILOT_CLICKHOUSE_TEST_URL"),
 		Database: fmt.Sprintf("tracepilot_test_%d", time.Now().UnixNano()), Username: "default",
-		RequestTimeout: 10 * time.Second, MaxConnections: 2}, age)
+		RequestTimeout: 10 * time.Second, MaxConnections: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,7 +37,7 @@ func integrationStore(t *testing.T, age time.Duration) *Store {
 }
 
 func TestWeeklyLogsDeduplicateRetriesPreserveJSONAndPageByNanosecond(t *testing.T) {
-	store, ctx := integrationStore(t, 0), context.Background()
+	store, ctx := integrationStore(t), context.Background()
 	monday := time.Date(2026, 1, 5, 0, 0, 0, 123456789, time.UTC)
 	before := testLog(monday.Add(-time.Second), "sunday")
 	one, two := testLog(monday, "monday1"), testLog(monday, "monday2")
@@ -105,12 +105,22 @@ func TestWeeklyLogsDeduplicateRetriesPreserveJSONAndPageByNanosecond(t *testing.
 	}
 }
 
-func TestRetentionHidesExpiredLogsBeforeWeeklyPartitionExpires(t *testing.T) {
-	store, ctx := integrationStore(t, 24*time.Hour), context.Background()
+func TestProjectLogRetentionDeletesOnlyExpiredLogsInThatProject(t *testing.T) {
+	store, ctx := integrationStore(t), context.Background()
 	now := time.Now().UTC()
 	old, recent := testLog(now.Add(-48*time.Hour), "expired"), testLog(now, "recent")
 	if err := store.StoreLogs(ctx, testProject, testEnvironment, []telemetry.Event{old, recent}); err != nil {
 		t.Fatal(err)
+	}
+	other := testLog(old.Timestamp, "other-expired")
+	other.ProjectID = "01900000-0000-7000-8000-000000000003"
+	if err := store.StoreLogs(ctx, other.ProjectID, testEnvironment, []telemetry.Event{other}); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := store.ExpireProjectLogs(ctx, testProject, now.Add(-24*time.Hour)); err != nil {
+			t.Fatal(err)
+		}
 	}
 	rows, err := store.ListLogs(ctx, testProject, query.LogFilter{EnvironmentID: testEnvironment, Limit: 10})
 	if err != nil || len(rows) != 1 || rows[0].EventID != recent.ID {
@@ -119,16 +129,7 @@ func TestRetentionHidesExpiredLogsBeforeWeeklyPartitionExpires(t *testing.T) {
 	if row, err := store.GetLog(ctx, testProject, testEnvironment, old.ID); err != nil || row.EventID != "" {
 		t.Fatalf("expired detail remains visible: %+v, %v", row, err)
 	}
-	// Changing retention to forever is an explicit migration, not startup DDL.
-	store.maxAge = 0
-	if err := store.Ready(ctx); err == nil {
-		t.Fatal("startup accepted a stale retention TTL")
-	}
-	if err := store.Migrate(ctx); err != nil {
-		t.Fatal(err)
-	}
-	state, err := store.schema(ctx)
-	if err != nil || len(state.DDL) == 0 {
-		t.Fatal("schema was not preserved", err)
+	if row, err := store.GetLog(ctx, other.ProjectID, testEnvironment, other.ID); err != nil || row.EventID != other.ID {
+		t.Fatalf("cleanup affected another project: %+v, %v", row, err)
 	}
 }

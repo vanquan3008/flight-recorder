@@ -12,7 +12,6 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/vanquan3008/tracepilot/internal/config"
 )
@@ -23,21 +22,20 @@ type Store struct {
 	endpoint *url.URL
 	client   *http.Client
 	cfg      config.ClickHouseConfig
-	maxAge   time.Duration
 }
 
-func New(cfg config.ClickHouseConfig, maxAge time.Duration) (*Store, error) {
+func New(cfg config.ClickHouseConfig) (*Store, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
-	if cfg.URL == "" || maxAge < 0 {
+	if cfg.URL == "" {
 		return nil, errors.New("invalid ClickHouse resource limits")
 	}
 	endpoint, _ := url.Parse(cfg.URL)
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.MaxConnsPerHost, transport.MaxIdleConnsPerHost = cfg.MaxConnections, cfg.MaxConnections
 	return &Store{
-		endpoint: endpoint, cfg: cfg, maxAge: maxAge,
+		endpoint: endpoint, cfg: cfg,
 		client: &http.Client{Transport: transport, Timeout: cfg.RequestTimeout,
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
 	}, nil

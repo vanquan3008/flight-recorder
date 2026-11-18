@@ -13,36 +13,22 @@ import (
 const groupTimeout = 30 * time.Second
 
 type Store interface {
-	DeleteEventsBefore(context.Context, time.Time, int) (int64, error)
-	CountEventsBefore(context.Context, time.Time) (int64, error)
-}
-
-// MetricStore is optional so existing stores and tests can retain their small
-// event-only contract. PostgreSQL implements it when OTLP metrics are enabled.
-type MetricStore interface {
-	DeleteMetricsBefore(context.Context, time.Time, int) (int64, error)
-}
-
-// HistoryStore deletes operational history. Deleting an incident also deletes
-// its evidence, occurrences, status history and replay results, so no orphan
-// rows remain; only resolved or ignored incidents are eligible.
-type HistoryStore interface {
+	ListRetentionProjects(context.Context) ([]string, error)
+	DropExpiredTelemetryPartitions(context.Context, time.Time, time.Duration) (events, points int64, err error)
+	PruneProjectTelemetry(context.Context, string, time.Time, time.Duration, int) (events, points int64, err error)
+	PruneProjectLogs(context.Context, string, time.Time, time.Duration) error
+	CountExpiredProjectEvents(context.Context, time.Time, time.Duration) (int64, error)
 	DeleteIncidentsBefore(context.Context, time.Time, int) (int64, error)
 	DeleteAuditBefore(context.Context, time.Time, int) (int64, error)
 	DeleteDeliveriesBefore(context.Context, time.Time, int) (int64, error)
 }
 
-// Policy is how long each group of data is kept. Zero keeps a group forever.
+// Policy is how long each group is kept. Telemetry is the default for projects without an override.
 type Policy struct {
 	Telemetry  time.Duration
 	Incidents  time.Duration
 	Audit      time.Duration
 	Deliveries time.Duration
-}
-
-// Enabled reports whether any group expires.
-func (policy Policy) Enabled() bool {
-	return policy.Telemetry > 0 || policy.Incidents > 0 || policy.Audit > 0 || policy.Deliveries > 0
 }
 
 type group struct {
@@ -51,34 +37,10 @@ type group struct {
 	delete func(context.Context, time.Time, int) (int64, error)
 }
 
-// groups lists the cleanups the policy and the store support.
-func (policy Policy) groups(store Store) []group {
-	var groups []group
-	if policy.Telemetry > 0 {
-		groups = append(groups, group{"telemetry", policy.Telemetry, store.DeleteEventsBefore})
-		if metricStore, ok := store.(MetricStore); ok {
-			groups = append(groups, group{"metrics", policy.Telemetry, metricStore.DeleteMetricsBefore})
-		}
-	}
-	if historyStore, ok := store.(HistoryStore); ok {
-		for _, history := range []group{
-			{"incidents", policy.Incidents, historyStore.DeleteIncidentsBefore},
-			{"audit", policy.Audit, historyStore.DeleteAuditBefore},
-			{"deliveries", policy.Deliveries, historyStore.DeleteDeliveriesBefore},
-		} {
-			if history.maxAge > 0 {
-				groups = append(groups, history)
-			}
-		}
-	}
-	return groups
-}
-
 // Run cleans up expired data now and then every interval until ctx ends. A
 // failing group is logged and counted but never stops the other groups.
 func Run(ctx context.Context, logger *slog.Logger, store Store, selfMetrics *metrics.Registry, policy Policy, interval time.Duration, batchSize int) error {
-	groups := policy.groups(store)
-	prune := func() { pruneAll(ctx, logger, store, selfMetrics, groups, policy, batchSize) }
+	prune := func() { pruneAll(ctx, logger, store, selfMetrics, policy, batchSize) }
 
 	prune()
 	ticker := time.NewTicker(interval)
@@ -93,18 +55,21 @@ func Run(ctx context.Context, logger *slog.Logger, store Store, selfMetrics *met
 	}
 }
 
-func pruneAll(ctx context.Context, logger *slog.Logger, store Store, selfMetrics *metrics.Registry, groups []group, policy Policy, batchSize int) {
-	startedAt := time.Now()
+func pruneAll(ctx context.Context, logger *slog.Logger, store Store, selfMetrics *metrics.Registry, policy Policy, batchSize int) {
+	startedAt := time.Now().UTC()
 	var failed bool
-	var eventsDeleted int64
-	for _, current := range groups {
+	for _, current := range []group{
+		{"incidents", policy.Incidents, store.DeleteIncidentsBefore},
+		{"audit", policy.Audit, store.DeleteAuditBefore},
+		{"deliveries", policy.Deliveries, store.DeleteDeliveriesBefore},
+	} {
+		if current.maxAge <= 0 {
+			continue
+		}
 		groupContext, cancel := context.WithTimeout(ctx, groupTimeout)
-		deleted, pruneError := DeleteExpired(groupContext, time.Now().UTC().Add(-current.maxAge), batchSize, current.delete)
+		deleted, pruneError := DeleteExpired(groupContext, startedAt.Add(-current.maxAge), batchSize, current.delete)
 		cancel()
 		selfMetrics.ObserveRetentionGroup(current.name, deleted)
-		if current.name == "telemetry" {
-			eventsDeleted = deleted
-		}
 		if pruneError != nil {
 			failed = true
 			logger.ErrorContext(ctx, "retention cleanup failed", "group", current.name, "deleted", deleted, "error", pruneError)
@@ -112,17 +77,58 @@ func pruneAll(ctx context.Context, logger *slog.Logger, store Store, selfMetrics
 			logger.InfoContext(ctx, "retention cleanup completed", "group", current.name, "deleted", deleted)
 		}
 	}
-	if policy.Telemetry > 0 {
-		recordBacklog(ctx, logger, store, selfMetrics, policy.Telemetry)
+	events, points, telemetryError := pruneTelemetry(ctx, logger, store, startedAt, policy.Telemetry, batchSize)
+	selfMetrics.ObserveRetentionGroup("telemetry", events)
+	selfMetrics.ObserveRetentionGroup("metrics", points)
+	if telemetryError != nil && ctx.Err() == nil {
+		logger.ErrorContext(ctx, "telemetry retention sweep incomplete", "error", telemetryError)
 	}
-	selfMetrics.ObserveRetention(time.Since(startedAt), eventsDeleted, failed)
+	recordBacklog(ctx, logger, store, selfMetrics, startedAt, policy.Telemetry)
+	selfMetrics.ObserveRetention(time.Since(startedAt), events, failed || telemetryError != nil)
+}
+
+func pruneTelemetry(ctx context.Context, logger *slog.Logger, store Store, now time.Time, fallback time.Duration, batchSize int) (int64, int64, error) {
+	if batchSize <= 0 {
+		return 0, 0, errors.New("retention batch size must be positive")
+	}
+	work, cancel := context.WithTimeout(ctx, groupTimeout)
+	events, points, dropError := store.DropExpiredTelemetryPartitions(work, now, fallback)
+	cancel()
+	work, cancel = context.WithTimeout(ctx, groupTimeout)
+	projects, listError := store.ListRetentionProjects(work)
+	cancel()
+	if listError != nil {
+		return events, points, errors.Join(dropError, listError)
+	}
+	var projectFailed bool
+	for _, project := range projects {
+		if err := ctx.Err(); err != nil {
+			return events, points, err
+		}
+		work, cancel = context.WithTimeout(ctx, groupTimeout)
+		removedEvents, removedPoints, pgError := store.PruneProjectTelemetry(work, project, now, fallback, batchSize)
+		cancel()
+		events += removedEvents
+		points += removedPoints
+		work, cancel = context.WithTimeout(ctx, groupTimeout)
+		logError := store.PruneProjectLogs(work, project, now, fallback)
+		cancel()
+		if err := errors.Join(pgError, logError); err != nil {
+			projectFailed = true
+			logger.ErrorContext(ctx, "project retention cleanup failed", "project_id", project, "error", err)
+		}
+	}
+	if projectFailed {
+		return events, points, errors.Join(dropError, errors.New("one or more projects could not be pruned"))
+	}
+	return events, points, dropError
 }
 
 // recordBacklog reports the events still older than the cutoff after cleanup.
-func recordBacklog(ctx context.Context, logger *slog.Logger, store Store, selfMetrics *metrics.Registry, maxAge time.Duration) {
+func recordBacklog(ctx context.Context, logger *slog.Logger, store Store, selfMetrics *metrics.Registry, now time.Time, maxAge time.Duration) {
 	backlogContext, cancel := context.WithTimeout(ctx, groupTimeout)
 	defer cancel()
-	backlog, backlogError := store.CountEventsBefore(backlogContext, time.Now().UTC().Add(-maxAge))
+	backlog, backlogError := store.CountExpiredProjectEvents(backlogContext, now, maxAge)
 	if backlogError != nil {
 		logger.WarnContext(ctx, "retention backlog metric failed", "error", backlogError)
 		return

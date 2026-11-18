@@ -95,6 +95,27 @@ func (store *IdentityStore) RenameProject(ctx context.Context, projectID, name s
 	return project, nil
 }
 
+func (store *IdentityStore) GetProjectRetention(ctx context.Context, projectID string) (*int32, error) {
+	days, err := store.queries.GetProjectRetention(ctx, projectID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, auth.ErrProjectNotFound
+	}
+	return days, err
+}
+
+func (store *IdentityStore) UpdateProjectRetention(ctx context.Context, projectID string, days *int32, actor auth.Actor) error {
+	return store.inTransaction(ctx, func(queries *sqlcstore.Queries) error {
+		_, err := queries.UpdateProjectRetention(ctx, sqlcstore.UpdateProjectRetentionParams{ProjectID: projectID, RetentionDays: days})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return auth.ErrProjectNotFound
+		}
+		if err != nil {
+			return err
+		}
+		return audit(ctx, queries, projectID, actor, "project.retention_updated", "project", projectID, map[string]any{"retention_days": days})
+	})
+}
+
 // ListMemberships returns the projects a user belongs to with their role in each.
 func (store *IdentityStore) ListMemberships(ctx context.Context, userID string) ([]auth.Membership, error) {
 	rows, queryError := store.queries.ListUserProjects(ctx, userID)
