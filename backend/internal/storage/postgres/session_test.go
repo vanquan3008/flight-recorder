@@ -20,6 +20,7 @@ func TestSessionParametersFollowConfiguration(t *testing.T) {
 	})
 	want := map[string]string{
 		"application_name": "tracepilot", "statement_timeout": "30000", "lock_timeout": "1500", "idle_in_transaction_session_timeout": "60000",
+		"jit": "off",
 	}
 	for name, value := range want {
 		if got := connection.ConnConfig.RuntimeParams[name]; got != value {
@@ -29,13 +30,13 @@ func TestSessionParametersFollowConfiguration(t *testing.T) {
 }
 
 func TestSessionParametersKeepServerDefaultsAtZeroAndURLWins(t *testing.T) {
-	connection, err := pgxpool.ParseConfig("postgres://u:p@localhost/db?statement_timeout=5000&application_name=reporting")
+	connection, err := pgxpool.ParseConfig("postgres://u:p@localhost/db?statement_timeout=5000&application_name=reporting&jit=on")
 	if err != nil {
 		t.Fatal(err)
 	}
 	applySessionParameters(connection.ConnConfig, config.DatabaseConfig{StatementTimeout: 30 * time.Second})
 	params := connection.ConnConfig.RuntimeParams
-	if params["statement_timeout"] != "5000" || params["application_name"] != "reporting" {
+	if params["statement_timeout"] != "5000" || params["application_name"] != "reporting" || params["jit"] != "on" {
 		t.Fatalf("the URL did not win: %v", params)
 	}
 	for _, name := range []string{"lock_timeout", "idle_in_transaction_session_timeout"} {
@@ -59,6 +60,7 @@ func TestPooledConnectionsCarryTheSessionLimitsIntegration(t *testing.T) {
 	defer database.Close()
 	for name, want := range map[string]string{
 		"statement_timeout": "7s", "lock_timeout": "3s", "idle_in_transaction_session_timeout": "11s", "application_name": "tracepilot",
+		"jit": "off",
 	} {
 		var got string
 		if scanError := database.pool.QueryRow(context.Background(), "SELECT current_setting($1)", name).Scan(&got); scanError != nil {

@@ -1,17 +1,56 @@
 package main
 
-import "testing"
+import (
+	"bytes"
+	"encoding/json"
+	"log"
+	"log/slog"
+	"strings"
+	"testing"
+)
 
 func TestMigrationRejectsInvalidArgumentsBeforeLoadingConfiguration(t *testing.T) {
-	for _, args := range [][]string{
-		{}, {"all", "extra"}, {"status", "extra"}, {"down"}, {"down", "0"},
-		{"down", "-1"}, {"drop"}, {"postgres"}, {"postgres", "down"}, {"postgres", "status", "extra"},
-		{"clickhouse"}, {"clickhouse", "status", "extra"},
-		{"clickhouse", "all"}, {"clickhouse", "down", "1"}, {"clickhouse", "version"},
-		{"postgres", "backfill"}, {"down", "1", "extra"}, {"--unknown"},
+	t.Chdir(t.TempDir())
+	t.Setenv("TRACEPILOT_PRODUCTION", "invalid")
+	var output bytes.Buffer
+	logger, writer, flags := slog.Default(), log.Writer(), log.Flags()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&output, nil)))
+	t.Cleanup(func() {
+		slog.SetDefault(logger)
+		log.SetOutput(writer)
+		log.SetFlags(flags)
+	})
+	for _, test := range []struct {
+		command  string
+		database string
+	}{
+		{"", ""}, {"all extra", ""}, {"status extra", ""}, {"down", ""},
+		{"down 0", ""}, {"down -1", ""}, {"drop", ""}, {"postgres", ""},
+		{"postgres down", ""}, {"postgres status extra", ""}, {"postgres all extra", ""},
+		{"clickhouse", ""}, {"clickhouse status extra", ""}, {"clickhouse all", ""},
+		{"clickhouse down 1", ""}, {"clickhouse version", ""}, {"postgres backfill", ""},
+		{"down 1 extra", ""}, {"--unknown", ""},
+		{"status", "postgres"}, {"postgres down 2", "postgres"}, {"clickhouse status", "clickhouse"},
+		{"all", "all"}, {"postgres all", "all"},
 	} {
-		if code := runMigrations(args); code != 2 {
-			t.Errorf("migrate %v: exit=%d, want 2", args, code)
+		output.Reset()
+		if code := runMigrations(strings.Fields(test.command)); code != 2 {
+			t.Errorf("migrate %q: exit=%d, want 2", test.command, code)
+		}
+		var entry struct {
+			Message  string `json:"msg"`
+			Database string `json:"database"`
+		}
+		if err := json.Unmarshal(output.Bytes(), &entry); err != nil {
+			t.Fatalf("migrate %q: decode log: %v", test.command, err)
+		}
+		wantMessage := "invalid migration arguments"
+		if test.database != "" {
+			wantMessage = "invalid configuration"
+		}
+		if entry.Message != wantMessage || entry.Database != test.database {
+			t.Errorf("migrate %q: message=%q database=%q, want %q database=%q",
+				test.command, entry.Message, entry.Database, wantMessage, test.database)
 		}
 	}
 }

@@ -9,7 +9,6 @@ import (
 	"github.com/vanquan3008/tracepilot/internal/application/replay"
 	"github.com/vanquan3008/tracepilot/internal/auth"
 	"github.com/vanquan3008/tracepilot/internal/config"
-	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
 	ingestotlp "github.com/vanquan3008/tracepilot/internal/ingest/otlp"
 	"github.com/vanquan3008/tracepilot/internal/ingest/pipeline"
 	"github.com/vanquan3008/tracepilot/internal/observability/metrics"
@@ -30,12 +29,9 @@ func buildMetricsPipeline(cfg config.Config, database *postgres.Database, catalo
 	)
 }
 
-type eventStore interface {
-	StoreEvents(context.Context, config.IngestionConfig, []telemetry.Event) error
-}
-
-// buildIngestionPipeline constructs the event telemetry ingestion pipeline.
-func buildIngestionPipeline(cfg config.Config, database eventStore, catalog *scopeCatalog, selfMetrics *metrics.Registry) *pipeline.Pipeline {
+// buildIngestionPipeline constructs the event telemetry ingestion pipeline. It takes the
+// concrete writer because the hybrid store's promoted StoreEvents would refuse logs.
+func buildIngestionPipeline(cfg config.Config, writer eventWriter, catalog *scopeCatalog, selfMetrics *metrics.Registry) *pipeline.Pipeline {
 	return pipeline.New(
 		pipeline.Config{
 			QueueSize:      cfg.Ingestion.QueueSize,
@@ -46,7 +42,7 @@ func buildIngestionPipeline(cfg config.Config, database eventStore, catalog *sco
 			BatchTimeout:   cfg.Ingestion.BatchTimeout,
 			FlushInterval:  cfg.Ingestion.FlushInterval,
 		},
-		storeEventsByScope(catalog, database.StoreEvents),
+		storeEventsByScope(catalog, writer.StoreEvents),
 		selfMetrics,
 	)
 }

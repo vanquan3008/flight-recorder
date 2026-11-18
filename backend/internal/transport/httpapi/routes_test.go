@@ -138,3 +138,37 @@ func TestRoutesFailClosedWhenAuthorizationCannotBeVerified(t *testing.T) {
 		}
 	}
 }
+
+// stalledEnvironmentBackend never answers the environment lookup, like a pool
+// with no free connection, and gives up only when its context ends.
+type stalledEnvironmentBackend struct{ authOnlyBackend }
+
+func (stalledEnvironmentBackend) ListEnvironments(ctx context.Context, _ string) ([]auth.Environment, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func TestRequestDeadlineCoversAuthenticationLookups(t *testing.T) {
+	server := newTestServer(nil)
+	server.backend = stalledEnvironmentBackend{}
+	server.requestTimeout = 50 * time.Millisecond
+	router := http.NewServeMux()
+	server.registerAPIRoutes(router)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/traces", nil)
+	signIn(request, "owner")
+	request.Header.Set(environmentHeader, "production")
+	done := make(chan struct{})
+	go func() {
+		router.ServeHTTP(recorder, request)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("a stalled environment lookup held the request past its deadline")
+	}
+	if recorder.Code != http.StatusGatewayTimeout {
+		t.Fatalf("status = %d, want 504 once the deadline ends the lookup", recorder.Code)
+	}
+}

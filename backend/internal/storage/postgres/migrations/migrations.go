@@ -12,12 +12,11 @@ import (
 	_ "github.com/golang-migrate/migrate/v4/database/pgx/v5"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
 	"github.com/vanquan3008/tracepilot/db"
+	"github.com/vanquan3008/tracepilot/internal/config"
 )
 
 func CurrentVersion() (uint, error) { return db.LatestVersion(db.PostgresMigrations) }
 
-// Options bounds how long migration commands wait on PostgreSQL. Zero fields
-// use the defaults below.
 type Options struct {
 	ConnectTimeout   time.Duration
 	LockTimeout      time.Duration
@@ -43,12 +42,24 @@ func (options Options) withDefaults() Options {
 	return options
 }
 
-// Run applies an operation with the default timeouts.
+// optionsFor reads the migration limits from the PostgreSQL settings.
+func optionsFor(cfg config.DatabaseConfig) Options {
+	return Options{
+		ConnectTimeout:   cfg.ConnectTimeout,
+		LockTimeout:      cfg.MigrationLockTimeout,
+		StatementTimeout: cfg.MigrationStatementTimeout,
+	}
+}
+
+// RunWithConfig runs one operation (up, down, version, status) against the configured database.
+func RunWithConfig(ctx context.Context, cfg config.DatabaseConfig, operation string, steps int) (string, error) {
+	return RunWith(ctx, cfg.URL, operation, steps, optionsFor(cfg))
+}
+
 func Run(ctx context.Context, databaseURL, operation string, steps int) (string, error) {
 	return RunWith(ctx, databaseURL, operation, steps, Options{})
 }
 
-// RunWith owns locking for mutations; callers use the same entry point for CLI and startup.
 func RunWith(ctx context.Context, databaseURL, operation string, steps int, options Options) (string, error) {
 	options = options.withDefaults()
 	if operation != "up" && operation != "down" && operation != "version" && operation != "status" {
@@ -119,7 +130,6 @@ func apply(ctx context.Context, databaseURL, operation string, steps int, option
 	return result, ctx.Err()
 }
 
-// Refuse missing down SQL before the runner can change the migration journal.
 func checkRollback(version uint, steps int) error {
 	history, err := db.List(db.PostgresMigrations)
 	if err != nil {
@@ -158,7 +168,6 @@ func open(ctx context.Context, databaseURL string, options Options) (*migrate.Mi
 	if deadline, ok := ctx.Deadline(); ok {
 		timeout = min(timeout, time.Until(deadline))
 	}
-	// Bound the driver's background-context queries, including advisory-lock waits.
 	query.Set("statement_timeout", strconv.FormatInt(max(1, timeout.Milliseconds()), 10))
 	query.Set("x-statement-timeout", strconv.FormatInt(max(1, timeout.Milliseconds()), 10))
 	endpoint.RawQuery = query.Encode()

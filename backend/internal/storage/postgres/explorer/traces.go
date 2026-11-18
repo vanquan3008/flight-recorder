@@ -3,13 +3,33 @@ package explorer
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/vanquan3008/tracepilot/internal/query"
 	"github.com/vanquan3008/tracepilot/internal/storage/postgres/pgvalue"
 	sqlcstore "github.com/vanquan3008/tracepilot/internal/storage/postgres/sqlc"
 )
 
+// An open trace window is sent as these outer bounds rather than NULL, so the
+// query always compares started_at directly and keeps its index and partition
+// pruning. Only a trace ID lookup leaves the start open.
+var (
+	openWindowStart = time.Unix(0, 0).UTC()
+	openWindowEnd   = time.Date(9999, time.December, 31, 0, 0, 0, 0, time.UTC)
+)
+
+func traceWindow(from, to time.Time) (time.Time, time.Time) {
+	if from.IsZero() {
+		from = openWindowStart
+	}
+	if to.IsZero() {
+		to = openWindowEnd
+	}
+	return from, to
+}
+
 func (store *QueryStore) ListTraces(ctx context.Context, projectID string, filter query.TraceFilter) ([]query.TraceSummary, error) {
+	from, to := traceWindow(filter.From, filter.To)
 	rows, queryError := store.queries.ListTraces(ctx, sqlcstore.ListTracesParams{
 		ProjectID:     projectID,
 		EnvironmentID: filter.EnvironmentID,
@@ -17,8 +37,8 @@ func (store *QueryStore) ListTraces(ctx context.Context, projectID string, filte
 		Operation:     pgvalue.OrNil(filter.Operation),
 		Status:        pgvalue.OrNil(filter.Status),
 		TraceID:       pgvalue.OrNil(filter.TraceID),
-		FromTime:      pgvalue.TimeOrNil(filter.From),
-		ToTime:        pgvalue.TimeOrNil(filter.To),
+		FromTime:      from,
+		ToTime:        to,
 		Before:        pgvalue.TimeOrNil(filter.Before),
 		CursorID:      pgvalue.OrNil(filter.CursorID),
 		MinDurationNs: filter.MinDurationNs,

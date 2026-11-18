@@ -80,6 +80,12 @@ func (server *Server) registerAPIRoutes(router *http.ServeMux) {
 // connection from ingestion nor hold one indefinitely.
 func (server *Server) requireScope(scope string, handle apiHandler) http.HandlerFunc {
 	return func(responseWriter http.ResponseWriter, request *http.Request) {
+		// The deadline starts before authentication: the user and environment
+		// lookups also wait for a pooled connection, and without it a request
+		// could wait there past every proxy timeout when the pool is busy.
+		queryContext, cancel := context.WithTimeout(request.Context(), server.requestTimeout)
+		defer cancel()
+		request = request.WithContext(queryContext)
 		principal, ok := server.authenticateScope(responseWriter, request, scope)
 		if !ok {
 			return
@@ -103,9 +109,7 @@ func (server *Server) requireScope(scope string, handle apiHandler) http.Handler
 			return
 		}
 		defer release()
-		queryContext, cancel := context.WithTimeout(request.Context(), server.requestTimeout)
-		defer cancel()
-		handle(responseWriter, request.WithContext(queryContext), principal)
+		handle(responseWriter, request, principal)
 	}
 }
 

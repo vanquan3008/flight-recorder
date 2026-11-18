@@ -2,28 +2,29 @@ package config
 
 import "fmt"
 
-// LoadMigrations binds and validates only the databases used by the selected command.
 func LoadMigrations(database string) (Config, error) {
-	if database != "postgres" && database != "clickhouse" && database != "all" {
+	includePostgres := database == "postgres" || database == "all"
+	includeClickHouse := database == "clickhouse" || database == "all"
+	if !includePostgres && !includeClickHouse {
 		return Config{}, fmt.Errorf("unsupported migration database %q", database)
 	}
 	scopes := []string{"production", "app.production"}
-	if database == "postgres" || database == "all" {
+	if includePostgres {
 		scopes = append(scopes, "database")
 	}
-	if database == "clickhouse" || database == "all" {
+	if includeClickHouse {
 		scopes = append(scopes, "clickhouse", "retention.max_age")
 	}
 	return loadConfiguration(func(cfg Config) error {
 		var v validator
-		if database == "postgres" || database == "all" {
+		if includePostgres {
 			cfg.Database.validateConnectionPool(&v)
 			cfg.Database.validateConnectionLifecycle(&v)
 			cfg.Database.validateSessionLimits(&v)
 			cfg.Database.validateMigrations(&v)
 			validateDatabaseURL(cfg.Database.URL, cfg.Production, &v)
 		}
-		if database == "clickhouse" || database == "all" {
+		if includeClickHouse {
 			cfg.ClickHouse.validate(&v, cfg.Production)
 			if cfg.Retention.MaxAge < 0 {
 				v.add("retention.max_age", "must not be negative")

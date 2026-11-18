@@ -11,6 +11,13 @@ import (
 	"github.com/vanquan3008/tracepilot/internal/config"
 )
 
+const (
+	migrationUp      = "up"
+	migrationDown    = "down"
+	migrationStatus  = "status"
+	migrationVersion = "version"
+)
+
 func runMigrations(arguments []string) int {
 	if len(arguments) == 0 {
 		return invalidMigrationArguments(errors.New("a migration operation is required"))
@@ -18,13 +25,14 @@ func runMigrations(arguments []string) int {
 	switch arguments[0] {
 	case "postgres":
 		if len(arguments) == 2 && arguments[1] == "all" {
-			return runAllMigrations(arguments[1:])
+			// Preserve the legacy spelling of the two-database command.
+			return runAllMigrations(nil)
 		}
 		return runPostgresMigrations(arguments[1:])
 	case "clickhouse":
 		return runClickHouseMigrations(arguments[1:])
 	case "all":
-		return runAllMigrations(arguments)
+		return runAllMigrations(arguments[1:])
 	default:
 		return runPostgresMigrations(arguments)
 	}

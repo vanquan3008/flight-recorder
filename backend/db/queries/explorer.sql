@@ -1,51 +1,59 @@
--- Keep the full-trace lookup parameterized by trace ID with OFFSET 0. A new
--- scope absent from statistics otherwise risks a quadratic nested-loop semi join.
+-- A page is chosen from the matching spans first, ordered by each trace's
+-- latest matching span, and only those traces are summarized. Summarizing
+-- every trace in the window before the LIMIT cost 2.7 s on 150k spans (24 h)
+-- and 10 s on 1M spans (7 d); choosing first costs 80 ms and 250 ms. Duration
+-- filters need the whole trace, so with one set the LIMIT moves to the end.
+-- The time bounds are never NULL: an optional bound would hide started_at from
+-- the index and from partition pruning under a generic plan.
+-- Keep the full-trace lookup parameterized by trace ID. A new scope absent
+-- from statistics otherwise risks a quadratic nested-loop semi join.
 -- name: ListTraces :many
-WITH matching_traces AS (
-    SELECT spans.project_id, spans.environment_id, spans.trace_id,
-           min(spans.started_at) AS first_match, max(spans.started_at) AS last_match FROM spans
+WITH page AS (
+    SELECT spans.trace_id,
+           min(spans.started_at) AS first_match, max(spans.started_at) AS last_match
+    FROM spans
     WHERE spans.project_id = @project_id
       AND spans.environment_id = @environment_id
+      AND spans.started_at >= @from_time::timestamptz
+      AND spans.started_at <= @to_time::timestamptz
       AND (sqlc.narg(service)::text IS NULL OR spans.service_name = sqlc.narg(service))
       AND (sqlc.narg(operation)::text IS NULL OR spans.span_name = sqlc.narg(operation))
       AND (sqlc.narg(status)::text IS NULL OR spans.status_code = sqlc.narg(status))
       AND (sqlc.narg(trace_id)::text IS NULL OR spans.trace_id = sqlc.narg(trace_id))
-      AND (sqlc.narg(from_time)::timestamptz IS NULL OR spans.started_at >= sqlc.narg(from_time))
-      AND (sqlc.narg(to_time)::timestamptz IS NULL OR spans.started_at <= sqlc.narg(to_time))
-    GROUP BY spans.project_id, spans.environment_id, spans.trace_id
-), match_bounds AS (
-    SELECT min(matching_traces.first_match) - interval '1 hour' AS earliest,
-           max(matching_traces.last_match) + interval '1 hour' AS latest
-    FROM matching_traces
+    GROUP BY spans.trace_id
+    HAVING (sqlc.narg(before)::timestamptz IS NULL
+            OR max(spans.started_at) < sqlc.narg(before)
+            OR (max(spans.started_at) = sqlc.narg(before) AND spans.trace_id < sqlc.narg(cursor_id)::text))
+    ORDER BY max(spans.started_at) DESC, spans.trace_id DESC
+    LIMIT CASE WHEN sqlc.narg(min_duration_ns)::bigint IS NULL AND sqlc.narg(max_duration_ns)::bigint IS NULL
+               THEN sqlc.arg(row_limit)::integer END
 )
-SELECT spans.trace_id,
-       min(spans.started_at)::timestamptz AS started_at,
-       max(spans.ended_at)::timestamptz AS ended_at,
-       max(spans.started_at)::timestamptz AS cursor_at,
-       (extract(epoch FROM max(spans.ended_at) - min(spans.started_at)) * 1000000000)::bigint AS duration_nanos,
-       (array_agg(spans.service_name ORDER BY (NULLIF(spans.parent_span_id, '') IS NULL) DESC, spans.started_at, spans.event_id))[1]::text AS root_service,
-       count(*) AS span_count,
-       count(*) FILTER (WHERE spans.status_code = 'ERROR') AS error_count
-FROM matching_traces
-CROSS JOIN match_bounds
+SELECT page.trace_id,
+       summary.started_at::timestamptz AS started_at,
+       summary.ended_at::timestamptz AS ended_at,
+       page.last_match::timestamptz AS cursor_at,
+       summary.duration_nanos::bigint AS duration_nanos,
+       summary.root_service::text AS root_service,
+       summary.span_count::bigint AS span_count,
+       summary.error_count::bigint AS error_count
+FROM page
 CROSS JOIN LATERAL (
-    SELECT spans.* FROM spans
-    WHERE spans.project_id = matching_traces.project_id
-      AND spans.environment_id = matching_traces.environment_id
-      AND spans.trace_id = matching_traces.trace_id
-      AND spans.started_at >= match_bounds.earliest
-      AND spans.started_at <= match_bounds.latest
-    OFFSET 0
-) AS spans
-GROUP BY spans.trace_id
-HAVING (sqlc.narg(before)::timestamptz IS NULL
-        OR max(spans.started_at) < sqlc.narg(before)
-        OR (max(spans.started_at) = sqlc.narg(before) AND spans.trace_id < sqlc.narg(cursor_id)::text))
-   AND (sqlc.narg(min_duration_ns)::bigint IS NULL
-        OR (extract(epoch FROM max(spans.ended_at) - min(spans.started_at)) * 1000000000)::bigint >= sqlc.narg(min_duration_ns))
-   AND (sqlc.narg(max_duration_ns)::bigint IS NULL
-        OR (extract(epoch FROM max(spans.ended_at) - min(spans.started_at)) * 1000000000)::bigint <= sqlc.narg(max_duration_ns))
-ORDER BY max(spans.started_at) DESC, spans.trace_id DESC
+    SELECT min(spans.started_at) AS started_at,
+           max(spans.ended_at) AS ended_at,
+           (extract(epoch FROM max(spans.ended_at) - min(spans.started_at)) * 1000000000)::bigint AS duration_nanos,
+           (array_agg(spans.service_name ORDER BY (NULLIF(spans.parent_span_id, '') IS NULL) DESC, spans.started_at, spans.event_id))[1] AS root_service,
+           count(*) AS span_count,
+           count(*) FILTER (WHERE spans.status_code = 'ERROR') AS error_count
+    FROM spans
+    WHERE spans.project_id = @project_id
+      AND spans.environment_id = @environment_id
+      AND spans.trace_id = page.trace_id
+      AND spans.started_at >= page.first_match - interval '1 hour'
+      AND spans.started_at <= page.last_match + interval '1 hour'
+) AS summary
+WHERE (sqlc.narg(min_duration_ns)::bigint IS NULL OR summary.duration_nanos >= sqlc.narg(min_duration_ns))
+  AND (sqlc.narg(max_duration_ns)::bigint IS NULL OR summary.duration_nanos <= sqlc.narg(max_duration_ns))
+ORDER BY page.last_match DESC, page.trace_id DESC
 LIMIT sqlc.arg(row_limit)::integer;
 
 -- One statement keeps summary, percentiles and breakdowns on the same snapshot.
