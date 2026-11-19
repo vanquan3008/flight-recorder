@@ -5,7 +5,6 @@ import { useAuth } from "../shared/session";
 
 export type ScopeOption = { value: string; label: string };
 
-/** Loads the current project's environments as choices, keeping an unknown selected value visible. */
 export function useEnvironmentOptions(environment: string) {
   const { credential, session } = useAuth();
   const projectID = session?.project?.project.id;
