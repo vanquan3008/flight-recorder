@@ -28,6 +28,12 @@ function Source-Checksums {
 
 Push-Location $repoRoot
 try {
+    $bundleFiles = @('frontend/.env.example', 'LICENSE', 'docs/FLOW.md', 'docs/STRUCTURE.md',
+        'docs/diagrams.html', 'docs/tracepilot.postman_collection.json', 'deploy/nginx.conf.example', 'deploy/compose.yaml')
+    $requiredFiles = $bundleFiles + @('backend/.env.example', 'README.md', 'backend/Dockerfile', 'frontend/Dockerfile')
+    foreach ($path in $requiredFiles) {
+        if (!(Test-Path -LiteralPath $path -PathType Leaf)) { throw "Required release input is missing: $path" }
+    }
     $commit = (& git rev-parse HEAD).Trim()
     if ($LASTEXITCODE -ne 0) { throw 'Git revision is required for release metadata.' }
     $dirty = @(& git status --porcelain).Count -gt 0
@@ -83,12 +89,10 @@ try {
         else { $environment += "`n" + $line + "`n" }
     }
     Write-UTF8 "$bundle/backend/.env.example" $environment
-    Copy-Item -LiteralPath frontend/.env.example -Destination "$bundle/frontend/.env.example"
     Write-UTF8 "$bundle/README.md" ([IO.File]::ReadAllText((Join-Path $repoRoot 'README.md')).Replace('tracepilot-<version>-linux-amd64', $name))
-    Copy-Item -LiteralPath LICENSE -Destination $bundle
-    Copy-Item -LiteralPath docs/FLOW.md, docs/STRUCTURE.md, docs/diagrams.html, docs/tracepilot.postman_collection.json -Destination "$bundle/docs"
-    Copy-Item -LiteralPath deploy/nginx.conf.example -Destination "$bundle/deploy/nginx.conf.example"
-    Copy-Item -LiteralPath deploy/compose.yaml -Destination "$bundle/deploy/compose.yaml"
+    foreach ($path in $bundleFiles) {
+        Copy-Item -LiteralPath $path -Destination (Join-Path $bundle $path)
+    }
     Write-UTF8 "$bundle/images.txt" ($serverImage + "`n" + $consoleImage + "`n")
     $serverID = (Invoke-Docker image inspect --format '{{.Id}}' $serverImage).Trim()
     $consoleID = (Invoke-Docker image inspect --format '{{.Id}}' $consoleImage).Trim()
