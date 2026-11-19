@@ -11,6 +11,8 @@ import (
 	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
 )
 
+// span merges resource, scope, span, event and link attributes into one map.
+// Limits apply to that map, and resource keys win on collision.
 func (normalizer *normalizer) span(resource *resourcepb.Resource, resourceSchemaURL string, scope *commonpb.InstrumentationScope, scopeSchemaURL string, span *tracepb.Span) (telemetry.Event, error) {
 	attributes := newAttributeBuilder(normalizer)
 	if addError := attributes.addAll(resource.GetAttributes()); addError != nil {

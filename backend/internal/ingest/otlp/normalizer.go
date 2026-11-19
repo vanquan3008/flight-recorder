@@ -139,6 +139,8 @@ func unixNanos(value uint64) time.Time {
 	return time.Unix(0, int64(value)).UTC()
 }
 
+// redacts matches built-in patterns anywhere in the key, so counters such as
+// gen_ai.usage.input_tokens are redacted too.
 func (normalizer *normalizer) redacts(key string) bool {
 	normalized := strings.ToLower(strings.TrimSpace(key))
 	if _, found := normalizer.redactedKeys[normalized]; found {
@@ -176,6 +178,8 @@ func containsNUL(value string) bool {
 	return strings.IndexByte(value, 0) >= 0
 }
 
+// spanEventType maps SERVER and CLIENT spans to the HTTP types even when they
+// are not HTTP.
 func spanEventType(span *tracepb.Span, attributes map[string]any) telemetry.EventType {
 	if _, found := attributes["exception.type"]; found {
 		return telemetry.EventException
@@ -221,6 +225,8 @@ func stringAttribute(attributes map[string]any, keys ...string) string {
 	return ""
 }
 
+// intAttribute rejects the record when the first present key is not an int64
+// HTTP status.
 func intAttribute(attributes map[string]any, keys ...string) (int, error) {
 	for _, key := range keys {
 		value, found := attributes[key]
@@ -236,6 +242,7 @@ func intAttribute(attributes map[string]any, keys ...string) (int, error) {
 	return 0, nil
 }
 
+// validIdentifier rejects all-zero IDs, as W3C Trace Context requires.
 func validIdentifier(value []byte, size int, optional bool) bool {
 	if len(value) == 0 {
 		return optional

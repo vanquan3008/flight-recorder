@@ -1,6 +1,11 @@
 package telemetry
 
-import "time"
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"time"
+)
 
 type MetricType string
 
@@ -54,4 +59,22 @@ type MetricDataPoint struct {
 	ScopeVersion       string
 	ScopeAttributes    map[string]any
 	Exemplars          []MetricExemplar
+}
+
+// SeriesID hashes everything that names the point's series, never values or times.
+func (point MetricDataPoint) SeriesID() string {
+	identity, _ := json.Marshal([]any{
+		point.ServiceName, point.ServiceVersion, point.MetricName, point.MetricUnit, point.MetricType,
+		point.Temporality, point.IsMonotonic, objectOrEmpty(point.Attributes), objectOrEmpty(point.ResourceAttributes),
+		point.ScopeName, point.ScopeVersion, objectOrEmpty(point.ScopeAttributes),
+	})
+	sum := sha256.Sum256(identity)
+	return hex.EncodeToString(sum[:16])
+}
+
+func objectOrEmpty(value map[string]any) map[string]any {
+	if value == nil {
+		return map[string]any{}
+	}
+	return value
 }

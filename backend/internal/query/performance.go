@@ -2,6 +2,7 @@ package query
 
 import (
 	"errors"
+	"math"
 	"time"
 )
 
@@ -12,6 +13,8 @@ type PerformanceFilter struct {
 	From          time.Time
 	To            time.Time
 	Limit         int
+	// Since hides requests before the project's retention cutoff without changing the buckets.
+	Since time.Time
 }
 
 func (filter PerformanceFilter) Validate() error {
@@ -67,4 +70,23 @@ type RequestPerformance struct {
 	Series        []PerformanceBucket `json:"series"`
 	Services      []PerformanceGroup  `json:"services"`
 	Endpoints     []PerformanceGroup  `json:"endpoints"`
+}
+
+// NewRequestPerformance returns an empty result for the filter with its time
+// series cut into at most 60 equal buckets.
+func NewRequestPerformance(filter PerformanceFilter) RequestPerformance {
+	seconds := max(1, int(math.Ceil(filter.To.Sub(filter.From).Seconds()/60)))
+	result := RequestPerformance{
+		From: filter.From.UTC(), To: filter.To.UTC(), Service: filter.Service, Endpoint: filter.Endpoint,
+		BucketSeconds: seconds, Limit: filter.Limit,
+		Series: make([]PerformanceBucket, 0, 60), Services: []PerformanceGroup{}, Endpoints: []PerformanceGroup{},
+	}
+	for from := result.From; from.Before(result.To); from = from.Add(time.Duration(seconds) * time.Second) {
+		to := from.Add(time.Duration(seconds) * time.Second)
+		if to.After(result.To) {
+			to = result.To
+		}
+		result.Series = append(result.Series, PerformanceBucket{From: from, To: to})
+	}
+	return result
 }

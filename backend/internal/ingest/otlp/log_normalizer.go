@@ -14,6 +14,8 @@ import (
 	resourcepb "go.opentelemetry.io/proto/otlp/resource/v1"
 )
 
+// logRecord falls back to the observed time; a body over the value limit
+// rejects the record.
 func (normalizer *normalizer) logRecord(resource *resourcepb.Resource, resourceSchemaURL string, scope *commonpb.InstrumentationScope, scopeSchemaURL string, record *logspb.LogRecord) (telemetry.Event, error) {
 	attributes := newAttributeBuilder(normalizer)
 	if addError := attributes.addAll(resource.GetAttributes()); addError != nil {

@@ -28,6 +28,8 @@ type SpanPage struct {
 	MaxBytes       int64
 	AfterStartedAt time.Time
 	AfterEventID   string
+	// Since hides spans that started before the project's retention cutoff.
+	Since time.Time
 }
 
 type TraceSummary struct {
@@ -42,27 +44,33 @@ type TraceSummary struct {
 }
 
 type SpanRecord struct {
-	EventID            string          `json:"event_id"`
-	TraceID            string          `json:"trace_id"`
-	SpanID             string          `json:"span_id"`
-	ParentSpanID       string          `json:"parent_span_id,omitempty"`
-	TraceState         string          `json:"trace_state,omitempty"`
-	Name               string          `json:"name"`
-	Kind               int32           `json:"kind"`
-	StartedAt          time.Time       `json:"started_at"`
-	EndedAt            time.Time       `json:"ended_at"`
-	StatusCode         string          `json:"status_code"`
-	StatusMessage      string          `json:"status_message,omitempty"`
-	Flags              int64           `json:"flags"`
-	ServiceName        string          `json:"service_name"`
-	ServiceVersion     string          `json:"service_version,omitempty"`
-	ResourceAttributes json.RawMessage `json:"resource_attributes"`
-	ScopeName          string          `json:"scope_name,omitempty"`
-	ScopeVersion       string          `json:"scope_version,omitempty"`
-	ScopeAttributes    json.RawMessage `json:"scope_attributes"`
-	Attributes         json.RawMessage `json:"attributes"`
-	Events             json.RawMessage `json:"events"`
-	Links              json.RawMessage `json:"links"`
+	EventID                string          `json:"event_id"`
+	TraceID                string          `json:"trace_id"`
+	SpanID                 string          `json:"span_id"`
+	ParentSpanID           string          `json:"parent_span_id,omitempty"`
+	TraceState             string          `json:"trace_state,omitempty"`
+	Name                   string          `json:"name"`
+	Kind                   int32           `json:"kind"`
+	StartedAt              time.Time       `json:"started_at"`
+	EndedAt                time.Time       `json:"ended_at"`
+	DurationNanos          int64           `json:"duration_nanos"`
+	StatusCode             string          `json:"status_code"`
+	StatusMessage          string          `json:"status_message,omitempty"`
+	Flags                  int64           `json:"flags"`
+	ServiceName            string          `json:"service_name"`
+	ServiceVersion         string          `json:"service_version,omitempty"`
+	ResourceSchemaURL      string          `json:"resource_schema_url,omitempty"`
+	ResourceAttributes     json.RawMessage `json:"resource_attributes"`
+	ScopeName              string          `json:"scope_name,omitempty"`
+	ScopeVersion           string          `json:"scope_version,omitempty"`
+	ScopeSchemaURL         string          `json:"scope_schema_url,omitempty"`
+	ScopeAttributes        json.RawMessage `json:"scope_attributes"`
+	Attributes             json.RawMessage `json:"attributes"`
+	Events                 json.RawMessage `json:"events"`
+	Links                  json.RawMessage `json:"links"`
+	DroppedAttributesCount uint32          `json:"dropped_attributes_count"`
+	DroppedEventsCount     uint32          `json:"dropped_events_count"`
+	DroppedLinksCount      uint32          `json:"dropped_links_count"`
 }
 
 type LogFilter struct {
@@ -80,23 +88,26 @@ type LogFilter struct {
 }
 
 type LogRecord struct {
-	EventID            string          `json:"event_id"`
-	OccurredAt         time.Time       `json:"occurred_at"`
-	ObservedAt         *time.Time      `json:"observed_at,omitempty"`
-	TraceID            string          `json:"trace_id,omitempty"`
-	SpanID             string          `json:"span_id,omitempty"`
-	TraceFlags         int64           `json:"trace_flags"`
-	SeverityNumber     int32           `json:"severity_number"`
-	SeverityText       string          `json:"severity_text,omitempty"`
-	Body               json.RawMessage `json:"body"`
-	EventName          string          `json:"event_name,omitempty"`
-	ServiceName        string          `json:"service_name"`
-	ServiceVersion     string          `json:"service_version,omitempty"`
-	ResourceAttributes json.RawMessage `json:"resource_attributes"`
-	ScopeName          string          `json:"scope_name,omitempty"`
-	ScopeVersion       string          `json:"scope_version,omitempty"`
-	ScopeAttributes    json.RawMessage `json:"scope_attributes"`
-	Attributes         json.RawMessage `json:"attributes"`
+	EventID                string          `json:"event_id"`
+	OccurredAt             time.Time       `json:"occurred_at"`
+	ObservedAt             *time.Time      `json:"observed_at,omitempty"`
+	TraceID                string          `json:"trace_id,omitempty"`
+	SpanID                 string          `json:"span_id,omitempty"`
+	TraceFlags             int64           `json:"trace_flags"`
+	SeverityNumber         int32           `json:"severity_number"`
+	SeverityText           string          `json:"severity_text,omitempty"`
+	Body                   json.RawMessage `json:"body"`
+	EventName              string          `json:"event_name,omitempty"`
+	ServiceName            string          `json:"service_name"`
+	ServiceVersion         string          `json:"service_version,omitempty"`
+	ResourceSchemaURL      string          `json:"resource_schema_url,omitempty"`
+	ResourceAttributes     json.RawMessage `json:"resource_attributes"`
+	ScopeName              string          `json:"scope_name,omitempty"`
+	ScopeVersion           string          `json:"scope_version,omitempty"`
+	ScopeSchemaURL         string          `json:"scope_schema_url,omitempty"`
+	ScopeAttributes        json.RawMessage `json:"scope_attributes"`
+	Attributes             json.RawMessage `json:"attributes"`
+	DroppedAttributesCount uint32          `json:"dropped_attributes_count"`
 }
 
 type ServiceSummary struct {

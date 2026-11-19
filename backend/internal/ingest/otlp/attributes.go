@@ -10,6 +10,8 @@ import (
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 )
 
+// attributeBuilder enforces the ingestion limits. The first value for a key
+// wins, and any violation rejects the whole record.
 type attributeBuilder struct {
 	normalizer *normalizer
 	values     map[string]any

@@ -4,6 +4,7 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"time"
 )
 
 // BuildRCA ranks hypotheses and only relates measured, connected evidence.
@@ -116,4 +117,22 @@ func evidenceNode(item Evidence) string {
 		node += "#" + item.SeriesID
 	}
 	return node
+}
+
+// EvidenceWindow spans every evidence window, widened to fallback before its
+// end when all windows end at the same instant.
+func EvidenceWindow(evidence []Evidence, fallback time.Duration) (time.Time, time.Time) {
+	from, to := evidence[0].WindowStartedAt, evidence[0].WindowEndedAt
+	for _, item := range evidence {
+		if item.WindowStartedAt.Before(from) {
+			from = item.WindowStartedAt
+		}
+		if item.WindowEndedAt.After(to) {
+			to = item.WindowEndedAt
+		}
+	}
+	if !from.Before(to) {
+		from = to.Add(-fallback)
+	}
+	return from, to
 }
