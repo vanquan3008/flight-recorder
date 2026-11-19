@@ -30,7 +30,6 @@ func runServer(arguments []string) int {
 	if err := flags.Parse(arguments); err != nil {
 		return 2
 	}
-
 	if flags.NArg() != 0 {
 		slog.Error("serve does not accept positional arguments")
 		return 2
