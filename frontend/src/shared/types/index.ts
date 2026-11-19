@@ -41,18 +41,34 @@ export type TraceSummary = {
 };
 
 export type Span = {
+  event_id?: string;
   trace_id: string;
   span_id: string;
   parent_span_id?: string;
+  trace_state?: string;
   name: string;
+  /** OTLP span kind: 0 unspecified, 1 internal, 2 server, 3 client, 4 producer, 5 consumer. */
+  kind?: number;
   started_at: string;
   ended_at: string;
+  duration_nanos?: number;
   status_code: string;
+  status_message?: string;
+  flags?: number;
   service_name: string;
+  service_version?: string;
+  resource_schema_url?: string;
+  scope_name?: string;
+  scope_version?: string;
+  scope_schema_url?: string;
+  scope_attributes?: unknown;
   attributes: unknown;
   resource_attributes: unknown;
   events: unknown;
   links: unknown;
+  dropped_attributes_count?: number;
+  dropped_events_count?: number;
+  dropped_links_count?: number;
 };
 
 /** One page of a trace; next_cursor is present while more spans follow. */
@@ -69,7 +85,11 @@ export type LogRecord = {
   severity_number?: number;
   body: unknown;
   service_name: string;
+  resource_schema_url?: string;
   resource_attributes: unknown;
+  scope_schema_url?: string;
+  attributes?: unknown;
+  dropped_attributes_count?: number;
 };
 
 // ── Incidents ──────────────────────────────────────────────────────────────────

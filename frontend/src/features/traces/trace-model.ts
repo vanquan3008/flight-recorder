@@ -28,24 +28,61 @@ export type TraceModel = {
   orphans: number;
 };
 
-const time = (value: string) => {
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) ? parsed : 0;
-};
+/** Epoch milliseconds keeping the sub-millisecond digits Date.parse drops; 0 when unparsable. */
+export function timeMs(value: string): number {
+  const match = /^(.*\.\d{3})(\d+)(.*)$/.exec(value);
+  const parsed = Date.parse(match ? match[1] + match[3] : value);
+  if (!Number.isFinite(parsed)) return 0;
+  return match ? parsed + Number(`0.${match[2]}`) : parsed;
+}
+
+export function spanDurationMs(span: Span): number {
+  if (typeof span.duration_nanos === "number" && Number.isFinite(span.duration_nanos)) return Math.max(span.duration_nanos / 1e6, 0);
+  return Math.max(timeMs(span.ended_at) - timeMs(span.started_at), 0);
+}
 
 export const isError = (span: Span) => span.status_code === "ERROR";
 
+/** Linear-interpolated percentile, as PostgreSQL percentile_cont computes it. */
+export function percentile(values: number[], fraction: number): number {
+  if (!values.length) return 0;
+  const sorted = [...values].sort((left, right) => left - right);
+  const rank = fraction * (sorted.length - 1);
+  const low = Math.floor(rank), high = Math.ceil(rank);
+  return sorted[low] + (sorted[high] - sorted[low]) * (rank - low);
+}
+
+/** Time a span spent outside the union of its children, clipped to the span. */
+export function selfTimeMs(start: number, duration: number, children: { start: number; duration: number }[]): number {
+  const end = start + duration;
+  const intervals = children.map((child) => [Math.max(child.start, start), Math.min(child.start + child.duration, end)])
+    .filter(([from, to]) => to > from).sort((left, right) => left[0] - right[0]);
+  let covered = 0, coveredUntil = start;
+  for (const [from, to] of intervals) {
+    const gapStart = Math.max(from, coveredUntil);
+    if (to > gapStart) {
+      covered += to - gapStart;
+      coveredUntil = to;
+    }
+  }
+  return Math.max(duration - covered, 0);
+}
+
 export function buildTrace(spans: Span[]): TraceModel {
   const ids = new Set(spans.map((span) => span.span_id));
+  const startOf = new Map(spans.map((span) => [span, timeMs(span.started_at)]));
+  const durationOf = new Map(spans.map((span) => [span, spanDurationMs(span)]));
+  const start = (span: Span) => startOf.get(span) ?? 0;
+  const duration = (span: Span) => durationOf.get(span) ?? 0;
   const children = new Map<string, Span[]>();
   for (const span of spans) {
     const parent = span.parent_span_id && ids.has(span.parent_span_id) && span.parent_span_id !== span.span_id ? span.parent_span_id : "";
     children.set(parent, [...(children.get(parent) ?? []), span]);
   }
-  children.forEach((group) => group.sort((left, right) => time(left.started_at) - time(right.started_at) || left.span_id.localeCompare(right.span_id)));
+  children.forEach((group) => group.sort((left, right) => start(left) - start(right) || left.span_id.localeCompare(right.span_id)));
 
-  const first = spans.length ? Math.min(...spans.map((span) => time(span.started_at))) : 0;
-  const last = spans.length ? Math.max(...spans.map((span) => Math.max(time(span.ended_at), time(span.started_at)))) : 0;
+  const first = spans.length ? Math.min(...spans.map(start)) : 0;
+  const last = spans.length ? Math.max(...spans.map((span) => start(span) + duration(span))) : 0;
   const totalMs = Math.max(last - first, 1);
 
   const serviceOrder: string[] = [];
@@ -57,17 +94,20 @@ export function buildTrace(spans: Span[]): TraceModel {
 
   const rows: TraceRow[] = [];
   const seen = new Set<string>();
+  const row = (span: Span, depth: number, path: string[], hasChildren: boolean): TraceRow => {
+    const startMs = start(span) - first;
+    const durationMs = duration(span);
+    return {
+      span, depth, path, hasChildren, startMs, durationMs,
+      offset: Math.min(Math.max(startMs / totalMs, 0), 1), width: Math.min(Math.max(durationMs / totalMs, 0.004), 1),
+      serviceIndex: serviceIndex(span.service_name),
+    };
+  };
   const visit = (parent: string, depth: number, path: string[]) => {
     for (const span of children.get(parent) ?? []) {
       if (seen.has(span.span_id)) continue;
       seen.add(span.span_id);
-      const startMs = time(span.started_at) - first;
-      const durationMs = Math.max(time(span.ended_at) - time(span.started_at), 0);
-      rows.push({
-        span, depth, path, hasChildren: (children.get(span.span_id) ?? []).length > 0, startMs, durationMs,
-        offset: Math.min(Math.max(startMs / totalMs, 0), 1), width: Math.min(Math.max(durationMs / totalMs, 0.004), 1),
-        serviceIndex: serviceIndex(span.service_name),
-      });
+      rows.push(row(span, depth, path, (children.get(span.span_id) ?? []).length > 0));
       visit(span.span_id, depth + 1, [...path, span.span_id]);
     }
   };
@@ -76,26 +116,21 @@ export function buildTrace(spans: Span[]): TraceModel {
   for (const span of spans) {
     if (seen.has(span.span_id)) continue;
     seen.add(span.span_id);
-    const startMs = time(span.started_at) - first;
-    const durationMs = Math.max(time(span.ended_at) - time(span.started_at), 0);
-    rows.push({ span, depth: 0, path: [], hasChildren: false, startMs, durationMs, offset: Math.min(Math.max(startMs / totalMs, 0), 1), width: Math.min(Math.max(durationMs / totalMs, 0.004), 1), serviceIndex: serviceIndex(span.service_name) });
+    rows.push(row(span, 0, [], false));
   }
 
   const byID = new Map(spans.map((span) => [span.span_id, span]));
-  const duration = (span: Span) => Math.max(time(span.ended_at) - time(span.started_at), 0);
-  const childTime = new Map<string, number>();
-  const hops = new Map<string, { from: string; to: string; calls: number; errors: number; total: number; longest: number; trace: string }>();
+  const childSpans = new Map<string, Span[]>();
+  const hops = new Map<string, { from: string; to: string; errors: number; durations: number[]; trace: string }>();
   for (const span of spans) {
     const parent = span.parent_span_id ? byID.get(span.parent_span_id) : undefined;
     if (!parent || parent === span) continue;
-    childTime.set(parent.span_id, (childTime.get(parent.span_id) ?? 0) + duration(span));
+    childSpans.set(parent.span_id, [...(childSpans.get(parent.span_id) ?? []), span]);
     if (parent.service_name === span.service_name) continue;
     const key = `${parent.service_name}\u0000${span.service_name}`;
-    const hop = hops.get(key) ?? { from: parent.service_name, to: span.service_name, calls: 0, errors: 0, total: 0, longest: 0, trace: span.trace_id };
-    hop.calls += 1;
+    const hop = hops.get(key) ?? { from: parent.service_name, to: span.service_name, errors: 0, durations: [], trace: span.trace_id };
     hop.errors += isError(span) ? 1 : 0;
-    hop.total += duration(span);
-    hop.longest = Math.max(hop.longest, duration(span));
+    hop.durations.push(duration(span));
     hops.set(key, hop);
   }
 
@@ -104,8 +139,8 @@ export function buildTrace(spans: Span[]): TraceModel {
     const stat = stats.get(span.service_name) ?? { name: span.service_name, index: serviceIndex(span.service_name), spans: 0, errors: 0, selfMs: 0 };
     stat.spans += 1;
     stat.errors += isError(span) ? 1 : 0;
-    // Self time: what this span spent outside its children, so service totals do not double count nesting.
-    stat.selfMs += Math.max(duration(span) - (childTime.get(span.span_id) ?? 0), 0);
+    const kids = (childSpans.get(span.span_id) ?? []).map((child) => ({ start: start(child), duration: duration(child) }));
+    stat.selfMs += selfTimeMs(start(span), duration(span), kids);
     stats.set(span.service_name, stat);
   }
   const services = [...stats.values()].sort((left, right) => left.index - right.index);
@@ -114,8 +149,9 @@ export function buildTrace(spans: Span[]): TraceModel {
     rows, totalMs, services, errors: spans.filter(isError).length, orphans: spans.filter((span) => span.parent_span_id && !ids.has(span.parent_span_id)).length,
     nodes: services.map((service) => ({ id: service.name, name: service.name, type: "service" })),
     edges: [...hops.values()].map((hop) => ({
-      source_node_id: hop.from, target_node_id: hop.to, kind: "calls", call_count: hop.calls, error_count: hop.errors,
-      average_latency_nanos: (hop.total / hop.calls) * 1e6, p95_latency_nanos: hop.longest * 1e6, trace_ids: [hop.trace],
+      source_node_id: hop.from, target_node_id: hop.to, kind: "calls", call_count: hop.durations.length, error_count: hop.errors,
+      average_latency_nanos: (hop.durations.reduce((sum, value) => sum + value, 0) / hop.durations.length) * 1e6,
+      p95_latency_nanos: percentile(hop.durations, 0.95) * 1e6, trace_ids: [hop.trace],
     })),
   };
 }

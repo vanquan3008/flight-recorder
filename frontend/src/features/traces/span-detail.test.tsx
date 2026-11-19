@@ -1,5 +1,5 @@
 import { afterEach, expect, it } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { SpanDetail } from "./span-detail";
 
@@ -32,4 +32,27 @@ it("searches structured attribute values and clears the filter", () => {
   expect(screen.queryByText("attempt")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Clear property filter" }));
   expect(screen.getByText("attempt")).toBeTruthy();
+});
+
+it("shows span facts, dropped counts and links to linked traces with the current scope", () => {
+  const linked = {
+    ...span, kind: 3, service_version: "2.4.1", scope_name: "io.opentelemetry.http", scope_version: "1.2.0", status_message: "upstream timeout",
+    dropped_attributes_count: 2, dropped_links_count: 1,
+    links: [{ TraceID: "linkedtrace", SpanID: "linkedspan", TraceState: "", Flags: 1, Attributes: { "messaging.operation": "process" }, DroppedAttributes: 0 }],
+  };
+  render(<MemoryRouter initialEntries={["/traces/trace?project=p1&environment=prod&range=1h"]}><SpanDetail span={linked} traceID="trace" startMs={0.5} durationMs={0.25} /></MemoryRouter>);
+  const facts = within(screen.getByLabelText("Span facts"));
+  expect(facts.getByText("Client")).toBeTruthy();
+  expect(facts.getByText("2.4.1")).toBeTruthy();
+  expect(facts.getByText("io.opentelemetry.http 1.2.0")).toBeTruthy();
+  expect(facts.getByText("upstream timeout")).toBeTruthy();
+  expect(screen.getByRole("note").textContent).toContain("2 attributes, 1 links");
+  expect(screen.getByText(/starts at \+500 µs · 250 µs/)).toBeTruthy();
+  fireEvent.click(screen.getByRole("tab", { name: /Links/ }));
+  const href = screen.getByRole("link", { name: /Open linked trace/ }).getAttribute("href")!;
+  expect(href).toContain("/traces/linkedtrace?");
+  expect(href).toContain("project=p1");
+  expect(href).toContain("range=1h");
+  expect(screen.getByText("Span linkedspan")).toBeTruthy();
+  expect(screen.getByText("messaging.operation")).toBeTruthy();
 });

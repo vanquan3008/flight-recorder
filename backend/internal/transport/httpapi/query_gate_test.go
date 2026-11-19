@@ -82,6 +82,40 @@ func TestSlowReadsCannotTakeMoreThanTheirShareOfSlots(t *testing.T) {
 	}
 }
 
+type slowServicesFastLogsBackend struct {
+	*slowServicesBackend
+}
+
+func (slowServicesFastLogsBackend) ListLogs(context.Context, string, query.LogFilter) ([]query.LogRecord, error) {
+	return []query.LogRecord{}, nil
+}
+
+func TestLogReadsDoNotQueueBehindSlowQueries(t *testing.T) {
+	slow := &slowServicesBackend{release: make(chan struct{}), started: make(chan struct{}, 8), cancelled: make(chan struct{}, 8)}
+	configuration := config.Config{
+		HTTP:            config.HTTPConfig{ManagementMaxBodyBytes: 1024, MaxConcurrentQueries: 1, MaxConcurrentLogQueries: 1, RequestTimeout: time.Minute},
+		Auth:            config.AuthConfig{JWTSecret: testJWTSecret},
+		Database:        config.DatabaseConfig{ReadinessTimeout: time.Second},
+		ShutdownTimeout: time.Second,
+	}
+	server := New(configuration, slog.New(slog.NewTextHandler(io.Discard, nil)), func(context.Context) error { return nil }, metrics.New("test", "test", "test"), slowServicesFastLogsBackend{slow}, nil)
+	handler := server.httpServer.Handler
+	var running sync.WaitGroup
+	running.Add(1)
+	go func() { defer running.Done(); getServices(handler) }()
+	<-slow.started // the only query slot is now held
+
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/logs?limit=1", nil)
+	signIn(request, "user")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	close(slow.release)
+	running.Wait()
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("a log read waited for the PostgreSQL query gate: status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
 func TestRequestDeadlineCancelsTheQueryAndFreesItsSlot(t *testing.T) {
 	backend := &slowServicesBackend{release: make(chan struct{}), started: make(chan struct{}, 8), cancelled: make(chan struct{}, 8)}
 	handler := gatedServer(backend, 1, 50*time.Millisecond)

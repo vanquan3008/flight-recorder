@@ -69,27 +69,5 @@ DELETE FROM events AS target USING (
     LIMIT @batch_size::integer
 ) AS expired WHERE target.tableoid = expired.tableoid AND target.ctid = expired.ctid;
 
--- name: DeleteProjectSpansBefore :one
-WITH removed AS (
-    DELETE FROM spans AS target USING (
-        SELECT s.tableoid, s.ctid FROM spans AS s
-        WHERE s.project_id = @project_id AND s.started_at < @before_time
-        LIMIT @batch_size::integer
-    ) AS expired WHERE target.tableoid = expired.tableoid AND target.ctid = expired.ctid
-    RETURNING target.project_id, target.environment_id, target.started_at
-), invalidated AS (
-    DELETE FROM span_rollup_buckets AS b USING removed AS s
-    WHERE b.project_id = s.project_id AND b.environment_id = s.environment_id
-        AND b.bucket_start = date_bin('1 minute', s.started_at, TIMESTAMPTZ '2000-01-01 00:00:00+00')
-)
-SELECT count(*) FROM removed;
-
--- name: DeleteProjectMetricsBefore :execrows
-DELETE FROM metric_data_points AS target USING (
-    SELECT p.tableoid, p.ctid FROM metric_data_points AS p
-    WHERE p.project_id = @project_id AND p.occurred_at < @before_time
-    LIMIT @batch_size::integer
-) AS expired WHERE target.tableoid = expired.tableoid AND target.ctid = expired.ctid;
-
 -- name: CountProjectEventsBefore :one
 SELECT count(*) FROM events WHERE project_id = @project_id AND occurred_at < @before_time;

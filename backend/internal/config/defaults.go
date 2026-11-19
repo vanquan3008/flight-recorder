@@ -15,6 +15,7 @@ func defaultConfig() Config {
 		MaxHeaderBytes:          1 << 20,
 		ManagementMaxBodyBytes:  1 << 20,
 		MaxConcurrentQueries:    4,
+		MaxConcurrentLogQueries: 8,
 		RequestTimeout:          20 * time.Second,
 		RateLimitRequests:       120,
 		RateLimitWindow:         time.Minute,

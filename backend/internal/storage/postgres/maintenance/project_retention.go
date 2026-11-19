@@ -12,8 +12,8 @@ import (
 
 // DropExpiredTelemetryPartitions drops only days expired under every project's policy.
 // The catalog lock keeps the set of policies stable until the drop commits.
-func (store *PartitionStore) DropExpiredTelemetryPartitions(ctx context.Context, now time.Time, fallback time.Duration) (int64, int64, error) {
-	var events, points int64
+func (store *PartitionStore) DropExpiredTelemetryPartitions(ctx context.Context, now time.Time, fallback time.Duration) (int64, error) {
+	var events int64
 	err := pgx.BeginFunc(ctx, store.pool, func(tx pgx.Tx) error {
 		queries := store.queries.WithTx(tx)
 		if err := queries.AcquireTransactionLock(ctx, partitionLockKey); err != nil {
@@ -26,33 +26,58 @@ func (store *PartitionStore) DropExpiredTelemetryPartitions(ctx context.Context,
 		if err != nil {
 			return err
 		}
-		var longest time.Duration
-		for _, project := range projects {
-			age := telemetry.RetentionAge(project.TelemetryRetentionDays, fallback)
-			if age == 0 {
-				return nil
-			}
-			longest = max(longest, age)
-		}
+		longest := longestRetention(projects, fallback)
 		if longest == 0 {
 			return nil
 		}
 		before := now.Add(-longest)
 		transaction := &PartitionStore{pool: tx, queries: queries}
-		events, err = transaction.dropExpiredPartitions(ctx, eventPartitionedTables, before, transaction.countRows)
-		if err != nil {
-			return err
-		}
-		points, err = transaction.dropExpiredPartitions(ctx, []string{"metric_data_points"}, before, transaction.countRows)
-		if err != nil {
-			return err
-		}
-		return queries.DeleteSpanRollupBucketsBefore(ctx, startOfUTCDay(before))
+		events, err = transaction.dropExpiredPartitions(ctx, partitionedTables, before, transaction.countRows)
+		return err
 	})
 	if err != nil {
-		return 0, 0, err
+		return 0, err
 	}
-	return events, points, nil
+	return events, nil
+}
+
+// clickHousePartitionLockKey serializes ClickHouse partition drops across replicas.
+const clickHousePartitionLockKey = 7_203_411_002
+
+// WithLongestRetention runs work with the cutoff every project's policy has
+// passed, holding the policy catalog lock until work returns. It skips work when
+// any project keeps telemetry indefinitely.
+func (store *PartitionStore) WithLongestRetention(ctx context.Context, now time.Time, fallback time.Duration, work func(time.Time) error) error {
+	return pgx.BeginFunc(ctx, store.pool, func(tx pgx.Tx) error {
+		queries := store.queries.WithTx(tx)
+		if err := queries.AcquireTransactionLock(ctx, clickHousePartitionLockKey); err != nil {
+			return err
+		}
+		if err := queries.LockProjectRetentionCatalog(ctx); err != nil {
+			return err
+		}
+		projects, err := queries.ListProjectRetention(ctx)
+		if err != nil {
+			return err
+		}
+		if longest := longestRetention(projects, fallback); longest > 0 {
+			return work(now.Add(-longest))
+		}
+		return nil
+	})
+}
+
+// longestRetention returns 0 when any project keeps telemetry indefinitely.
+func longestRetention(projects []sqlcstore.ListProjectRetentionRow, fallback time.Duration) time.Duration {
+	var longest time.Duration
+	for _, project := range projects {
+		age := telemetry.RetentionAge(project.TelemetryRetentionDays, fallback)
+		if age == 0 {
+			return 0
+		}
+		longest = max(longest, age)
+	}
+	return longest
 }
 
 func (store *PartitionStore) ListRetentionProjects(ctx context.Context) ([]string, error) {
@@ -93,30 +118,22 @@ func (store *PartitionStore) withProjectRetention(ctx context.Context, projectID
 	})
 }
 
-func (store *PartitionStore) PruneProjectTelemetry(ctx context.Context, projectID string, now time.Time, fallback time.Duration, batchSize int) (int64, int64, error) {
-	var events, points int64
+// PruneProjectTelemetry deletes a project's expired incident envelopes in batches.
+func (store *PartitionStore) PruneProjectTelemetry(ctx context.Context, projectID string, now time.Time, fallback time.Duration, batchSize int) (int64, error) {
+	var events int64
 	for {
-		var batchEvents, batchSpans, batchPoints int64
+		var batch int64
 		err := store.withProjectRetention(ctx, projectID, now, fallback, func(queries *sqlcstore.Queries, before time.Time) error {
 			var err error
-			batchEvents, err = queries.DeleteProjectEventsBefore(ctx, sqlcstore.DeleteProjectEventsBeforeParams{ProjectID: projectID, BeforeTime: before, BatchSize: int32(batchSize)})
-			if err != nil {
-				return err
-			}
-			batchSpans, err = queries.DeleteProjectSpansBefore(ctx, sqlcstore.DeleteProjectSpansBeforeParams{ProjectID: projectID, BeforeTime: before, BatchSize: int32(batchSize)})
-			if err != nil {
-				return err
-			}
-			batchPoints, err = queries.DeleteProjectMetricsBefore(ctx, sqlcstore.DeleteProjectMetricsBeforeParams{ProjectID: projectID, BeforeTime: before, BatchSize: int32(batchSize)})
+			batch, err = queries.DeleteProjectEventsBefore(ctx, sqlcstore.DeleteProjectEventsBeforeParams{ProjectID: projectID, BeforeTime: before, BatchSize: int32(batchSize)})
 			return err
 		})
 		if err != nil {
-			return events, points, err
+			return events, err
 		}
-		events += batchEvents
-		points += batchPoints
-		if max(batchEvents, batchSpans, batchPoints) < int64(batchSize) {
-			return events, points, nil
+		events += batch
+		if batch < int64(batchSize) {
+			return events, nil
 		}
 	}
 }

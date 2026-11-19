@@ -1,5 +1,5 @@
-// Package signals writes ingested telemetry: events with their span or log
-// record (and the incidents they open) in one transaction, and metric points.
+// Package signals records the envelopes of failing spans and logs and the
+// incident occurrences they open. Telemetry itself is stored in ClickHouse.
 package signals
 
 import (

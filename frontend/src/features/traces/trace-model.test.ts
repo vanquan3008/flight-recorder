@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Span } from "../../shared/types";
-import { axisTicks, buildTrace, formatMs, visibleRows } from "./trace-model";
+import { axisTicks, buildTrace, formatMs, percentile, selfTimeMs, timeMs, visibleRows } from "./trace-model";
 
 const base = Date.parse("2026-10-01T00:00:00Z");
 const span = (id: string, service: string, startMs: number, endMs: number, extra: Partial<Span> = {}): Span => ({
@@ -51,6 +51,36 @@ describe("buildTrace", () => {
     expect(self.order).toBe(210 - 175 - 8);
     expect(self.database).toBe(175);
     expect(model.services.reduce((sum, service) => sum + service.selfMs, 0)).toBeLessThanOrEqual(250);
+  });
+
+  it("does not undercount self time when children overlap", () => {
+    const model = buildTrace([
+      span("parent", "api", 0, 100),
+      span("a", "worker", 10, 60, { parent_span_id: "parent" }),
+      span("b", "worker", 40, 90, { parent_span_id: "parent" }),
+    ]);
+    expect(model.services.find((service) => service.name === "api")!.selfMs).toBe(20);
+    expect(selfTimeMs(0, 100, [{ start: -20, duration: 30 }, { start: 95, duration: 50 }])).toBe(85);
+  });
+
+  it("measures spans shorter than a millisecond", () => {
+    const parent = span("p", "api", 0, 2, { started_at: "2026-10-01T00:00:00.000000000Z", ended_at: "2026-10-01T00:00:00.002000000Z" });
+    const child = span("c", "cache", 0, 0, { parent_span_id: "p", started_at: "2026-10-01T00:00:00.000500000Z", ended_at: "2026-10-01T00:00:00.000750000Z" });
+    const model = buildTrace([parent, child]);
+    const row = model.rows.find((item) => item.span.span_id === "c")!;
+    expect(row.startMs).toBeCloseTo(0.5, 6);
+    expect(row.durationMs).toBeCloseTo(0.25, 6);
+    expect(row.width).toBeCloseTo(0.125, 6);
+    expect(formatMs(row.durationMs)).toBe("250 µs");
+    expect(buildTrace([{ ...child, duration_nanos: 125_000 }]).rows[0].durationMs).toBe(0.125);
+    expect(timeMs("2026-10-01T00:00:00.000250+00:00") - timeMs("2026-10-01T00:00:00Z")).toBeCloseTo(0.25, 6);
+  });
+
+  it("reports a real p95 for each service hop", () => {
+    const calls = [10, 20, 30, 40, 100].map((duration, index) => span(`c${index}`, "db", 0, duration, { parent_span_id: "root" }));
+    const model = buildTrace([span("root", "api", 0, 200), ...calls]);
+    expect(model.edges[0].p95_latency_nanos).toBeCloseTo(88e6);
+    expect(percentile([], 0.95)).toBe(0);
   });
 
   it("keeps spans whose parent was never received and reports them", () => {

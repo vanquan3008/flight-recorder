@@ -14,7 +14,7 @@ func retentionTestEvents(projectID, environmentName, label string, timestamp tim
 	spanEvent := telemetry.Event{
 		ID: telemetry.DeterministicID(timestamp, label, "span"), ProjectID: projectID, Environment: environmentName,
 		ServiceName: "retention-service", Type: telemetry.EventHTTPServer, Timestamp: timestamp, Duration: time.Second,
-		TraceID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", SpanID: "bbbbbbbbbbbbbbbb", Status: "OK", Signal: telemetry.SignalTrace,
+		TraceID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", SpanID: "bbbbbbbbbbbbbbbb", Status: "ERROR", Signal: telemetry.SignalTrace,
 		Attributes: map[string]any{}, ResourceAttributes: map[string]any{}, ScopeAttributes: map[string]any{}, RecordAttributes: map[string]any{},
 	}
 	logEvent := telemetry.Event{
@@ -26,7 +26,7 @@ func retentionTestEvents(projectID, environmentName, label string, timestamp tim
 	return spanEvent, logEvent
 }
 
-type retentionCounts struct{ events, spans, occurrences, links, incidents int }
+type retentionCounts struct{ events, occurrences, links, incidents int }
 
 func countRetention(t *testing.T, database *Database, projectID string) retentionCounts {
 	t.Helper()
@@ -34,11 +34,10 @@ func countRetention(t *testing.T, database *Database, projectID string) retentio
 	if queryError := database.pool.QueryRow(context.Background(), `
 		SELECT
 			(SELECT count(*) FROM events WHERE project_id = $1),
-			(SELECT count(*) FROM spans WHERE project_id = $1),
 			(SELECT count(*) FROM incident_occurrences WHERE project_id = $1),
 			(SELECT count(*) FROM incident_events WHERE project_id = $1),
 			(SELECT count(*) FROM incidents WHERE project_id = $1)`, projectID).Scan(
-		&counts.events, &counts.spans, &counts.occurrences, &counts.links, &counts.incidents); queryError != nil {
+		&counts.events, &counts.occurrences, &counts.links, &counts.incidents); queryError != nil {
 		t.Fatal(queryError)
 	}
 	return counts
@@ -76,37 +75,22 @@ func TestProjectRetentionPreservesSharedPartitionsAndInheritedPolicyIntegration(
 			if err := database.StoreEvents(ctx, ingestion, []telemetry.Event{span}); err != nil {
 				t.Fatal(err)
 			}
-			value := 1.0
-			if err := database.StoreMetrics(ctx, ingestion, []telemetry.MetricDataPoint{{
-				ID: telemetry.DeterministicID(at, "retention-point", project.name), ProjectID: id, EnvironmentID: ingestion.EnvironmentID,
-				ServiceName: "retention-service", MetricName: "requests", MetricType: telemetry.MetricTypeGauge, OccurredAt: at, Value: &value,
-			}}); err != nil {
-				t.Fatal(err)
-			}
 		}
 	}
-	if events, points, err := worker.DropExpiredTelemetryPartitions(ctx, now, 0); err != nil || events != 0 || points != 0 {
-		t.Fatalf("indefinite inherited policy allowed global deletion: events=%d points=%d err=%v", events, points, err)
+	if events, err := worker.DropExpiredTelemetryPartitions(ctx, now, 0); err != nil || events != 0 {
+		t.Fatalf("indefinite inherited policy allowed global deletion: events=%d err=%v", events, err)
 	}
 	const defaultAge = 7 * 24 * time.Hour
-	if events, points, err := worker.DropExpiredTelemetryPartitions(ctx, now, defaultAge); err != nil || events != 3 || points != 3 {
-		t.Fatalf("shared expired partition: events=%d points=%d err=%v", events, points, err)
+	if events, err := worker.DropExpiredTelemetryPartitions(ctx, now, defaultAge); err != nil || events != 3 {
+		t.Fatalf("shared expired partition: events=%d err=%v", events, err)
 	}
 	for _, project := range projects {
 		id := telemetry.DeterministicID(now, "retention-project", project.name)
-		if _, _, err := worker.PruneProjectTelemetry(ctx, id, now, defaultAge, 1); err != nil {
+		if _, err := worker.PruneProjectTelemetry(ctx, id, now, defaultAge, 1); err != nil {
 			t.Fatalf("prune %s: %v", project.name, err)
 		}
-		if counts := countRetention(t, worker, id); counts.events != project.kept || counts.spans != project.kept {
-			t.Fatalf("%s telemetry after cleanup = %+v, want %d events and spans", project.name, counts, project.kept)
-		}
-		var points, buckets int
-		if err := worker.pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM metric_data_points WHERE project_id=$1),
-			(SELECT count(*) FROM span_rollup_buckets WHERE project_id=$1)`, id).Scan(&points, &buckets); err != nil {
-			t.Fatal(err)
-		}
-		if points != project.kept || buckets != project.kept {
-			t.Fatalf("%s has %d points and %d buckets, want %d each", project.name, points, buckets, project.kept)
+		if counts := countRetention(t, worker, id); counts.events != project.kept {
+			t.Fatalf("%s envelopes after cleanup = %+v, want %d", project.name, counts, project.kept)
 		}
 	}
 }
@@ -130,23 +114,20 @@ func TestRetentionDropsExpiredPartitionsIntegration(t *testing.T) {
 	if ensureError := database.EnsurePartitions(ctx, oldDay, 3); ensureError != nil {
 		t.Fatal(ensureError)
 	}
-	// Raw logs live in ClickHouse; PostgreSQL keeps each error log's incident envelope in events.
-	var spans, logs []telemetry.Event
+	// PostgreSQL keeps the incident envelope of each failed span and error log.
+	var failures []telemetry.Event
 	for _, day := range []struct {
 		label string
 		at    time.Time
 	}{{"old", oldDay}, {"kept", keptDay}, {"stray", strayDay}} {
 		span, log := retentionTestEvents(projectID, ingestion.EnvironmentName, day.label, day.at)
-		spans, logs = append(spans, span), append(logs, log)
+		failures = append(failures, span, log)
 	}
-	if storeError := database.StoreEvents(ctx, ingestion, spans); storeError != nil {
-		t.Fatal(storeError)
-	}
-	if storeError := database.StoreLogIncidents(ctx, ingestion, logs); storeError != nil {
+	if storeError := database.StoreEvents(ctx, ingestion, failures); storeError != nil {
 		t.Fatal(storeError)
 	}
 	before := countRetention(t, database, projectID)
-	if before.events != 6 || before.spans != 3 || before.incidents == 0 {
+	if before.events != 6 || before.incidents == 0 {
 		t.Fatalf("seed counts = %+v", before)
 	}
 
@@ -161,8 +142,8 @@ func TestRetentionDropsExpiredPartitionsIntegration(t *testing.T) {
 		t.Fatalf("removed events = %d, want 4", removed)
 	}
 	after := countRetention(t, database, projectID)
-	if after.events != 2 || after.spans != 1 {
-		t.Fatalf("telemetry after retention = %+v, want only the kept day", after)
+	if after.events != 2 {
+		t.Fatalf("envelopes after retention = %+v, want only the kept day", after)
 	}
 	if after.occurrences != before.occurrences || after.links != before.links || after.incidents != before.incidents {
 		t.Fatalf("incident rows changed by event retention: before=%+v after=%+v", before, after)
@@ -208,7 +189,7 @@ func TestEnsurePartitionsToleratesRowsInDefaultPartitionIntegration(t *testing.T
 	if dailyPartitions != 1 {
 		t.Fatalf("daily partitions created = %d, want only the day without default-partition rows", dailyPartitions)
 	}
-	if counts := countRetention(t, database, projectID); counts.events != 1 || counts.spans != 1 {
+	if counts := countRetention(t, database, projectID); counts.events != 1 {
 		t.Fatalf("stray row lost: %+v", counts)
 	}
 }

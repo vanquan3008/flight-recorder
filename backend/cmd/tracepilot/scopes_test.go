@@ -11,9 +11,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/vanquan3008/tracepilot/internal/auth"
 	"github.com/vanquan3008/tracepilot/internal/config"
+	"github.com/vanquan3008/tracepilot/internal/domain/incident"
 	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
 	ingestotlp "github.com/vanquan3008/tracepilot/internal/ingest/otlp"
-	"github.com/vanquan3008/tracepilot/internal/query"
 	"github.com/vanquan3008/tracepilot/internal/storage/postgres"
 )
 
@@ -200,7 +200,7 @@ func TestTwoProjectsKeepTheirTelemetryApartIntegration(t *testing.T) {
 		defer cleanup.Close()
 		// Partitioned telemetry has no cascading foreign keys, so each table is cleared before the project.
 		for _, id := range []string{one.ID, two.ID, base.ProjectID} {
-			for _, table := range []string{"incidents", "spans", "events", "metric_data_points"} {
+			for _, table := range []string{"incidents", "events"} {
 				if _, err := cleanup.Exec(ctx, "DELETE FROM "+table+" WHERE project_id = $1", id); err != nil {
 					t.Error(err)
 				}
@@ -217,7 +217,7 @@ func TestTwoProjectsKeepTheirTelemetryApartIntegration(t *testing.T) {
 	span := func(project auth.Project, environment, service, spanID string) telemetry.Event {
 		return telemetry.Event{
 			ID: telemetry.DeterministicID(at, "scope-span", project.ID, spanID), ProjectID: project.ID, Environment: environment, ServiceName: service,
-			Type: telemetry.EventRPC, Signal: telemetry.SignalTrace, Timestamp: at, Duration: 5 * time.Millisecond, Status: "OK", Operation: "work",
+			Type: telemetry.EventRPC, Signal: telemetry.SignalTrace, Timestamp: at, Duration: 5 * time.Millisecond, Status: "ERROR", Operation: "work",
 			SpanKind: 2, TraceID: strings.Repeat(spanID, 16), SpanID: strings.Repeat(spanID, 8),
 			Attributes: map[string]any{}, ResourceAttributes: map[string]any{}, ScopeAttributes: map[string]any{}, RecordAttributes: map[string]any{},
 		}
@@ -232,9 +232,9 @@ func TestTwoProjectsKeepTheirTelemetryApartIntegration(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		traces, err := database.ListTraces(ctx, project.ID, query.TraceFilter{EnvironmentID: scope.EnvironmentID, From: at.Add(-time.Hour), To: at.Add(time.Hour), Limit: 10})
-		if err != nil || len(traces) != 1 || traces[0].RootService != want {
-			t.Fatalf("project %s: traces %+v, error %v; want exactly its own %q trace", project.Slug, traces, err, want)
+		incidents, err := database.ListIncidents(ctx, project.ID, incident.Filter{EnvironmentID: scope.EnvironmentID, Limit: 10})
+		if err != nil || len(incidents) != 1 || incidents[0].PrimaryService != want {
+			t.Fatalf("project %s: incidents %+v, error %v; want exactly its own %q incident", project.Slug, incidents, err, want)
 		}
 	}
 	all, err := catalog.All(ctx)

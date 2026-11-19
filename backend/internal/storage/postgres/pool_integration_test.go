@@ -2,7 +2,6 @@ package postgres
 
 import (
 	"context"
-	"errors"
 	"os"
 	"sync"
 	"testing"
@@ -50,7 +49,7 @@ func TestStoreEventsIdempotentIntegration(t *testing.T) {
 		Type:               telemetry.EventHTTPServer,
 		Timestamp:          timestamp,
 		Duration:           time.Millisecond,
-		Status:             "OK",
+		Status:             "ERROR",
 		TraceID:            "0123456789abcdef0123456789abcdef",
 		SpanID:             "0123456789abcdef",
 		Attributes:         map[string]any{"attempt": "same-event"},
@@ -60,33 +59,26 @@ func TestStoreEventsIdempotentIntegration(t *testing.T) {
 		ScopeAttributes:    map[string]any{},
 		RecordAttributes:   map[string]any{"attempt": "same-event"},
 	}
+	// Healthy telemetry lives only in ClickHouse and never reaches PostgreSQL.
+	healthy := event
+	healthy.ID, healthy.Status = telemetry.DeterministicID(timestamp, "integration", "healthy"), "OK"
+	info := event
+	info.ID, info.Type, info.Signal, info.Status = telemetry.DeterministicID(timestamp, "integration", "log"), telemetry.EventLog, telemetry.SignalLog, ""
+	info.SeverityNumber, info.Severity, info.LogBody = 9, "INFO", map[string]any{"message": "belongs in ClickHouse"}
 	for range 2 {
-		if storeError := database.StoreEvents(context.Background(), ingestion, []telemetry.Event{event}); storeError != nil {
+		if storeError := database.StoreEvents(context.Background(), ingestion, []telemetry.Event{event, healthy, info}); storeError != nil {
 			t.Fatal(storeError)
 		}
 	}
-	var events, spans int
+	var envelopes, others int
+	var attributes string
 	if queryError := database.pool.QueryRow(context.Background(),
-		"SELECT (SELECT count(*) FROM events WHERE project_id = $1 AND id = $2), (SELECT count(*) FROM spans WHERE project_id = $1 AND event_id = $2)",
-		ingestion.ProjectID, event.ID).Scan(&events, &spans); queryError != nil {
+		"SELECT count(*) FILTER (WHERE id = $2), count(*) FILTER (WHERE id <> $2), coalesce(max(attributes::text), '') FROM events WHERE project_id = $1",
+		ingestion.ProjectID, event.ID).Scan(&envelopes, &others, &attributes); queryError != nil {
 		t.Fatal(queryError)
 	}
-	if events != 1 || spans != 1 {
-		t.Fatalf("idempotent rows: events=%d spans=%d", events, spans)
-	}
-
-	// Raw logs live only in ClickHouse. A log routed here fails the whole batch
-	// as a storage error (retried, never split and dropped as invalid).
-	log := event
-	log.ID, log.Type, log.Signal = telemetry.DeterministicID(timestamp, "integration", "log"), telemetry.EventLog, telemetry.SignalLog
-	log.LogBody = map[string]any{"message": "belongs in ClickHouse"}
-	storeError := database.StoreEvents(context.Background(), ingestion, []telemetry.Event{log})
-	if storeError == nil || errors.Is(storeError, telemetry.ErrInvalidEvent) {
-		t.Fatalf("PostgreSQL accepted or dropped a log: %v", storeError)
-	}
-	var logEvents int
-	if queryError := database.pool.QueryRow(context.Background(), "SELECT count(*) FROM events WHERE project_id = $1 AND id = $2", ingestion.ProjectID, log.ID).Scan(&logEvents); queryError != nil || logEvents != 0 {
-		t.Fatalf("rejected log left an event row: %d, %v", logEvents, queryError)
+	if envelopes != 1 || others != 0 || attributes != "{}" {
+		t.Fatalf("envelopes=%d others=%d attributes=%s; want one error envelope without raw attributes", envelopes, others, attributes)
 	}
 }
 
@@ -129,7 +121,7 @@ func TestStoreEventsDeduplicatesConcurrentIncidentCandidatesIntegration(t *testi
 		group.Add(1)
 		go func(event telemetry.Event) {
 			defer group.Done()
-			errors <- database.StoreLogIncidents(context.Background(), ingestion, []telemetry.Event{event})
+			errors <- database.StoreEvents(context.Background(), ingestion, []telemetry.Event{event})
 		}(event)
 	}
 	group.Wait()
@@ -187,6 +179,8 @@ func TestStoreEventsRecoversAfterRolledBackBatchIntegration(t *testing.T) {
 		Environment: ingestion.EnvironmentName,
 		ServiceName: "rollback-service",
 		Type:        telemetry.EventLog,
+		Signal:      telemetry.SignalLog,
+		Severity:    "ERROR",
 		Timestamp:   timestamp,
 		Attributes:  map[string]any{},
 	}
@@ -222,15 +216,10 @@ func cleanupIntegrationScope(t testing.TB, database *Database, projectID string)
 		t.Errorf("delete integration incidents: %v", deleteError)
 		return
 	}
-	// Partitioned telemetry has no cascading foreign keys, so each table is cleared explicitly.
-	for _, table := range []string{"spans", "events"} {
-		if _, deleteError := database.pool.Exec(context.Background(), "DELETE FROM "+table+" WHERE project_id = $1", projectID); deleteError != nil {
-			t.Errorf("delete integration %s: %v", table, deleteError)
-			return
-		}
-	}
-	if _, deleteError := database.pool.Exec(context.Background(), "DELETE FROM metric_data_points WHERE project_id = $1", projectID); deleteError != nil {
-		t.Errorf("delete integration metrics: %v", deleteError)
+	// Partitioned envelopes have no cascading foreign key, so they are cleared explicitly.
+	if _, deleteError := database.pool.Exec(context.Background(), "DELETE FROM events WHERE project_id = $1", projectID); deleteError != nil {
+		t.Errorf("delete integration events: %v", deleteError)
+		return
 	}
 	if _, deleteError := database.pool.Exec(context.Background(), "DELETE FROM projects WHERE id = $1", projectID); deleteError != nil {
 		t.Errorf("delete integration project: %v", deleteError)

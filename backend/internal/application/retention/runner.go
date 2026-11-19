@@ -14,8 +14,9 @@ const groupTimeout = 30 * time.Second
 
 type Store interface {
 	ListRetentionProjects(context.Context) ([]string, error)
-	DropExpiredTelemetryPartitions(context.Context, time.Time, time.Duration) (events, points int64, err error)
-	PruneProjectTelemetry(context.Context, string, time.Time, time.Duration, int) (events, points int64, err error)
+	DropExpiredTelemetryPartitions(context.Context, time.Time, time.Duration) (events int64, err error)
+	DropExpiredClickHousePartitions(context.Context, time.Time, time.Duration) error
+	PruneProjectTelemetry(context.Context, string, time.Time, time.Duration, int) (events int64, err error)
 	PruneProjectLogs(context.Context, string, time.Time, time.Duration) error
 	CountExpiredProjectEvents(context.Context, time.Time, time.Duration) (int64, error)
 	DeleteIncidentsBefore(context.Context, time.Time, int) (int64, error)
@@ -77,9 +78,8 @@ func pruneAll(ctx context.Context, logger *slog.Logger, store Store, selfMetrics
 			logger.InfoContext(ctx, "retention cleanup completed", "group", current.name, "deleted", deleted)
 		}
 	}
-	events, points, telemetryError := pruneTelemetry(ctx, logger, store, startedAt, policy.Telemetry, batchSize)
+	events, telemetryError := pruneTelemetry(ctx, logger, store, startedAt, policy.Telemetry, batchSize)
 	selfMetrics.ObserveRetentionGroup("telemetry", events)
-	selfMetrics.ObserveRetentionGroup("metrics", points)
 	if telemetryError != nil && ctx.Err() == nil {
 		logger.ErrorContext(ctx, "telemetry retention sweep incomplete", "error", telemetryError)
 	}
@@ -87,29 +87,33 @@ func pruneAll(ctx context.Context, logger *slog.Logger, store Store, selfMetrics
 	selfMetrics.ObserveRetention(time.Since(startedAt), events, failed || telemetryError != nil)
 }
 
-func pruneTelemetry(ctx context.Context, logger *slog.Logger, store Store, now time.Time, fallback time.Duration, batchSize int) (int64, int64, error) {
+// pruneTelemetry expires incident envelopes in PostgreSQL and signals in
+// ClickHouse: whole partitions first, then each project's shorter policy.
+func pruneTelemetry(ctx context.Context, logger *slog.Logger, store Store, now time.Time, fallback time.Duration, batchSize int) (int64, error) {
 	if batchSize <= 0 {
-		return 0, 0, errors.New("retention batch size must be positive")
+		return 0, errors.New("retention batch size must be positive")
 	}
 	work, cancel := context.WithTimeout(ctx, groupTimeout)
-	events, points, dropError := store.DropExpiredTelemetryPartitions(work, now, fallback)
+	events, dropError := store.DropExpiredTelemetryPartitions(work, now, fallback)
+	cancel()
+	work, cancel = context.WithTimeout(ctx, groupTimeout)
+	dropError = errors.Join(dropError, store.DropExpiredClickHousePartitions(work, now, fallback))
 	cancel()
 	work, cancel = context.WithTimeout(ctx, groupTimeout)
 	projects, listError := store.ListRetentionProjects(work)
 	cancel()
 	if listError != nil {
-		return events, points, errors.Join(dropError, listError)
+		return events, errors.Join(dropError, listError)
 	}
 	var projectFailed bool
 	for _, project := range projects {
 		if err := ctx.Err(); err != nil {
-			return events, points, err
+			return events, err
 		}
 		work, cancel = context.WithTimeout(ctx, groupTimeout)
-		removedEvents, removedPoints, pgError := store.PruneProjectTelemetry(work, project, now, fallback, batchSize)
+		removed, pgError := store.PruneProjectTelemetry(work, project, now, fallback, batchSize)
 		cancel()
-		events += removedEvents
-		points += removedPoints
+		events += removed
 		work, cancel = context.WithTimeout(ctx, groupTimeout)
 		logError := store.PruneProjectLogs(work, project, now, fallback)
 		cancel()
@@ -119,9 +123,9 @@ func pruneTelemetry(ctx context.Context, logger *slog.Logger, store Store, now t
 		}
 	}
 	if projectFailed {
-		return events, points, errors.Join(dropError, errors.New("one or more projects could not be pruned"))
+		return events, errors.Join(dropError, errors.New("one or more projects could not be pruned"))
 	}
-	return events, points, dropError
+	return events, dropError
 }
 
 // recordBacklog reports the events still older than the cutoff after cleanup.

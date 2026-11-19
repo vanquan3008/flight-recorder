@@ -8,13 +8,14 @@ The corresponding [diagrams](diagrams.html) open in a browser and need an intern
 the rendering library. Numbers in the form `[n]` refer to diagram numbers.
 
 One Go process runs the management API, OTLP receiver, and background workers. PostgreSQL and ClickHouse
-run separately. ClickHouse is required for raw logs. The React console runs separately from the backend.
+run separately. ClickHouse stores every log, span, and metric point; PostgreSQL stores accounts,
+projects, tokens, incidents, webhooks, and replays. The React console runs separately from the backend.
 
 `cmd/tracepilot` wires dependencies and manages the process lifecycle. `application` coordinates use
 cases through small interfaces. `domain` contains pure rules. `ingest`, `transport/httpapi`, and
 `storage` handle protocol and persistence details. `storage/hybrid` combines the PostgreSQL store with the
-ClickHouse log store, and the event writer in `cmd/tracepilot` routes ingested logs through
-`application/logs`. `application/session` verifies credentials and
+ClickHouse telemetry store, and the event writer in `cmd/tracepilot` routes ingested logs and spans
+through `application/logs`. `application/session` verifies credentials and
 handles password changes, and `application/live` manages the in-memory telemetry hub. In the console,
 `shared/session` provides the authentication context and `app` owns the session lifecycle and route
 composition. Feature modules stay independent of `app`. See the [MVP scope, release criteria, and
@@ -24,10 +25,11 @@ roadmap](../README.md#mvp-scope-and-release-criteria).
 
 - Your application sends OTLP data over gRPC (`:4317`) or HTTP (`:4318`) with an **ingest token**.
 - The receiver authenticates and normalizes the data, then sends it to a bounded pipeline that writes
-  batches by scope. PostgreSQL stores traces and metrics. ClickHouse stores all raw logs.
-- When a log triggers an incident, PostgreSQL also stores a compact error envelope. The incident,
-  evidence, occurrence, and outbox entries commit in the same PostgreSQL transaction. Acknowledgment
-  waits for ClickHouse to flush and for all required PostgreSQL transactions to succeed.
+  batches by scope. ClickHouse stores every log, span, and metric point and serves every telemetry
+  read, rollup, and anomaly signal. PostgreSQL keeps only management, authentication, and incident data.
+- When a failed span or an error log triggers an incident, PostgreSQL also stores a compact error
+  envelope. The incident, evidence, occurrence, and outbox entries commit in the same PostgreSQL
+  transaction. Acknowledgment waits for ClickHouse to flush and for that transaction to succeed.
 - Background workers detect anomalies every minute, send webhooks, create partitions, and remove expired
   data.
 - The **console** calls the REST API at `/api/v1` on `:8080` with an access token.
@@ -102,17 +104,34 @@ code paths and requires only database credentials. All commands log JSON through
 `service.name` and `service.version`. `serve` applies `LOG_LEVEL`. The `config` package returns errors
 for the calling command to log once.
 
-The ClickHouse runner validates the engine, partition key, deduplication key, and columns before
-adopting a legacy table. Version `000002` removes the global log TTL when present and verifies the
-result before marking the version clean. Readiness requires project-scoped retention without a table TTL.
+The ClickHouse baseline targets fresh databases. `000001` creates `tracepilot_log_records`, `000002`
+`tracepilot_spans`, `000003` the `tracepilot_trace_index` table, `000004` the materialized view that
+fills it with each trace's time range, and `000005` `tracepilot_metric_points`. `000006` creates the
+`tracepilot_span_minutes` rollups, `000007` and `000008` the `tracepilot_span_minute_marks` table and
+the materialized view that stamps each minute when its spans arrive, and `000009` the
+`tracepilot_span_minute_done` table that records when each minute's rollup was computed. The tables are
+partitioned by week (Monday UTC). Spans store the endpoint, request failure, and dependency type and
+name that the span rules in `domain/telemetry` derive at insert; metric points store their series ID.
+A ClickHouse database created by an earlier development build must be recreated before migrating.
+
+Every ClickHouse telemetry table follows the OpenTelemetry ClickHouse exporter layout. Resource, scope,
+and record attributes are `Map(LowCardinality(String), String)` columns with bloom-filter indexes on
+their keys and values. String values are stored as they are, other values as JSON, and null as an
+empty string, so API responses return attribute values as strings. A string log body is stored as
+plain text, and other bodies as JSON with `body_is_json` set. Log records also keep the resource and
+scope schema URLs and the dropped attribute count. Readiness checks the columns of the current log,
+span, trace index, and metric tables.
 
 The binary embeds SQL from `backend/db/postgres/migrations` and `backend/db/clickhouse/migrations`. Each
 database derives its target version from its own migration files and history. The PostgreSQL baseline
-`000001_init.up.sql` creates tables, constraints, indexes, partitions, and functions in a single
-transaction. `000002_drop_postgres_logs` drops the legacy `logs` table. Its down migration recreates an
-empty table. `000003_project_retention` adds the optional project override. The baseline has no down
-SQL, so a baseline rollback is rejected before journal or table changes. Add changes under a new ID
-and leave applied files intact.
+`000001_init.up.sql` creates the management, authentication, incident, webhook, and replay tables and
+the daily-partitioned `events` table of incident envelopes in a single transaction. Fresh databases never
+create telemetry tables. `000002_drop_postgres_logs` drops the legacy `logs` table.
+`000003_project_retention` adds the optional project override. `000004_drop_signal_tables` drops the
+legacy `spans`, `metric_data_points`, `services`, and span rollup tables and functions from databases
+created by earlier releases; their rows are not copied to ClickHouse. Each down migration recreates the
+empty tables the previous release expects. The baseline has no down SQL, so a baseline rollback is
+rejected before journal or table changes. Add changes under a new ID and leave applied files intact.
 
 `migrate postgres status` and `migrate clickhouse status` read the current version, target, dirty state,
 and pending versions without creating metadata. PostgreSQL uses `schema_migrations`. The ClickHouse
@@ -120,11 +139,11 @@ journal, `tracepilot_schema_migrations`, records a dirty entry before DDL and a 
 success. A clean entry takes precedence for the same version. A failure or disconnect can leave a dirty
 entry. Inspect and repair the schema before retrying. Dirty-state recovery is a manual operation.
 
-The first ClickHouse migration adopts an existing log table after validating its layout,
-preserving rows. Individual commands need only their database, while `all` requires both. Coordinate a
+Every ClickHouse migration creates its table only if it is missing, so a rerun after a lost journal
+keeps existing rows. Individual commands need only their database, while `all` requires both. Coordinate a
 single updater for non-idempotent ClickHouse DDL, which runs without a migration lock. The consolidated
-PostgreSQL baseline targets fresh databases. Older histories require a reviewed transition or data
-transfer. Keep the published history append-only. Embedded SQL removes the need for a runtime SQL path
+PostgreSQL baseline targets fresh databases, and `000002` and `000004` bring databases from earlier
+releases to the same tables. Keep the published history append-only. Embedded SQL removes the need for a runtime SQL path
 setting.
 
 The database-first workflow is to add a migration, update named queries in `backend/db/queries`,
@@ -144,11 +163,11 @@ The server starts in this order:
    and one shared ClickHouse HTTP client. The PostgreSQL pool defaults to 2–20 connections and a
    5-second connect timeout. A URL `connect_timeout` takes precedence. Connection lifetimes have 10%
    jitter to stagger replacement. The minimum connection budget accounts for event and metric workers,
-   plus two connections. Pooled sessions set `jit=off`, because LLVM compilation cost more than the
-   short span aggregates it would speed up. A URL `jit` parameter takes precedence.
+   plus two connections. Pooled sessions set `jit=off`, because LLVM compilation costs more than the
+   short incident and management queries it would speed up. A URL `jit` parameter takes precedence.
 4. Check both databases concurrently under the longer of `DATABASE_CONNECT_TIMEOUT` and
    `CLICKHOUSE_REQUEST_TIMEOUT` (10 seconds by default). PostgreSQL checks the embedded target version
-   and clean state through the runtime pool. ClickHouse checks the version, dirty state, schema, TTL,
+   and clean state through the runtime pool. ClickHouse checks the version, dirty state, the columns of every table,
    and read access. A failure cancels the other check and closes both clients. Databases with
    auto-migration disabled must be migrated in advance with an individual command or `migrate all`.
    Next, prepare PostgreSQL partitions. Projects and environments are created through the console or
@@ -226,11 +245,14 @@ The router enforces the **scope** declared in the route table.
    role also grants `replay, admin`. Insufficient scope returns 403.
 7. Resolve the environment from `X-Environment`, defaulting to the first environment and caching for 30
    seconds. An invalid environment returns 400.
-8. Wait up to 500 ms for a query slot, then run the handler. The 20-second deadline starts before
+8. Wait up to 500 ms for a slot from the route's gate, then run the handler. Log reads (`/logs`,
+   `/logs/{eventID}`, and `/traces/{traceID}/logs`) run on ClickHouse and use their own
+   `MAX_CONCURRENT_LOG_QUERIES` slots (8 by default), so they never queue behind trace, topology, or
+   performance queries. Other routes share `MAX_CONCURRENT_QUERIES` (4 by default). The 20-second deadline starts before
    step 2, so account and environment lookups that wait for a pooled connection also end with 504.
    An exhausted slot wait returns 503. An exceeded query deadline returns 504. Public authentication routes under `/auth/*` use
    16 dedicated slots, so telemetry queries cannot exhaust their budget. Prometheus reports wait times
-   and active slots in `tracepilot_concurrency_gate_*` and authentication cache activity in
+   and active slots per gate (`query`, `logs`, `auth`) in `tracepilot_concurrency_gate_*` and authentication cache activity in
    `tracepilot_auth_cache_requests_total`.
 
 ## 5. OTLP ingestion [5]
@@ -254,13 +276,14 @@ The router enforces the **scope** declared in the route table.
    written lets exporters retry safely. Requests larger than the whole queue are admitted in parts.
    Capacity is `QUEUE_SIZE` + `WORKERS` × `BATCH_SIZE`. Slots remain reserved until events are
    acknowledged.
-7. Workers batch events by scope. `application/logs.Persist` writes raw logs over HTTP as gzipped
-   JSONEachRow with `async_insert=1` and `wait_for_async_insert=1`. It then calls `StoreEvents` for
-   traces and `StoreLogIncidents` for log errors. The latter stores only a compact error envelope with
-   empty attributes, excluding the raw body and resource and scope attributes. It calls
-   `RecordOccurrences` and writes the outbox in the same PostgreSQL transaction. PostgreSQL writes for
-   logs are limited to incident handling. Spans still mark their minute dirty in the same transaction.
-   Metrics use a separate PostgreSQL pipeline.
+7. Workers batch events by scope. `application/logs.Persist` writes raw logs to
+   `tracepilot_log_records` and spans to `tracepilot_spans` over HTTP as gzipped JSONEachRow with
+   `async_insert=1` and `wait_for_async_insert=1`. It then passes the failed spans and error logs to
+   `Database.StoreEvents`, which stores only a compact envelope with empty attributes in `events`,
+   excluding the body and resource and scope attributes. It calls `RecordOccurrences` and writes the
+   outbox in the same PostgreSQL transaction. Healthy telemetry never reaches PostgreSQL. The metrics
+   pipeline writes each batch to `tracepilot_metric_points` only. Both stores deduplicate by ID, so a
+   retry after a partial failure is safe.
 8. Acknowledge the batch after all steps succeed. Because the databases use separate transactions, a
    later failure can leave data written by an earlier step. The exporter retries with the same IDs.
    ClickHouse deduplicates with `ReplacingMergeTree` and `FINAL` reads, and PostgreSQL keeps its
@@ -271,10 +294,15 @@ The router enforces the **scope** declared in the route table.
 
 `ListLogs`, `GetLog`, and log counts in `TelemetryQuality` read directly from ClickHouse. They preserve
 the project, environment, filters, cursor, and trace/span correlation. Log pagination uses ClickHouse
-alone. An outage returns 503 for log ingestion and an error for log reads. `Database.StoreEvents` treats
-an unexpected log event as a storage error, bypassing the batch split used to isolate invalid content.
-Before upgrading an older installation that still has PostgreSQL logs, copy them with the previous
-release's `migrate clickhouse backfill` command. Migration `000002` drops the `logs` table.
+alone. `ListLogs` reads a page in two passes: the first selects the page's timestamps and IDs from
+the sort key and filter columns, and the second reads full rows only within that page's time range, so
+bodies and attributes are read for about one page. `FINAL` deduplicates each partition separately.
+Search matches the body text case-insensitively through the `body_search_lower` index, and `%` and
+`_` match literally. A log list without `from` or `traceId` reads the hour
+before `to`, the page cursor, or the current time, as trace lists do. An outage returns 503 for ingestion
+and an error for telemetry reads. `Database.StoreEvents` skips healthy events, so a log or span routed
+to it by mistake writes nothing. Migrations `000002` and `000004` drop the PostgreSQL telemetry tables
+without copying their rows; spans, metrics, and logs stored only there are lost on upgrade.
 
 ## 6. Incident lifecycle [6]
 
@@ -306,30 +334,33 @@ calls in each window. Throughput needs at least 30 baseline calls. An anomaly cr
 incident with evidence. The incident analysis uses evidence and dependency relationships to rank
 hypotheses by confidence.
 
-Before detection runs, the existing worker refreshes up to 64 dirty minutes per scope in
-`span_minute_rollups` under a separate five-second deadline. It locks the selected minutes with `FOR
-UPDATE SKIP LOCKED`, reads a fresh snapshot, replaces each full summary, and marks it clean in the same
-transaction. Late spans and retries mark the minute dirty again. Replacing the summary avoids
-double-counting. If refresh fails, detection tries the raw query within its remaining budget.
+Detection reads the 35 minutes of deduplicated spans and metric points it needs directly from
+ClickHouse (`tracepilot_spans` and `tracepilot_metric_points` with `FINAL`), so every scope's signals
+cost one bounded query per kind. Service signals use SERVER and consumer spans; dependency signals use the
+dependency type and name stored with each span; metric signals compare each series' mean, counter rate,
+or observation-weighted histogram mean. A counter's new start time marks a reset.
 
-`RequestPerformance`, `DetectServiceEvidence`, `DetectDependencyEvidence`, and the domain policies keep
-their contracts. Detection combines counts and total duration from clean minutes and reads raw spans for
-dirty, unaggregated, or partially overlapping minutes. Performance uses prepared arrays of timestamps,
-durations, and error statuses from summaries. It computes percentiles over individual requests and
-avoids averaging per-minute p95 or p99 values. Arbitrary windows, chart buckets, and trace examples used
-as evidence keep the same behavior. OTLP metric and counter reset handling, topology, and the trace and
-log explorers use their existing functions.
+Before each pass the worker refreshes the minute rollups under a separate 20-second deadline. A
+materialized view stamps `tracepilot_span_minute_marks` with the ClickHouse clock for every minute that
+receives spans, including retries and late spans. The refresh selects up to 1,000 closed minutes from
+the last eight days whose latest mark is newer than their last computation in
+`tracepilot_span_minute_done`, rebuilds each one from deduplicated spans into `tracepilot_span_minutes`
+(`ReplacingMergeTree` keyed by minute and dimensions, with t-digest latency states), and records the
+computation time five seconds before the refresh began. Rebuilding a whole minute never double-counts
+retries, and a span that arrives while its minute is being rebuilt marks it dirty again. A failed
+refresh leaves detection unaffected.
 
-Topology looks for parent spans within the same project and environment and as far back as one hour
-before the child window. SQL uses `LATERAL` and `OFFSET 0` to look up a parent by trace and span ID.
-Trace listing also looks up spans by individual trace ID. These index lookups avoid scanning span pairs
-repeatedly when a new project is absent from PostgreSQL statistics. The integration test runs `ANALYZE`
-on the child partition for an existing scope, adds 16,000 spans to a new scope, and checks that topology
-and trace listing each meet a five-second query budget.
+`RequestPerformance` summarizes SERVER spans for the window, each service, each endpoint, and each
+chart bucket in one `GROUPING SETS` query. Windows of an hour or longer read clean minutes from the
+rollups and every other minute from spans, then merge the t-digest states, so p95 and p99 are
+approximations over individual requests rather than averages of per-minute percentiles.
 
-The baseline migration lists minutes to process. The worker gradually builds the latency arrays. Until
-rollups catch up, queries read spans from the same snapshot as the summaries. This lets queries run
-during backfill using the existing configuration and process.
+Topology joins each child span to a parent in another service that started up to one hour before the
+window, and adds edges from services to the databases, queues, and external targets they call.
+Services without edges still appear as nodes. Trace lists choose their page from matching spans before
+summarizing those traces within an hour of the match; trace pages use `tracepilot_trace_index` to bound
+the span read to the trace's own time range and stop at the byte budget. Incident analysis reads its
+evidence from PostgreSQL and the dependencies ClickHouse observed during that evidence window.
 
 ## 8. Ingest tokens [8]
 
@@ -359,7 +390,7 @@ accumulate workers or leases.
 
 ## 10. Partitioning and retention [10]
 
-PostgreSQL telemetry tables are partitioned by UTC day. Startup creates a window of
+PostgreSQL partitions the incident envelopes in `events` by UTC day. Startup creates a window of
 `DATABASE_PARTITION_WINDOW_DAYS` days starting yesterday (10 by default). Maintenance runs every
 `DATABASE_PARTITION_CHECK_INTERVAL` (one hour by default).
 
@@ -370,28 +401,39 @@ covers logs, traces, and metrics across every environment of the project. `GET` 
 default. The write and its `project.retention_updated` audit event commit together.
 
 The worker reads the policies at startup and every `RETENTION_CHECK_INTERVAL` (one hour by default).
-It drops a daily partition only when the entire day has expired for every project. In shared and
-default partitions it deletes expired rows in project-scoped batches, locking the policy during each
-batch. Span batches invalidate affected rollup minutes in the same transaction. Queries read surviving
-spans directly until ingestion schedules those minutes for aggregation again.
+It drops a daily `events` partition only when the entire day has expired for every project. In shared and
+default partitions it deletes a project's expired envelopes in batches, locking the policy during each
+batch.
 
 Closed incidents and their history default to 90 days, audit entries to 180 days, and completed webhook
 deliveries to 30 days. These policies continue to use their own global settings. Open incidents and
 in-progress deliveries are excluded.
 
-ClickHouse partitions raw logs according to `TRACEPILOT_CLICKHOUSE_LOG_PARTITION`. Choose day
-(`toYYYYMMDD`), month (`toYYYYMM`), year (`toYear`), or the default week (`toStartOfWeek`).
-`ReplacingMergeTree` with `FINAL` reads deduplicates exporter retries by scope, service, millisecond
-timestamp, and event ID. The ID hash includes the full nanosecond timestamp, so otherwise identical logs
+ClickHouse partitions logs according to `TRACEPILOT_CLICKHOUSE_LOG_PARTITION`. The default and the
+template use week (`toStartOfWeek`, Monday UTC); day (`toYYYYMMDD`), month (`toYYYYMM`), and year
+(`toYear`) are also accepted. Spans, the trace index, and metric points are always partitioned by week. Each
+week is a separate partition, so operators can back it up with `ALTER TABLE … FREEZE PARTITION`, move
+it out with `DETACH PARTITION`, or remove it with `DROP PARTITION` without touching other weeks;
+`system.parts` lists the partitions of each table.
+`ReplacingMergeTree` with `FINAL` reads deduplicates exporter retries by scope, service, timestamp, and
+event ID. The ID hash includes the full nanosecond timestamp, so otherwise identical logs
 in the same millisecond can have distinct IDs. Stored timestamps and cursors retain nanosecond
 precision.
 
-Log reads enforce the current project cutoff immediately. The worker checks for expired rows and
-submits a project-scoped ClickHouse `ALTER … DELETE` mutation when needed. The runtime user needs
-`ALTER DELETE` on `tracepilot_logs`. Mutation completion and inactive-part cleanup determine when disk
-space is reclaimed. Shortening a policy can delete previously stored data at the next sweep.
-The partition setting chooses the key for new log tables. Changing an existing key requires a
-separate table and data migration.
+Log reads enforce the current project cutoff. Each replica caches the policy for the scope cache TTL
+(30 seconds by default); the replica that saves a change applies it at once, and others within the TTL. Each sweep first drops,
+in every ClickHouse telemetry table, the partitions whose whole time range is older than the longest
+project policy. It holds the same PostgreSQL policy catalog lock as PostgreSQL partition drops and
+skips this step while any project keeps telemetry indefinitely. Then, for each project, it checks each
+table for rows before the start of the cutoff's UTC day and submits a lightweight `DELETE`, which marks
+rows instead of rewriting parts, when needed. The span rollup tables expire with the spans they
+summarize. Dropped partitions free disk space at once; space under deleted rows is reclaimed as parts
+merge. The runtime user needs `INSERT` and `SELECT` on every TracePilot table and `ALTER DELETE` and
+`ALTER DROP PARTITION` on `tracepilot_log_records`, `tracepilot_spans`, `tracepilot_trace_index`,
+`tracepilot_metric_points`, `tracepilot_span_minutes`, `tracepilot_span_minute_marks`, and
+`tracepilot_span_minute_done`. Shortening a policy can delete previously stored data at the next sweep.
+The partition setting applies when the log table is created. Changing it later requires a new table
+and data migration.
 
 The log explorer and Live Tail filter the same severity groups (TRACE, DEBUG, INFO, WARN, ERROR, and
 FATAL). OTLP numbers 1–24 take precedence, with four levels per group. An unspecified number falls back
@@ -429,6 +471,11 @@ text. SSE also includes `severity_number`.
   logs. The Log explorer queries the server while retaining the trace or span filter and the time range.
 - **Explorer and Overview.** Cursor-based tables fetch more on request, up to 20 pages per query, then
   ask the user to narrow the filters. Timestamps show millisecond precision in the local time zone.
+- **Span precision.** The waterfall positions spans from their nanosecond start and end times and
+  shows durations under a millisecond in microseconds. Each span's self-time is its duration minus the
+  union of its children's intervals, so overlapping children are not subtracted twice. The inspector
+  lists span links with their trace and span IDs, trace state, and attributes, and notes any dropped
+  attributes, events, or links. Log details show record attributes and the dropped attribute count.
   Overview labels counts from the loaded page and gets aggregate error signals from Performance for the
   same window. It avoids inferring overall system health from a partial incident page or an empty
   traffic result.
@@ -447,12 +494,7 @@ text. SSE also includes `severity_number`.
   then summarizes only those traces. Matching still reads every span in the window, so cost grows with
   the window's span count. A duration filter needs whole traces and summarizes every match first.
   Requests without `from` or a `traceId` filter read only the hour before `to`, the page cursor, or the
-  current time. The console checks its connection through `GET /projects/{id}`. The November 16, 2026
-  measurement removed 504 timeouts from repeated span lookups. At 1,000 records and five reads per
-  second, PostgreSQL with 2 vCPU still saturated and returned 503 under backpressure. With 4 vCPU, the
-  same code and workload completed a 60-second run without failures and with read p95 of 689 ms. Use
-  these short measurements to choose a test setup. Sustained load and a full one-hour query window still
-  need measurement.
+  current time. The console checks its connection through `GET /projects/{id}`.
 - A ClickHouse outage returns 503 from readiness on all replicas while sign-in remains available. In
   testing, readiness took about 30 seconds to recover after ClickHouse returned.
 - PostgreSQL integration tests require a disposable database (`TRACEPILOT_INTEGRATION_TEST=1`).

@@ -53,7 +53,7 @@ func TestSameSpanInTwoEnvironmentsIntegration(t *testing.T) {
 			Type:               telemetry.EventCustom,
 			Timestamp:          startedAt,
 			Duration:           time.Millisecond,
-			Status:             "OK",
+			Status:             "ERROR",
 			Operation:          "POST /checkout",
 			Attributes:         map[string]any{},
 			Signal:             telemetry.SignalTrace,
@@ -68,10 +68,10 @@ func TestSameSpanInTwoEnvironmentsIntegration(t *testing.T) {
 		}
 	}
 	var stored int
-	if countError := database.pool.QueryRow(context.Background(), "SELECT count(*) FROM spans WHERE project_id = $1", projectID).Scan(&stored); countError != nil {
+	if countError := database.pool.QueryRow(context.Background(), "SELECT count(*) FROM events WHERE project_id = $1", projectID).Scan(&stored); countError != nil {
 		t.Fatal(countError)
 	}
 	if stored != 2 {
-		t.Fatalf("spans stored across two environments = %d, want 2", stored)
+		t.Fatalf("envelopes stored across two environments = %d, want 2", stored)
 	}
 }

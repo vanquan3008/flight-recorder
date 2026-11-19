@@ -23,8 +23,8 @@ TracePilot is a self-hosted observability platform for OpenTelemetry traces, log
 | --- | --- |
 | Go, using the version declared in [`backend/go.mod`](backend/go.mod) | Run or build the backend from source |
 | Node.js 24 and npm, matching [`frontend/.nvmrc`](frontend/.nvmrc) | Run or build the console from source |
-| PostgreSQL | Store traces, metrics, incidents, and management data |
-| ClickHouse | Store raw logs |
+| PostgreSQL | Store accounts, projects, tokens, incidents, webhooks, and replays |
+| ClickHouse | Store logs, traces, and metrics |
 | Redis (optional) | Distributed cache |
 
 Provision PostgreSQL and ClickHouse separately. For a fresh setup, create the PostgreSQL database before running migrations. Use database credentials that can apply the schemas. The ClickHouse migration can create its configured database.
@@ -225,7 +225,7 @@ Before switching exporters, verify HTTPS sign-in and session refresh, an OTLP ex
 
 ### Updates and recovery
 
-Pause exporters, stop the console and backend to drain accepted work, and back up **both databases**. Rehearse the upgrade on restored copies and keep the previous images and configuration. Review [schema compatibility](#schema-migrations), particularly the consolidated PostgreSQL baseline and migration `000002`.
+Pause exporters, stop the console and backend to drain accepted work, and back up **both databases**. Rehearse the upgrade on restored copies and keep the previous images and configuration. Review [schema compatibility](#schema-migrations), particularly the consolidated PostgreSQL baseline and migrations `000002` and `000004`.
 
 ```bash
 docker compose -f deploy/compose.yaml stop tracepilot-console tracepilot
@@ -304,9 +304,23 @@ The frontend build outputs to `frontend/dist`. For browser checks, see the Playw
 
 Database integration tests run against disposable stores. Set `TRACEPILOT_INTEGRATION_TEST=1` and `TRACEPILOT_DATABASE_URL` to use a migrated PostgreSQL test database. Migration integration tests create and drop their own databases, so their PostgreSQL test role needs `CREATE DATABASE`. Enable ClickHouse integration with `TRACEPILOT_CLICKHOUSE_INTEGRATION_TEST=1` and `TRACEPILOT_CLICKHOUSE_TEST_URL`.
 
+#### Container test harness
+
+`make test-docker` runs the CI checks in disposable containers with Docker or Podman: Go formatting, size, vet, staticcheck, build, and `go test -race` against fresh PostgreSQL and ClickHouse; the frontend audit, checks, tests, and build; then the full stack with Playwright browser tests. `make load-docker` adds a 60-second `cmd/loadgen` run at 500 spans and 500 logs per second with five console reads per second. Reports land in `bin/test-docker/`.
+
+| Variable | Effect |
+| --- | --- |
+| `STAGES` | Comma list of `backend`, `frontend`, `stack`, `e2e`, and `load` |
+| `KEEP_STACK=1` | Leave the stack running on loopback: console `:18081`, API `:18080`, OTLP `:18318` |
+| `SKIP_BUILD=1` | Reuse the images from an earlier run |
+| `CONTAINER_CLI` | Force `docker` or `podman` |
+| `TP_TEST_*` | Ports, images, and load rates from [`deploy/test/compose.yaml`](deploy/test/compose.yaml) |
+
+The harness uses only the fake secrets in [`deploy/test/backend.env`](deploy/test/backend.env) and never reads `backend/.env`.
+
 ### Project structure
 
-The Go backend receives telemetry and serves the API. The React console lets you explore traces, logs, metrics, and incidents. PostgreSQL stores traces, metrics, incidents, and management data. ClickHouse stores raw logs. [Application structure](docs/STRUCTURE.md)
+The Go backend receives telemetry and serves the API. The React console lets you explore traces, logs, metrics, and incidents. ClickHouse stores logs, traces, and metrics and serves their queries, rollups, and anomaly signals. PostgreSQL stores accounts, projects, tokens, incidents, webhooks, and replays. [Application structure](docs/STRUCTURE.md)
 
 ### Schema migrations
 
@@ -327,11 +341,11 @@ go -C backend run ./cmd/tracepilot migrate clickhouse status
 The independent flags `TRACEPILOT_DATABASE_AUTO_MIGRATE` and `TRACEPILOT_CLICKHOUSE_AUTO_MIGRATE` default to `false`. Setting a flag to `true` applies its pending SQL before opening listeners or starting workers. Migration failure stops startup.
 
 > [!IMPORTANT]
-> The consolidated PostgreSQL baseline supports fresh databases. Installations on earlier per-table or grouped histories need a reviewed data transfer or transition migration. PostgreSQL `000002` drops the legacy `logs` table. Copy any retained logs to ClickHouse with the previous release's backfill command before applying it.
+> The consolidated PostgreSQL baseline supports fresh databases. Installations on earlier per-table or grouped histories need a reviewed data transfer or transition migration. PostgreSQL `000002` drops the legacy `logs` table, and `000004` drops the legacy `spans`, `metric_data_points`, `services`, and span rollup tables. Neither copies rows to ClickHouse, so telemetry stored only in PostgreSQL is lost. Copy any logs you need with the previous release's backfill command before applying `000002`.
 
-The PostgreSQL baseline has no down migration. Inspect rollback SQL for later versions before using it. ClickHouse has no automatic downgrade. Its first migration validates an existing log table before adopting it. Plan a separate data migration when changing an existing partition key.
+The PostgreSQL baseline has no down migration. Inspect rollback SQL for later versions before using it. ClickHouse has no automatic downgrade. Its baseline targets fresh databases; recreate a ClickHouse database created by an earlier development build. Plan a separate data migration when changing an existing partition key.
 
-Stop older backend replicas before enabling project retention. Run `migrate all` to add the PostgreSQL policy column and remove the shared ClickHouse log TTL. The ClickHouse runtime account needs `ALTER DELETE` on `tracepilot_logs` for scoped log cleanup. Existing projects inherit `TRACEPILOT_RETENTION_MAX_AGE` until their owner sets an override.
+Stop older backend replicas before enabling project retention. Run `migrate all` to add the PostgreSQL policy column. The ClickHouse runtime account needs `INSERT` and `SELECT` on every TracePilot table, and `ALTER DELETE` and `ALTER DROP PARTITION` on `tracepilot_log_records`, `tracepilot_spans`, `tracepilot_trace_index`, `tracepilot_metric_points`, `tracepilot_span_minutes`, `tracepilot_span_minute_marks`, and `tracepilot_span_minute_done` for retention. Existing projects inherit `TRACEPILOT_RETENTION_MAX_AGE` until their owner sets an override.
 
 For SQL changes, add a new versioned migration, update the named queries, regenerate SQLC with `make sqlc-check`, adapt the storage layer, and test on a disposable database. Keep already-applied migration files intact. Update database constraints when changing incident statuses, severity levels, or supported webhook events.
 

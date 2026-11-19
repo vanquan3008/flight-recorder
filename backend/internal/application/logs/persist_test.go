@@ -12,9 +12,10 @@ import (
 func TestPersistRoutesAndWaitsForEveryStore(t *testing.T) {
 	info := telemetry.Event{ID: "info", Signal: telemetry.SignalLog}
 	failure := telemetry.Event{ID: "error", Signal: telemetry.SignalLog, SeverityNumber: 17}
-	span := telemetry.Event{ID: "span", Signal: telemetry.SignalTrace}
-	want := []string{"logs:info", "logs:error", "other:span", "failures:error"}
-	for _, failAt := range []string{"", "logs", "other", "failures"} {
+	span := telemetry.Event{ID: "span", Signal: telemetry.SignalTrace, Status: "OK"}
+	failedSpan := telemetry.Event{ID: "failed-span", Signal: telemetry.SignalTrace, Status: "ERROR"}
+	want := []string{"logs:info", "logs:error", "spans:span", "spans:failed-span", "failures:failed-span", "failures:error"}
+	for _, failAt := range []string{"", "logs", "spans", "failures"} {
 		t.Run(failAt, func(t *testing.T) {
 			var calls []string
 			problem := errors.New("store unavailable")
@@ -29,14 +30,13 @@ func TestPersistRoutesAndWaitsForEveryStore(t *testing.T) {
 					return nil
 				}
 			}
-			err := Persist(context.Background(), []telemetry.Event{info, span, failure}, writer("logs"), writer("other"), writer("failures"))
+			err := Persist(context.Background(), []telemetry.Event{info, span, failedSpan, failure}, writer("logs"), writer("spans"), writer("failures"))
 			expected := want
 			if failAt != "" {
 				if !errors.Is(err, problem) {
 					t.Fatalf("acknowledged a failed %s write: %v", failAt, err)
 				}
-				end := map[string]int{"logs": 2, "other": 3, "failures": 4}[failAt]
-				expected = want[:end]
+				expected = want[:map[string]int{"logs": 2, "spans": 4, "failures": 6}[failAt]]
 			} else if err != nil {
 				t.Fatal(err)
 			}
@@ -47,10 +47,14 @@ func TestPersistRoutesAndWaitsForEveryStore(t *testing.T) {
 	}
 }
 
-func TestNormalLogsNeverWritePostgres(t *testing.T) {
-	pg := func(context.Context, []telemetry.Event) error { t.Fatal("normal log reached PostgreSQL"); return nil }
-	ch := func(context.Context, []telemetry.Event) error { return nil }
-	if err := Persist(context.Background(), []telemetry.Event{{Signal: telemetry.SignalLog, SeverityNumber: 9}}, ch, pg, pg); err != nil {
+func TestHealthyTelemetryNeverReachesTheIncidentStore(t *testing.T) {
+	incidents := func(context.Context, []telemetry.Event) error {
+		t.Fatal("healthy telemetry reached PostgreSQL")
+		return nil
+	}
+	telemetryStore := func(context.Context, []telemetry.Event) error { return nil }
+	events := []telemetry.Event{{Signal: telemetry.SignalLog, SeverityNumber: 9}, {Signal: telemetry.SignalTrace, Status: "OK"}}
+	if err := Persist(context.Background(), events, telemetryStore, telemetryStore, incidents); err != nil {
 		t.Fatal(err)
 	}
 }

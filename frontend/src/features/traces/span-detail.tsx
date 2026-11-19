@@ -1,27 +1,36 @@
-import { AlertTriangle, ArrowUpRight, Braces, Clock3, Layers3, SlidersHorizontal, X } from "lucide-react";
+import { AlertTriangle, ArrowUpRight, Braces, Clock3, Layers3, Link2, SlidersHorizontal, X } from "lucide-react";
 import type { KeyboardEvent } from "react";
-import { useId, useState } from "react";
+import { Fragment, useId, useState } from "react";
 import type { Span } from "../../shared/types";
 import { CopyButton, DetailLink, json } from "../../shared/ui";
 import { KeyValueTable, findException } from "./span-kv-table";
-import { getSpanDisplayInfo } from "./trace-format";
+import { SpanLinks, spanLinks } from "./span-links";
+import { getSpanDisplayInfo, spanKindLabel } from "./trace-format";
 import { formatMs, isError } from "./trace-model";
 
 type Props = { span: Span; traceID: string; startMs: number; durationMs: number; onClose?: () => void };
-type Tab = "attributes" | "resource" | "events" | "raw";
+type Tab = "attributes" | "resource" | "events" | "links" | "raw";
 
 export function SpanDetail({ span, traceID, startMs, durationMs, onClose }: Props) {
   const info = getSpanDisplayInfo(span);
   const attrs = (span.attributes as Record<string, unknown>) || {};
   const resource = (span.resource_attributes as Record<string, unknown>) || {};
   const events = Array.isArray(span.events) ? span.events as Record<string, unknown>[] : [];
+  const links = spanLinks(span.links);
   const exception = findException(span);
+  const facts = ([
+    ["Kind", spanKindLabel(span.kind)], ["Service version", span.service_version],
+    ["Scope", [span.scope_name, span.scope_version].filter(Boolean).join(" ")], ["Status message", span.status_message],
+  ] as [string, string | undefined][]).filter((fact): fact is [string, string] => Boolean(fact[1]));
+  const dropped = ([["attributes", span.dropped_attributes_count], ["events", span.dropped_events_count], ["links", span.dropped_links_count]] as [string, number | undefined][])
+    .filter(([, count]) => (count ?? 0) > 0);
   const [activeTab, setActiveTab] = useState<Tab>("attributes");
   const tabID = useId();
   const tabs: { id: Tab; label: string; count?: number; Icon: typeof SlidersHorizontal }[] = [
     { id: "attributes", label: "Attributes", count: Object.keys(attrs).length, Icon: SlidersHorizontal },
     { id: "resource", label: "Resource", count: Object.keys(resource).length, Icon: Layers3 },
     ...(events.length ? [{ id: "events" as const, label: "Events", count: events.length, Icon: Clock3 }] : []),
+    ...(links.length ? [{ id: "links" as const, label: "Links", count: links.length, Icon: Link2 }] : []),
     { id: "raw", label: "Raw", Icon: Braces },
   ];
   const changeTab = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
@@ -47,6 +56,8 @@ export function SpanDetail({ span, traceID, startMs, durationMs, onClose }: Prop
       </div>
       <h3 className="m-0 text-sm font-semibold leading-snug wrap-anywhere">{info.displayName}</h3>
       <p className="m-0 text-xs text-muted">starts at +{formatMs(startMs)} · {formatMs(durationMs)}</p>
+      {facts.length > 0 && <dl aria-label="Span facts" className="m-0 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-[11px]">{facts.map(([label, value]) => <Fragment key={label}><dt className="text-muted">{label}</dt><dd className="m-0 wrap-anywhere">{value}</dd></Fragment>)}</dl>}
+      {dropped.length > 0 && <p role="note" className="m-0 rounded-lg border border-amber-500/30 bg-amber-500/5 px-2.5 py-1.5 text-[11px] text-muted">The SDK dropped {dropped.map(([name, count]) => `${count} ${name}`).join(", ")} before export.</p>}
       <div className="flex items-center gap-2 rounded-lg border border-line-soft bg-surface-sunken px-2.5 py-1"><span className="shrink-0 text-[11px] text-muted">Span ID</span><code className="min-w-0 flex-1 truncate text-[11px]">{span.span_id}</code><CopyButton value={span.span_id} label="Copy span ID" compact /></div>
       <DetailLink to={`/logs?traceId=${traceID}&spanId=${span.span_id}`} className="inline-flex items-center gap-1.5 text-[11px] font-medium text-accent no-underline hover:underline">Logs for this span<ArrowUpRight size={12} /></DetailLink>
     </div>
@@ -66,6 +77,7 @@ export function SpanDetail({ span, traceID, startMs, durationMs, onClose }: Prop
       {activeTab === "attributes" && <KeyValueTable key="attributes" data={attrs} placeholder="Filter span attributes…" />}
       {activeTab === "resource" && <KeyValueTable key="resource" data={resource} placeholder="Filter resource attributes…" />}
       {activeTab === "events" && <div className="divide-y divide-line-soft">{events.map((event, index) => <article key={index} className="px-4 py-3 wrap-anywhere"><strong className="text-xs font-medium">{String(event.name || event.Name || `Event ${index + 1}`)}</strong><p className="m-0 mt-1 text-[11px] text-muted">{String(event.timestamp || event.Timestamp || "")}</p><div className="-mx-4 mt-2"><KeyValueTable data={(event.attributes || event.Attributes || {}) as Record<string, unknown>} /></div></article>)}</div>}
+      {activeTab === "links" && <SpanLinks links={links} />}
       {activeTab === "raw" && <div className="p-4"><div className="mb-2 flex items-center justify-between text-xs text-muted"><span>Full span payload</span><CopyButton value={json(span)} label="Copy full payload" compact /></div><pre className="m-0 whitespace-pre-wrap font-mono text-xs leading-relaxed wrap-anywhere">{json(span)}</pre></div>}
     </div>
   </section>;

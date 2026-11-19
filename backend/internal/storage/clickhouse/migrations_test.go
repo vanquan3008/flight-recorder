@@ -2,12 +2,22 @@ package clickhouse
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/vanquan3008/tracepilot/db"
 )
+
+func latestClickHouseVersion(t *testing.T) uint {
+	t.Helper()
+	list, err := db.List(db.ClickHouseMigrations)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return list[len(list)-1].Version
+}
 
 func TestMigrationStatusIsReadOnlyForMissingDatabase(t *testing.T) {
 	store := testStore(t, func(w http.ResponseWriter, r *http.Request) {
@@ -25,9 +35,8 @@ func TestMigrationStatusIsReadOnlyForMissingDatabase(t *testing.T) {
 func TestClickHouseMigrationJournalAndRerun(t *testing.T) {
 	for _, fail := range []bool{false, true} {
 		t.Run(fmt.Sprintf("fail=%t", fail), func(t *testing.T) {
-			metadata, clean, applied := false, false, 0
+			metadata, clean, applied, columnReads := false, false, 0, 0
 			var version uint
-			schemaReads, columnReads := 0, 0
 			store := testStore(t, func(w http.ResponseWriter, r *http.Request) {
 				query := r.URL.Query().Get("query")
 				switch {
@@ -45,19 +54,15 @@ func TestClickHouseMigrationJournalAndRerun(t *testing.T) {
 					if _, err := fmt.Sscanf(query, "INSERT INTO tracepilot_schema_migrations VALUES (%d,", &version); err != nil {
 						t.Error(err)
 					}
-					if strings.Contains(query, "false") {
-						clean = true
-					}
-				case strings.HasPrefix(query, "CREATE TABLE IF NOT EXISTS tracepilot_logs"):
+					clean = strings.Contains(query, "false")
+				case strings.HasPrefix(query, "CREATE TABLE IF NOT EXISTS tracepilot_log_records"):
 					applied++
+					if strings.Contains(query, "__PARTITION__") {
+						t.Error("the partition placeholder reached ClickHouse")
+					}
 					if fail {
 						w.WriteHeader(http.StatusInternalServerError)
 					}
-				case strings.HasPrefix(query, "SELECT engine,"):
-					schemaReads++
-					_ = json.NewEncoder(w).Encode(schemaState{Engine: "ReplacingMergeTree",
-						Partition: "toStartOfWeek(occurred_at, 1, 'UTC')",
-						Sorting:   "project_id, environment_id, service_name, toStartOfMillisecond(occurred_at), event_id"})
 				case strings.HasPrefix(query, "SELECT "+logColumns):
 					columnReads++
 				}
@@ -66,38 +71,19 @@ func TestClickHouseMigrationJournalAndRerun(t *testing.T) {
 			if (err != nil) != fail || applied != 1 || clean == fail {
 				t.Fatalf("migration journal: applied=%d clean=%t error=%v", applied, clean, err)
 			}
-			if !fail && (version != 2 || schemaReads != 2 || columnReads != 2) {
-				t.Fatalf("migration repeated schema probes: schema=%d columns=%d", schemaReads, columnReads)
+			if !fail && (version != latestClickHouseVersion(t) || columnReads != 0) {
+				t.Fatalf("first run: version=%d column checks=%d", version, columnReads)
 			}
 			err = store.Migrate(context.Background())
 			if (err != nil) != fail || applied != 1 {
 				t.Fatalf("completed/dirty migration was replayed: applied=%d error=%v", applied, err)
 			}
-			if !fail && (schemaReads != 3 || columnReads != 3) {
-				t.Fatalf("rerun repeated schema probes: schema=%d columns=%d", schemaReads, columnReads)
+			if !fail && columnReads != 1 {
+				t.Fatalf("a run with nothing pending must check the current tables: %d checks", columnReads)
 			}
 			if err := store.Ready(context.Background()); (err != nil) != fail {
 				t.Fatalf("readiness accepted wrong journal state: %v", err)
 			}
 		})
-	}
-}
-
-func TestMigrationValidatesLegacyLayoutBeforeChangingTTL(t *testing.T) {
-	started, clean, altered := false, false, false
-	store := testStore(t, func(w http.ResponseWriter, r *http.Request) {
-		query := r.URL.Query().Get("query")
-		switch {
-		case strings.HasPrefix(query, "INSERT INTO tracepilot_schema_migrations"):
-			started = true
-			clean = strings.Contains(query, "false")
-		case strings.HasPrefix(query, "SELECT engine,"):
-			_ = json.NewEncoder(w).Encode(schemaState{Engine: "MergeTree"})
-		case strings.HasPrefix(query, "ALTER TABLE"):
-			altered = true
-		}
-	})
-	if err := store.Migrate(context.Background()); err == nil || !started || clean || altered {
-		t.Fatalf("invalid layout was changed or marked clean: started=%t clean=%t altered=%t error=%v", started, clean, altered, err)
 	}
 }

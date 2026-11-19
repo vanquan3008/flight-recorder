@@ -17,6 +17,7 @@ type HTTPConfig struct {
 	AllowedOrigins          []string      `config:"allowed_origins"`
 	TrustedProxies          []string      `config:"trusted_proxies"`
 	MaxConcurrentQueries    int           `config:"max_concurrent_queries"`
+	MaxConcurrentLogQueries int           `config:"max_concurrent_log_queries"`
 	RequestTimeout          time.Duration `config:"request_timeout"`
 	ReadHeaderTimeout       time.Duration `config:"read_header_timeout"`
 	ReadTimeout             time.Duration `config:"read_timeout"`
@@ -64,6 +65,9 @@ func (http HTTPConfig) validateServer(v *validator) {
 func (http HTTPConfig) validateLimits(v *validator) {
 	if http.MaxConcurrentQueries <= 0 {
 		v.add("http.max_concurrent_queries", "must be positive")
+	}
+	if http.MaxConcurrentLogQueries <= 0 {
+		v.add("http.max_concurrent_log_queries", "must be positive")
 	}
 	if http.MaxHeaderBytes <= 0 {
 		v.add("http.max_header_bytes", "must be positive")

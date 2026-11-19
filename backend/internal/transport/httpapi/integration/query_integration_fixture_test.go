@@ -12,8 +12,8 @@ import (
 	"github.com/vanquan3008/tracepilot/internal/storage/postgres"
 )
 
-// postgresBackend serves the API from PostgreSQL alone. Logs live only in
-// ClickHouse, whose integration suite covers log reads, so they are empty here.
+// postgresBackend serves the API from PostgreSQL alone. Telemetry lives only
+// in ClickHouse, whose integration suite covers its reads, so it is empty here.
 type postgresBackend struct{ *postgres.Database }
 
 func (postgresBackend) ListLogs(context.Context, string, query.LogFilter) ([]query.LogRecord, error) {
@@ -22,6 +22,22 @@ func (postgresBackend) ListLogs(context.Context, string, query.LogFilter) ([]que
 
 func (postgresBackend) GetLog(context.Context, string, string, string) (query.LogRecord, error) {
 	return query.LogRecord{}, nil
+}
+
+func (postgresBackend) ListTraces(context.Context, string, query.TraceFilter) ([]query.TraceSummary, error) {
+	return []query.TraceSummary{}, nil
+}
+
+func (postgresBackend) GetTrace(context.Context, string, string, string, query.SpanPage) ([]query.SpanRecord, bool, error) {
+	return nil, false, nil
+}
+
+func (postgresBackend) ListServices(context.Context, string, string, time.Time, time.Time) ([]query.ServiceSummary, error) {
+	return nil, nil
+}
+
+func (postgresBackend) ListServiceDependencies(context.Context, string, string, string) ([]query.ServiceDependency, error) {
+	return nil, nil
 }
 
 func newQueryIntegrationDatabase(t *testing.T) (*postgres.Database, config.IngestionConfig, string) {

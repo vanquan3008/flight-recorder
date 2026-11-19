@@ -6,8 +6,6 @@ package sqlc
 
 import (
 	"time"
-
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type AuditEvent struct {
@@ -152,89 +150,6 @@ type IngestToken struct {
 	RevokedAt *time.Time
 }
 
-type LogsDefault struct {
-	EventID                string
-	ProjectID              string
-	EnvironmentID          string
-	OccurredAt             time.Time
-	ObservedAt             *time.Time
-	TraceID                *string
-	SpanID                 *string
-	TraceFlags             int64
-	SeverityNumber         int32
-	SeverityText           string
-	Body                   []byte
-	EventName              string
-	ServiceName            string
-	ServiceVersion         *string
-	ResourceSchemaURL      string
-	ResourceAttributes     []byte
-	ScopeName              string
-	ScopeVersion           string
-	ScopeSchemaURL         string
-	ScopeAttributes        []byte
-	LogAttributes          []byte
-	DroppedAttributesCount int32
-}
-
-type MetricDataPoint struct {
-	ID                 string
-	ProjectID          string
-	EnvironmentID      string
-	MetricName         string
-	MetricUnit         string
-	MetricType         string
-	ServiceName        string
-	ServiceVersion     *string
-	OccurredAt         time.Time
-	Value              *float64
-	HistCount          *int64
-	HistSum            *float64
-	HistMin            *float64
-	HistMax            *float64
-	HistBuckets        []byte
-	Temporality        string
-	IsMonotonic        *bool
-	Attributes         []byte
-	ResourceAttributes []byte
-	ScopeName          string
-	ScopeVersion       string
-	IngestedAt         time.Time
-	Exemplars          []byte
-	StartedAt          *time.Time
-	Flags              int64
-	ScopeAttributes    []byte
-}
-
-type MetricDataPointsDefault struct {
-	ID                 string
-	ProjectID          string
-	EnvironmentID      string
-	MetricName         string
-	MetricUnit         string
-	MetricType         string
-	ServiceName        string
-	ServiceVersion     *string
-	OccurredAt         time.Time
-	Value              *float64
-	HistCount          *int64
-	HistSum            *float64
-	HistMin            *float64
-	HistMax            *float64
-	HistBuckets        []byte
-	Temporality        string
-	IsMonotonic        *bool
-	Attributes         []byte
-	ResourceAttributes []byte
-	ScopeName          string
-	ScopeVersion       string
-	IngestedAt         time.Time
-	Exemplars          []byte
-	StartedAt          *time.Time
-	Flags              int64
-	ScopeAttributes    []byte
-}
-
 type Project struct {
 	ID                     string
 	Slug                   string
@@ -272,15 +187,6 @@ type SchemaMigration struct {
 	Dirty   bool
 }
 
-type Service struct {
-	ID            string
-	ProjectID     string
-	EnvironmentID string
-	Name          string
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
-}
-
 type Session struct {
 	TokenHash    []byte
 	UserID       string
@@ -289,93 +195,6 @@ type Session struct {
 	ExpiresAt    time.Time
 	MaxExpiresAt time.Time
 	UserAgent    string
-}
-
-type Span struct {
-	EventID                string
-	ProjectID              string
-	EnvironmentID          string
-	TraceID                string
-	SpanID                 string
-	ParentSpanID           *string
-	TraceState             string
-	SpanName               string
-	SpanKind               int32
-	StartedAt              time.Time
-	EndedAt                time.Time
-	StatusCode             string
-	StatusMessage          string
-	Flags                  int64
-	ServiceName            string
-	ServiceVersion         *string
-	ResourceSchemaURL      string
-	ResourceAttributes     []byte
-	ScopeName              string
-	ScopeVersion           string
-	ScopeSchemaURL         string
-	ScopeAttributes        []byte
-	SpanAttributes         []byte
-	SpanEvents             []byte
-	SpanLinks              []byte
-	DroppedAttributesCount int32
-	DroppedEventsCount     int32
-	DroppedLinksCount      int32
-}
-
-type SpanMinuteRollup struct {
-	ProjectID         string
-	EnvironmentID     string
-	BucketStart       time.Time
-	ServiceName       string
-	SpanKind          int32
-	Endpoint          string
-	EntityType        string
-	EntityName        string
-	Calls             int64
-	Errors            int64
-	DurationSum       pgtype.Numeric
-	TraceIDs          []string
-	RequestStartedAt  []time.Time
-	RequestDurationNs []int64
-	RequestFailed     []bool
-}
-
-type SpanRollupBucket struct {
-	ProjectID     string
-	EnvironmentID string
-	BucketStart   time.Time
-	Dirty         bool
-}
-
-type SpansDefault struct {
-	EventID                string
-	ProjectID              string
-	EnvironmentID          string
-	TraceID                string
-	SpanID                 string
-	ParentSpanID           *string
-	TraceState             string
-	SpanName               string
-	SpanKind               int32
-	StartedAt              time.Time
-	EndedAt                time.Time
-	StatusCode             string
-	StatusMessage          string
-	Flags                  int64
-	ServiceName            string
-	ServiceVersion         *string
-	ResourceSchemaURL      string
-	ResourceAttributes     []byte
-	ScopeName              string
-	ScopeVersion           string
-	ScopeSchemaURL         string
-	ScopeAttributes        []byte
-	SpanAttributes         []byte
-	SpanEvents             []byte
-	SpanLinks              []byte
-	DroppedAttributesCount int32
-	DroppedEventsCount     int32
-	DroppedLinksCount      int32
 }
 
 type User struct {

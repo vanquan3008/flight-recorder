@@ -66,12 +66,9 @@ func TestMigrationFreshInstallAndRerunPreservesDataIntegration(t *testing.T) {
 	if _, err := Run(ctx, endpoint, "up", 0); err != nil {
 		t.Fatal(err)
 	}
-	// Reapplying the baseline must leave existing telemetry untouched.
+	// Reapplying the baseline must leave existing data untouched.
 	_, err = connection.Exec(ctx, `INSERT INTO projects(id, slug, name) VALUES ('00000000-0000-0000-0000-000000000001', 'upgrade', 'Upgrade');
-INSERT INTO environments(id, project_id, name) VALUES ('00000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000001', 'test');
-INSERT INTO spans(event_id, project_id, environment_id, trace_id, span_id, span_name, span_kind, started_at, ended_at, status_code, service_name)
-VALUES ('00000000-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000002',
-'trace', 'span', 'GET /upgrade', 2, now(), now(), 'OK', 'api')`)
+INSERT INTO environments(id, project_id, name) VALUES ('00000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000001', 'test')`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,9 +77,9 @@ VALUES ('00000000-0000-0000-0000-000000000003', '00000000-0000-0000-0000-0000000
 			t.Fatal(err)
 		}
 	}
-	var spans int
-	if err := connection.QueryRow(ctx, "SELECT count(*) FROM spans").Scan(&spans); err != nil || spans != 1 {
-		t.Fatalf("rerun changed data: spans=%d error=%v", spans, err)
+	var environments int
+	if err := connection.QueryRow(ctx, "SELECT count(*) FROM environments").Scan(&environments); err != nil || environments != 1 {
+		t.Fatalf("rerun changed data: environments=%d error=%v", environments, err)
 	}
 	state, err = Inspect(ctx, endpoint)
 	if err != nil || state.Version != state.Target || state.Dirty || len(state.Pending) != 0 {
@@ -225,5 +222,51 @@ func TestBaselineRollbackIsRejectedWithoutChangingSchemaIntegration(t *testing.T
 	}
 	if _, err := Run(ctx, endpoint, "up", 0); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// A database migrated by an earlier release still holds the PostgreSQL signal
+// tables; upgrading from version 2 drops them and keeps the master data.
+func TestUpgradeDropsPostgresSignalTablesIntegration(t *testing.T) {
+	ctx, endpoint, connection := migrationDatabase(t)
+	if _, err := Run(ctx, endpoint, "up", 0); err != nil {
+		t.Fatal(err)
+	}
+	_, err := connection.Exec(ctx, `ALTER TABLE projects DROP COLUMN telemetry_retention_days;
+CREATE TABLE services (id uuid); CREATE TABLE spans (event_id uuid); CREATE TABLE metric_data_points (id uuid);
+CREATE TABLE span_rollup_buckets (project_id uuid); CREATE TABLE span_minute_rollups (project_id uuid);
+CREATE FUNCTION span_dependency_type(attributes jsonb) RETURNS text LANGUAGE sql IMMUTABLE AS 'SELECT NULL::text';
+INSERT INTO projects(id, slug, name) VALUES ('00000000-0000-0000-0000-000000000001', 'upgrade', 'Upgrade');
+UPDATE schema_migrations SET version = 2`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Run(ctx, endpoint, "up", 0); err != nil {
+		t.Fatalf("upgrade from version 2: %v", err)
+	}
+	var leftover, projects int
+	if err := connection.QueryRow(ctx, `SELECT
+  (SELECT count(*) FROM pg_class WHERE relname IN ('services', 'spans', 'metric_data_points', 'span_rollup_buckets', 'span_minute_rollups', 'logs'))
+  + (SELECT count(*) FROM pg_proc WHERE proname LIKE 'span\_%'),
+  (SELECT count(*) FROM projects)`).Scan(&leftover, &projects); err != nil || leftover != 0 || projects != 1 {
+		t.Fatalf("after upgrade: %d signal objects left, %d projects, %v", leftover, projects, err)
+	}
+	state, err := Inspect(ctx, endpoint)
+	if err != nil || state.Version != state.Target || state.Dirty {
+		t.Fatalf("upgraded status: %+v, %v", state, err)
+	}
+	// Rolling the drop back restores the empty tables the previous release expects.
+	signalTables := func() (count int) {
+		t.Helper()
+		if err := connection.QueryRow(ctx, "SELECT count(*) FROM pg_class WHERE relname IN ('services', 'spans', 'metric_data_points', 'span_rollup_buckets', 'span_minute_rollups')").Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		return count
+	}
+	if _, err := Run(ctx, endpoint, "down", 1); err != nil || signalTables() != 5 {
+		t.Fatalf("rollback of the drop: %v", err)
+	}
+	if _, err := Run(ctx, endpoint, "up", 0); err != nil || signalTables() != 0 {
+		t.Fatalf("reapplying the drop: %v", err)
 	}
 }

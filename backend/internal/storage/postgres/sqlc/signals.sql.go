@@ -10,38 +10,8 @@ import (
 	"time"
 )
 
-const ensureService = `-- name: EnsureService :exec
-
-INSERT INTO services (id, project_id, environment_id, name)
-VALUES ($1, $2, $3, $4)
-ON CONFLICT DO NOTHING
-`
-
-type EnsureServiceParams struct {
-	ID            string
-	ProjectID     string
-	EnvironmentID string
-	Name          string
-}
-
-// Ingest writes. Every insert is idempotent so an exporter retry of the same
-// records cannot create duplicates.
-//
-// A conflict target names one unique index. When a table has more than one, two
-// connections inserting the same row at once can collide on an index the target
-// does not name and fail with 23505 instead of skipping. Statements on such
-// tables therefore use a bare ON CONFLICT DO NOTHING.
-func (q *Queries) EnsureService(ctx context.Context, arg EnsureServiceParams) error {
-	_, err := q.db.Exec(ctx, ensureService,
-		arg.ID,
-		arg.ProjectID,
-		arg.EnvironmentID,
-		arg.Name,
-	)
-	return err
-}
-
 const insertEvent = `-- name: InsertEvent :exec
+
 INSERT INTO events (
     id, project_id, environment_id, service_name, service_version,
     trace_id, span_id, parent_span_id, request_id, event_type,
@@ -78,6 +48,13 @@ type InsertEventParams struct {
 	Attributes     []byte
 }
 
+// Ingest writes. Every insert is idempotent so an exporter retry of the same
+// records cannot create duplicates.
+//
+// A conflict target names one unique index. When a table has more than one, two
+// connections inserting the same row at once can collide on an index the target
+// does not name and fail with 23505 instead of skipping. Statements on such
+// tables therefore use a bare ON CONFLICT DO NOTHING.
 func (q *Queries) InsertEvent(ctx context.Context, arg InsertEventParams) error {
 	_, err := q.db.Exec(ctx, insertEvent,
 		arg.ID,
@@ -99,164 +76,6 @@ func (q *Queries) InsertEvent(ctx context.Context, arg InsertEventParams) error 
 		arg.ErrorType,
 		arg.ErrorMessage,
 		arg.Attributes,
-	)
-	return err
-}
-
-const insertMetricPoint = `-- name: InsertMetricPoint :exec
-INSERT INTO metric_data_points (
-    id, project_id, environment_id, metric_name, metric_unit, metric_type,
-    service_name, service_version, occurred_at,
-    value, hist_count, hist_sum, hist_min, hist_max, hist_buckets,
-    temporality, is_monotonic, attributes, resource_attributes,
-    scope_name, scope_version, exemplars, started_at, flags, scope_attributes
-) VALUES (
-    $1, $2, $3, $4, $5, $6,
-    $7, $8, $9,
-    $10, $11, $12, $13, $14, $15,
-    $16, $17, $18, $19,
-    $20, $21, $22, $23, $24, $25
-)
-ON CONFLICT (project_id, id, occurred_at) DO NOTHING
-`
-
-type InsertMetricPointParams struct {
-	ID                 string
-	ProjectID          string
-	EnvironmentID      string
-	MetricName         string
-	MetricUnit         string
-	MetricType         string
-	ServiceName        string
-	ServiceVersion     *string
-	OccurredAt         time.Time
-	Value              *float64
-	HistCount          *int64
-	HistSum            *float64
-	HistMin            *float64
-	HistMax            *float64
-	HistBuckets        []byte
-	Temporality        string
-	IsMonotonic        *bool
-	Attributes         []byte
-	ResourceAttributes []byte
-	ScopeName          string
-	ScopeVersion       string
-	Exemplars          []byte
-	StartedAt          *time.Time
-	Flags              int64
-	ScopeAttributes    []byte
-}
-
-func (q *Queries) InsertMetricPoint(ctx context.Context, arg InsertMetricPointParams) error {
-	_, err := q.db.Exec(ctx, insertMetricPoint,
-		arg.ID,
-		arg.ProjectID,
-		arg.EnvironmentID,
-		arg.MetricName,
-		arg.MetricUnit,
-		arg.MetricType,
-		arg.ServiceName,
-		arg.ServiceVersion,
-		arg.OccurredAt,
-		arg.Value,
-		arg.HistCount,
-		arg.HistSum,
-		arg.HistMin,
-		arg.HistMax,
-		arg.HistBuckets,
-		arg.Temporality,
-		arg.IsMonotonic,
-		arg.Attributes,
-		arg.ResourceAttributes,
-		arg.ScopeName,
-		arg.ScopeVersion,
-		arg.Exemplars,
-		arg.StartedAt,
-		arg.Flags,
-		arg.ScopeAttributes,
-	)
-	return err
-}
-
-const insertSpan = `-- name: InsertSpan :exec
-INSERT INTO spans (
-    event_id, project_id, environment_id, trace_id, span_id, parent_span_id,
-    trace_state, span_name, span_kind, started_at, ended_at, status_code, status_message, flags,
-    service_name, service_version, resource_schema_url, resource_attributes,
-    scope_name, scope_version, scope_schema_url, scope_attributes, span_attributes,
-    span_events, span_links, dropped_attributes_count, dropped_events_count, dropped_links_count
-) VALUES (
-    $1, $2, $3, $4, $5, $6,
-    $7, $8, $9, $10, $11, $12, $13, $14,
-    $15, $16, $17, $18,
-    $19, $20, $21, $22, $23,
-    $24, $25, $26, $27, $28
-)
-ON CONFLICT DO NOTHING
-`
-
-type InsertSpanParams struct {
-	EventID                string
-	ProjectID              string
-	EnvironmentID          string
-	TraceID                string
-	SpanID                 string
-	ParentSpanID           *string
-	TraceState             string
-	SpanName               string
-	SpanKind               int32
-	StartedAt              time.Time
-	EndedAt                time.Time
-	StatusCode             string
-	StatusMessage          string
-	Flags                  int64
-	ServiceName            string
-	ServiceVersion         *string
-	ResourceSchemaURL      string
-	ResourceAttributes     []byte
-	ScopeName              string
-	ScopeVersion           string
-	ScopeSchemaURL         string
-	ScopeAttributes        []byte
-	SpanAttributes         []byte
-	SpanEvents             []byte
-	SpanLinks              []byte
-	DroppedAttributesCount int32
-	DroppedEventsCount     int32
-	DroppedLinksCount      int32
-}
-
-func (q *Queries) InsertSpan(ctx context.Context, arg InsertSpanParams) error {
-	_, err := q.db.Exec(ctx, insertSpan,
-		arg.EventID,
-		arg.ProjectID,
-		arg.EnvironmentID,
-		arg.TraceID,
-		arg.SpanID,
-		arg.ParentSpanID,
-		arg.TraceState,
-		arg.SpanName,
-		arg.SpanKind,
-		arg.StartedAt,
-		arg.EndedAt,
-		arg.StatusCode,
-		arg.StatusMessage,
-		arg.Flags,
-		arg.ServiceName,
-		arg.ServiceVersion,
-		arg.ResourceSchemaURL,
-		arg.ResourceAttributes,
-		arg.ScopeName,
-		arg.ScopeVersion,
-		arg.ScopeSchemaURL,
-		arg.ScopeAttributes,
-		arg.SpanAttributes,
-		arg.SpanEvents,
-		arg.SpanLinks,
-		arg.DroppedAttributesCount,
-		arg.DroppedEventsCount,
-		arg.DroppedLinksCount,
 	)
 	return err
 }

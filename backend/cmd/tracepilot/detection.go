@@ -10,40 +10,46 @@ import (
 	"github.com/vanquan3008/tracepilot/internal/config"
 	"github.com/vanquan3008/tracepilot/internal/domain/analysis"
 	"github.com/vanquan3008/tracepilot/internal/observability/metrics"
-	"github.com/vanquan3008/tracepilot/internal/storage/postgres"
+	"github.com/vanquan3008/tracepilot/internal/storage/hybrid"
 )
 
 type incidentStore struct {
-	database  *postgres.Database
+	store     *hybrid.Store
 	ingestion config.IngestionConfig
 }
 
 func (store incidentStore) PersistObservabilityIncident(ctx context.Context, service string, end time.Time, evidence []analysis.Evidence) error {
-	return store.database.PersistObservabilityIncident(ctx, store.ingestion, service, end, evidence)
+	return store.store.PersistObservabilityIncident(ctx, store.ingestion, service, end, evidence)
 }
-func detectionServiceFor(database *postgres.Database, scope config.IngestionConfig) *detection.Service {
+func detectionServiceFor(store *hybrid.Store, scope config.IngestionConfig) *detection.Service {
 	bind := func(detect func(context.Context, config.IngestionConfig, time.Time) ([]analysis.DetectedEvidence, error)) detection.Detector {
 		return detection.DetectorFunc(func(ctx context.Context, end time.Time) ([]analysis.DetectedEvidence, error) {
 			return detect(ctx, scope, end)
 		})
 	}
-	return detection.NewService(incidentStore{database: database, ingestion: scope},
-		bind(database.DetectServiceEvidence), bind(database.DetectDependencyEvidence), bind(database.DetectMetricEvidence))
+	return detection.NewService(incidentStore{store: store, ingestion: scope},
+		bind(store.DetectServiceEvidence), bind(store.DetectDependencyEvidence), bind(store.DetectMetricEvidence))
 }
 
 const maxConcurrentDetection = 4
 
-func buildObservabilityDetectionFunc(scopes *scopeCatalog, database *postgres.Database, selfMetrics *metrics.Registry) func(context.Context) (int, error) {
+// rollupTimeout bounds the minute rollup refresh that runs before each detection pass.
+const rollupTimeout = 20 * time.Second
+
+func buildObservabilityDetectionFunc(scopes *scopeCatalog, store *hybrid.Store, selfMetrics *metrics.Registry) func(context.Context) (int, error) {
 	return func(ctx context.Context) (int, error) {
 		startedAt := time.Now()
+		rollupCtx, cancelRollup := context.WithTimeout(ctx, rollupTimeout)
+		_, rollupError := store.RefreshSpanRollups(rollupCtx)
+		cancelRollup()
 		all, listError := scopes.All(ctx)
 		if listError != nil {
 			selfMetrics.ObserveIncidentDetection(time.Since(startedAt), 0, true)
-			return 0, listError
+			return 0, errors.Join(rollupError, listError)
 		}
 		if len(all) == 0 {
-			selfMetrics.ObserveIncidentDetection(time.Since(startedAt), 0, false)
-			return 0, nil
+			selfMetrics.ObserveIncidentDetection(time.Since(startedAt), 0, rollupError != nil)
+			return 0, rollupError
 		}
 		workerCount := min(len(all), maxConcurrentDetection)
 		jobs := make(chan config.IngestionConfig, len(all))
@@ -55,7 +61,7 @@ func buildObservabilityDetectionFunc(scopes *scopeCatalog, database *postgres.Da
 		var (
 			mu       sync.Mutex
 			total    int
-			runError error
+			runError = rollupError
 			wg       sync.WaitGroup
 			now      = time.Now()
 		)
@@ -68,14 +74,11 @@ func buildObservabilityDetectionFunc(scopes *scopeCatalog, database *postgres.Da
 						return
 					}
 					scopeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-					rollupCtx, cancelRollup := context.WithTimeout(scopeCtx, 5*time.Second)
-					rollupError := database.RefreshSpanRollups(rollupCtx, scope)
-					cancelRollup()
-					count, evaluateError := detectionServiceFor(database, scope).Run(scopeCtx, now)
+					count, evaluateError := detectionServiceFor(store, scope).Run(scopeCtx, now)
 					cancel()
 					mu.Lock()
 					total += count
-					runError = errors.Join(runError, rollupError, evaluateError)
+					runError = errors.Join(runError, evaluateError)
 					mu.Unlock()
 				}
 			}()

@@ -33,6 +33,28 @@ func TestDefaultTraceWindowBoundsOpenEndedLists(t *testing.T) {
 	}
 }
 
+func TestDefaultLogWindowBoundsOpenEndedLists(t *testing.T) {
+	now := time.Date(2026, 11, 14, 12, 0, 0, 0, time.UTC)
+	from, to, before := now.Add(-6*time.Hour), now.Add(-2*time.Hour), now.Add(-30*time.Minute)
+	for _, testCase := range []struct {
+		name   string
+		filter query.LogFilter
+		want   time.Time
+	}{
+		{"no range ends now", query.LogFilter{}, now.Add(-time.Hour)},
+		{"only to ends at to", query.LogFilter{To: to}, to.Add(-time.Hour)},
+		{"a later page ends at its cursor", query.LogFilter{Before: before}, before.Add(-time.Hour)},
+		{"an explicit from is kept", query.LogFilter{From: from}, from},
+		{"a trace's logs stay unbounded", query.LogFilter{TraceID: pagedTraceID}, time.Time{}},
+	} {
+		filter := testCase.filter
+		applyDefaultLogWindow(&filter, now)
+		if !filter.From.Equal(testCase.want) {
+			t.Errorf("%s: from = %s, want %s", testCase.name, filter.From, testCase.want)
+		}
+	}
+}
+
 type traceListBackend struct {
 	authOnlyBackend
 	filter query.TraceFilter

@@ -124,6 +124,8 @@ func (event *Event) Validate() error {
 	return nil
 }
 
+// DeterministicID returns a time-ordered UUIDv7 that is stable for the same
+// inputs, so retried records deduplicate.
 func DeterministicID(timestamp time.Time, identity ...string) string {
 	milliseconds := timestamp.UnixMilli()
 	hash := sha256.Sum256([]byte(strings.Join(identity, "\x00")))

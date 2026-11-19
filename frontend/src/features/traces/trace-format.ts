@@ -39,6 +39,12 @@ export function formatShortUrl(rawUrl: string): string {
 /**
  * Extracts clean, human-readable display information from span attributes.
  */
+const spanKinds = ["Unspecified", "Internal", "Server", "Client", "Producer", "Consumer"];
+
+export function spanKindLabel(kind: number | undefined): string | undefined {
+  return kind !== undefined && Number.isInteger(kind) && kind >= 0 && kind < spanKinds.length ? spanKinds[kind] : undefined;
+}
+
 export function getSpanDisplayInfo(span: Span): SpanDisplayInfo {
   const attrs = (span.attributes as Record<string, unknown>) || {};
   

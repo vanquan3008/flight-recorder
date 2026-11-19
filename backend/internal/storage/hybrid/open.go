@@ -42,7 +42,8 @@ func connect(ctx context.Context, cfg config.Config, webhookEncryptionKey string
 		database.Close()
 		return nil, fmt.Errorf("initialize ClickHouse: %w", err)
 	}
-	store := &Store{Database: database, logs: logs, defaultRetentionAge: cfg.Retention.MaxAge}
+	store := &Store{Database: database, ch: logs, defaultRetentionAge: cfg.Retention.MaxAge,
+		retention: newRetentionCache(cfg.Cache.EffectiveScopeTTL(), cfg.Cache.EffectiveScopeLimit())}
 	if err := store.Ready(ctx); err != nil {
 		store.Close()
 		return nil, err

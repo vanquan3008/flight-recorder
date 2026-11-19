@@ -1,6 +1,6 @@
 SQLC_IMAGE := sqlc/sqlc:1.31.1
 
-.PHONY: build test test-race bench-pipeline bench-postgres vet staticcheck vulncheck fmt-check size-check sqlc-generate sqlc-vet sqlc-check web-install web-check web-test web-build web-dev web-ci ci run dev start migrate migrate-postgres migrate-clickhouse migrate-all migrate-status migrate-version seed clean
+.PHONY: build test test-race bench-pipeline bench-postgres vet staticcheck vulncheck fmt-check size-check sqlc-generate sqlc-vet sqlc-check web-install web-check web-test web-build web-dev web-ci ci run dev start migrate migrate-postgres migrate-clickhouse migrate-all migrate-status migrate-version seed clean test-docker load-docker
 
 FRONTEND_NPM := npm --prefix frontend
 
@@ -104,3 +104,11 @@ seed:
 clean:
 	go -C backend clean
 	rm -rf bin
+
+# Full check in containers (Docker Compose or podman compose): backend, frontend, stack and Playwright.
+test-docker:
+	./scripts/test-docker.sh
+
+# Stack plus the capacity load test (500 spans/s + 500 logs/s for 60 s).
+load-docker:
+	STAGES=stack,load ./scripts/test-docker.sh
