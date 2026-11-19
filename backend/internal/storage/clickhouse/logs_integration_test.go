@@ -99,9 +99,26 @@ func TestWeeklyLogsDeduplicateRetriesPreserveJSONAndPageByNanosecond(t *testing.
 	if rows, err := store.ListLogs(ctx, testProject, query.LogFilter{EnvironmentID: other, Limit: 10}); err != nil || len(rows) != 0 {
 		t.Fatalf("environment leak: %+v, %v", rows, err)
 	}
-	data, err := store.execute(ctx, "SELECT DISTINCT partition FROM system.parts WHERE database={db:String} AND table='tracepilot_logs' AND active ORDER BY partition FORMAT JSONEachRow", map[string]string{"db": store.cfg.Database}, nil, false)
+	data, err := store.execute(ctx, "SELECT DISTINCT partition FROM system.parts WHERE database={db:String} AND table='tracepilot_log_records' AND active ORDER BY partition FORMAT JSONEachRow", map[string]string{"db": store.cfg.Database}, nil, false)
 	if err != nil || string(data) != "{\"partition\":\"2025-12-29\"}\n{\"partition\":\"2026-01-05\"}\n" {
 		t.Fatalf("expected Monday UTC week partitions: %s, %v", data, err)
+	}
+}
+
+func TestLogSearchIgnoresCaseAndMatchesQuotesAndWildcardsLiterally(t *testing.T) {
+	store, ctx := integrationStore(t), context.Background()
+	at := time.Now().UTC().Truncate(time.Millisecond)
+	match, other := testLog(at, "search-match"), testLog(at.Add(time.Millisecond), "search-other")
+	match.LogBody = "Payment FAILED: \"card_declined\" 50%"
+	other.LogBody = "payment failed: card declined 50x"
+	if err := store.StoreLogs(ctx, testProject, testEnvironment, []telemetry.Event{match, other}); err != nil {
+		t.Fatal(err)
+	}
+	filter := query.LogFilter{EnvironmentID: testEnvironment, Search: `failed: "card_declined" 50%`,
+		From: at.Add(-time.Minute), To: at.Add(time.Minute), Limit: 10}
+	rows, err := store.ListLogs(ctx, testProject, filter)
+	if err != nil || len(rows) != 1 || rows[0].EventID != match.ID {
+		t.Fatalf("search = %+v, %v; want only the log with the quoted text", rows, err)
 	}
 }
 
@@ -118,7 +135,7 @@ func TestProjectLogRetentionDeletesOnlyExpiredLogsInThatProject(t *testing.T) {
 		t.Fatal(err)
 	}
 	for range 2 {
-		if err := store.ExpireProjectLogs(ctx, testProject, now.Add(-24*time.Hour)); err != nil {
+		if err := store.ExpireProjectTelemetry(ctx, testProject, now.Add(-24*time.Hour)); err != nil {
 			t.Fatal(err)
 		}
 	}

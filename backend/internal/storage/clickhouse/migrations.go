@@ -47,7 +47,7 @@ FROM tracepilot_schema_migrations GROUP BY version ORDER BY version DESC LIMIT 1
 	return migrations.NewStatus(history, state.Version, state.Dirty), nil
 }
 
-// RunMigration opens a short-lived client and applies ("up") or reports ("status") the log schema.
+// RunMigration opens a short-lived client and applies ("up") or reports ("status") the ClickHouse schema.
 func RunMigration(ctx context.Context, cfg config.ClickHouseConfig, operation string) (string, error) {
 	if operation != "up" && operation != "status" {
 		return "", fmt.Errorf("unsupported ClickHouse migration operation %q", operation)
@@ -99,7 +99,7 @@ version UInt64, dirty Bool) ENGINE = MergeTree ORDER BY (version, dirty)`, nil, 
 		if err := store.recordMigration(ctx, migration.Version, true); err != nil {
 			return err
 		}
-		if err := store.applyMigration(ctx, migration.Version, string(data)); err != nil {
+		if err := store.applyMigration(ctx, string(data)); err != nil {
 			return fmt.Errorf("ClickHouse migration %d: %w", migration.Version, err)
 		}
 		if err := store.recordMigration(ctx, migration.Version, false); err != nil {
@@ -117,32 +117,8 @@ func (store *Store) recordMigration(ctx context.Context, version uint, dirty boo
 	return err
 }
 
-func (store *Store) applyMigration(ctx context.Context, version uint, ddl string) error {
-	if version == 1 {
-		ddl = strings.NewReplacer("__PARTITION__", store.cfg.LogPartition.PartitionExpr(), "__TTL__", "").Replace(ddl)
-		if _, err := store.execute(ctx, ddl, nil, nil, false); err != nil {
-			return err
-		}
-		// Validate an unversioned table before adopting it.
-		if _, err := store.schema(ctx); err != nil {
-			return err
-		}
-		return store.checkLogColumns(ctx)
-	}
-	if version != 2 {
-		_, err := store.execute(ctx, ddl, nil, nil, false)
-		return err
-	}
-	// REMOVE TTL fails when a fresh table was created without one.
-	state, err := store.schema(ctx)
-	if err != nil {
-		return err
-	}
-	if state.hasTTL() {
-		if _, err := store.execute(ctx, ddl, nil, nil, false); err != nil {
-			return err
-		}
-		return store.readySchema(ctx)
-	}
-	return store.checkLogColumns(ctx)
+func (store *Store) applyMigration(ctx context.Context, ddl string) error {
+	ddl = strings.ReplaceAll(ddl, "__PARTITION__", store.cfg.LogPartition.PartitionExpr())
+	_, err := store.execute(ctx, ddl, nil, nil, false)
+	return err
 }

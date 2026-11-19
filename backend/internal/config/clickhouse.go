@@ -63,9 +63,9 @@ func (c ClickHouseConfig) ValidateForEnvironment(production bool) error {
 
 func (c ClickHouseConfig) validate(v *validator, production bool) {
 	// ClickHouse URL is required — the application does not fall back to
-	// PostgreSQL for log storage.
+	// PostgreSQL for telemetry storage.
 	if c.URL == "" {
-		v.add("clickhouse.url", "ClickHouse URL is required for log storage")
+		v.add("clickhouse.url", "ClickHouse URL is required for telemetry storage")
 		return
 	}
 

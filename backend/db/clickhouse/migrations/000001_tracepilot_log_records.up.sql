@@ -1,0 +1,35 @@
+CREATE TABLE IF NOT EXISTS tracepilot_log_records (
+    project_id UUID,
+    environment_id UUID,
+    event_id UUID,
+    occurred_at DateTime64(9, 'UTC') CODEC(Delta, ZSTD(1)),
+    observed_at Nullable(DateTime64(9, 'UTC')),
+    trace_id String CODEC(ZSTD(1)),
+    span_id String CODEC(ZSTD(1)),
+    trace_flags UInt32,
+    severity_number UInt8,
+    severity_text LowCardinality(String),
+    body String CODEC(ZSTD(1)),
+    body_is_json Bool,
+    event_name LowCardinality(String),
+    service_name LowCardinality(String),
+    service_version LowCardinality(String),
+    resource_schema_url LowCardinality(String),
+    resource_attributes Map(LowCardinality(String), String) CODEC(ZSTD(1)),
+    scope_name LowCardinality(String),
+    scope_version LowCardinality(String),
+    scope_schema_url LowCardinality(String),
+    scope_attributes Map(LowCardinality(String), String) CODEC(ZSTD(1)),
+    attributes Map(LowCardinality(String), String) CODEC(ZSTD(1)),
+    dropped_attributes_count UInt32,
+    INDEX trace_lookup trace_id TYPE bloom_filter(0.001) GRANULARITY 1,
+    INDEX event_lookup event_id TYPE bloom_filter(0.01) GRANULARITY 1,
+    INDEX resource_keys mapKeys(resource_attributes) TYPE bloom_filter(0.01) GRANULARITY 1,
+    INDEX resource_values mapValues(resource_attributes) TYPE bloom_filter(0.01) GRANULARITY 1,
+    INDEX attribute_keys mapKeys(attributes) TYPE bloom_filter(0.01) GRANULARITY 1,
+    INDEX attribute_values mapValues(attributes) TYPE bloom_filter(0.01) GRANULARITY 1,
+    INDEX body_search_lower lowerUTF8(body) TYPE ngrambf_v1(3, 32768, 3, 0) GRANULARITY 4
+)
+ENGINE = ReplacingMergeTree
+PARTITION BY __PARTITION__
+ORDER BY (project_id, environment_id, service_name, occurred_at, event_id)

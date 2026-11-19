@@ -47,7 +47,7 @@ func (store *Store) insertLogs(ctx context.Context, projectID, environmentID str
 	if len(rows) == 0 {
 		return nil
 	}
-	_, err := store.execute(ctx, "INSERT INTO tracepilot_logs FORMAT JSONEachRow", nil, payload.Bytes(), true)
+	_, err := store.execute(ctx, "INSERT INTO tracepilot_log_records FORMAT JSONEachRow", nil, payload.Bytes(), true)
 	return err
 }
 
@@ -60,26 +60,6 @@ func (store *Store) scope(projectID, environmentID string) ([]string, map[string
 	return where, parameters, nil
 }
 
-// ExpireProjectLogs rewrites the affected parts so cleanup also removes the log payloads from storage.
-// Check for matching rows before submitting a mutation on every retention tick.
-func (store *Store) ExpireProjectLogs(ctx context.Context, projectID string, before time.Time) error {
-	if !validUUID(projectID) || before.IsZero() {
-		return errors.New("invalid ClickHouse log retention scope")
-	}
-	if !before.After(time.Date(1900, 1, 1, 0, 0, 0, 0, time.UTC)) {
-		return nil // DateTime64 cannot represent any earlier log.
-	}
-	params := map[string]string{"project": projectID}
-	where := addTime([]string{"project_id = {project:UUID}"}, params, "occurred_at", "before", "<", before)
-	predicate := strings.Join(where, " AND ")
-	data, err := store.execute(ctx, "SELECT 1 FROM tracepilot_logs WHERE "+predicate+" LIMIT 1 FORMAT TabSeparated", params, nil, false)
-	if err != nil || len(data) == 0 {
-		return err
-	}
-	_, err = store.execute(ctx, "ALTER TABLE tracepilot_logs DELETE WHERE "+predicate+" SETTINGS mutations_sync = 1", params, nil, false)
-	return err
-}
-
 func addTime(where []string, parameters map[string]string, column, name, comparison string, at time.Time) []string {
 	if at.IsZero() {
 		return where
@@ -88,73 +68,71 @@ func addTime(where []string, parameters map[string]string, column, name, compari
 	return append(where, column+" "+comparison+" {"+name+":DateTime64(9, 'UTC')}")
 }
 
+// finalSettings is safe because a retried log lands in the partition of its
+// first copy: the partition key derives from occurred_at, a deduplication key.
+const finalSettings = " SETTINGS do_not_merge_across_partitions_select_final = 1"
+
+// ListLogs returns Limit+1 rows to signal another page. It reads keys first,
+// then full rows within the page's time range, so bodies are read for one page.
 func (store *Store) ListLogs(ctx context.Context, projectID string, filter query.LogFilter) ([]query.LogRecord, error) {
 	if filter.Limit < 1 || filter.Limit > 1000 {
 		return nil, errors.New("log limit must be between 1 and 1000")
 	}
-	where, parameters, err := store.scope(projectID, filter.EnvironmentID)
+	where, parameters, err := store.logFilter(projectID, filter)
 	if err != nil {
 		return nil, err
 	}
-	for _, field := range []struct{ column, name, value string }{
-		{"service_name", "service", filter.Service},
-		{"trace_id", "trace", filter.TraceID}, {"span_id", "span", filter.SpanID},
-	} {
-		if field.value != "" {
-			where = append(where, field.column+" = {"+field.name+":String}")
-			parameters[field.name] = field.value
-		}
-	}
-	if filter.Severity != "" {
-		where = append(where, logSeverityPredicate(filter.Severity, parameters))
-	}
-	if filter.Search != "" {
-		where = append(where, "body ILIKE {search:String}")
-		parameters["search"] = "%" + filter.Search + "%"
-	}
-	where = addTime(where, parameters, "occurred_at", "from", ">=", filter.From)
-	where = addTime(where, parameters, "occurred_at", "to", "<=", filter.To)
-	if !filter.Before.IsZero() {
-		where = append(where, "(occurred_at, toString(event_id)) < ({before:DateTime64(9, 'UTC')}, {cursor:String})")
-		parameters["before"], parameters["cursor"] = filter.Before.UTC().Format("2006-01-02 15:04:05.999999999"), filter.CursorID
-	}
 	parameters["limit"] = strconv.Itoa(filter.Limit + 1)
-	return store.readLogs(ctx, "SELECT "+logColumns+" FROM tracepilot_logs FINAL WHERE "+strings.Join(where, " AND ")+
-		" ORDER BY occurred_at DESC, toString(event_id) DESC LIMIT {limit:UInt32} FORMAT JSONEachRow", parameters)
+	keys, err := store.readLogKeys(ctx, "SELECT occurred_at, toString(event_id) AS id FROM tracepilot_log_records FINAL WHERE "+
+		strings.Join(where, " AND ")+" ORDER BY occurred_at DESC, id DESC LIMIT {limit:UInt32}"+finalSettings+" FORMAT JSONEachRow", parameters)
+	if err != nil {
+		return nil, err
+	}
+	if len(keys) == 0 {
+		return []query.LogRecord{}, nil
+	}
+	page := filter
+	page.From, page.To = keys[len(keys)-1].OccurredAt, keys[0].OccurredAt
+	where, parameters, err = store.logFilter(projectID, page)
+	if err != nil {
+		return nil, err
+	}
+	parameters["limit"] = strconv.Itoa(len(keys))
+	return store.readLogs(ctx, "SELECT "+logColumns+" FROM tracepilot_log_records FINAL WHERE "+strings.Join(where, " AND ")+
+		" ORDER BY occurred_at DESC, toString(event_id) DESC LIMIT {limit:UInt32}"+finalSettings+" FORMAT JSONEachRow", parameters)
 }
 
-// Standard filters select an OTLP severity group. Text remains untouched in storage.
-func logSeverityPredicate(value string, parameters map[string]string) string {
-	level := strings.ToUpper(strings.TrimSpace(value))
-	switch level {
-	case "INFORMATION":
-		level = "INFO"
-	case "WARNING":
-		level = "WARN"
+type logKey struct {
+	OccurredAt time.Time `json:"occurred_at"`
+	ID         string    `json:"id"`
+}
+
+func (store *Store) readLogKeys(ctx context.Context, sql string, parameters map[string]string) ([]logKey, error) {
+	data, err := store.execute(ctx, sql, parameters, nil, false)
+	if err != nil {
+		return nil, err
 	}
-	for index, group := range []string{"TRACE", "DEBUG", "INFO", "WARN", "ERROR", "FATAL"} {
-		if level != group && !(strings.HasPrefix(level, group) && len(level) == len(group)+1 && level[len(group)] >= '1' && level[len(group)] <= '4') {
-			continue
+	decoder, keys := json.NewDecoder(bytes.NewReader(data)), []logKey{}
+	for {
+		var key logKey
+		if err := decoder.Decode(&key); err != nil {
+			if errors.Is(err, io.EOF) {
+				return keys, nil
+			}
+			return nil, errors.New("decode ClickHouse logs")
 		}
-		parameters["severity_min"], parameters["severity_max"] = strconv.Itoa(index*4+1), strconv.Itoa(index*4+4)
-		pattern := group + "[1-4]?"
-		if group == "INFO" {
-			pattern += "|INFORMATION|"
-		} else if group == "WARN" {
-			pattern += "|WARNING"
+		if key.OccurredAt.IsZero() || !validUUID(key.ID) {
+			return nil, errors.New("decode ClickHouse logs")
 		}
-		parameters["severity_pattern"] = "^(" + pattern + ")$"
-		return "(severity_number BETWEEN {severity_min:Int32} AND {severity_max:Int32} OR " +
-			"(NOT (severity_number BETWEEN 1 AND 24) AND match(upperUTF8(trimBoth(severity_text)), {severity_pattern:String})))"
+		keys = append(keys, key)
 	}
-	parameters["severity"] = level
-	return "upperUTF8(trimBoth(severity_text)) = {severity:String}"
 }
 
 func (store *Store) GetLog(ctx context.Context, projectID, environmentID, eventID string) (query.LogRecord, error) {
 	return store.GetLogSince(ctx, projectID, environmentID, eventID, time.Time{})
 }
 
+// GetLogSince returns an empty record and a nil error when the log is missing.
 func (store *Store) GetLogSince(ctx context.Context, projectID, environmentID, eventID string, since time.Time) (query.LogRecord, error) {
 	if !validUUID(eventID) {
 		return query.LogRecord{}, errors.New("invalid log ID")
@@ -166,8 +144,8 @@ func (store *Store) GetLogSince(ctx context.Context, projectID, environmentID, e
 	where = append(where, "event_id = {event:UUID}")
 	parameters["event"] = eventID
 	where = addTime(where, parameters, "occurred_at", "retention_cutoff", ">=", since)
-	rows, err := store.readLogs(ctx, "SELECT "+logColumns+" FROM tracepilot_logs FINAL WHERE "+strings.Join(where, " AND ")+
-		" LIMIT 1 FORMAT JSONEachRow", parameters)
+	rows, err := store.readLogs(ctx, "SELECT "+logColumns+" FROM tracepilot_log_records FINAL WHERE "+strings.Join(where, " AND ")+
+		" LIMIT 1"+finalSettings+" FORMAT JSONEachRow", parameters)
 	if err != nil || len(rows) == 0 {
 		return query.LogRecord{}, err
 	}
@@ -207,8 +185,8 @@ func (store *Store) LogQuality(ctx context.Context, projectID, environmentID, se
 		where = append(where, "service_name = {service:String}")
 		parameters["service"] = service
 	}
-	data, err := store.execute(ctx, "SELECT count() AS logs, countIf(trace_id = '') AS uncorrelated FROM tracepilot_logs FINAL WHERE "+
-		strings.Join(where, " AND ")+" FORMAT JSONEachRow", parameters, nil, false)
+	data, err := store.execute(ctx, "SELECT count() AS logs, countIf(trace_id = '') AS uncorrelated FROM tracepilot_log_records FINAL WHERE "+
+		strings.Join(where, " AND ")+finalSettings+" FORMAT JSONEachRow", parameters, nil, false)
 	if err != nil {
 		return 0, 0, err
 	}
