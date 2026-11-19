@@ -264,7 +264,7 @@ A dirty journal blocks migration and startup. Compare the actual schema with a v
 powershell -ExecutionPolicy Bypass -File scripts/package-release.ps1 -Version 0.1.0-rc.1
 ```
 
-The script builds and smoke-tests both images. It writes an archive and SHA-256 file under `bin/releases/`. Linux amd64 is the default. Use `-Platform linux/arm64` for ARM and have emulation available if smoke tests run on amd64. The bundle contains the images, metadata, sample env files, deployment configuration, and docs. Builds from modified sources are marked dirty and include input hashes.
+The script builds and smoke-tests both images. It writes an archive and SHA-256 file under `bin/releases/`. Linux amd64 is the default. Use `-Platform linux/arm64` for ARM and have emulation available if smoke tests run on amd64. The bundle contains the images, metadata, sample env files, `deploy/compose.yaml`, and docs. Builds from modified sources are marked dirty and include input hashes.
 
 On the target Linux host, replace `<version>` with the archive version.
 
@@ -286,12 +286,15 @@ Use these exported tags when you complete [configuration](#stack-and-configurati
 
 ## Development
 
+For a local ClickHouse and CH-UI stack, set `CLICKHOUSE_PASSWORD` and `CH_UI_SECRET_KEY`, then run `docker compose -f deploy/docker-compose.yaml up -d`. Keep the ClickHouse credentials in this stack consistent with `backend/.env`.
+
 Run these checks after installing frontend dependencies with `npm --prefix frontend ci`.
 
 ```powershell
 go -C backend test ./...
 go -C backend vet ./...
 go -C backend build ./...
+npm --prefix frontend audit --audit-level=moderate
 npm --prefix frontend run check
 npm --prefix frontend run test
 npm --prefix frontend run build
