@@ -563,7 +563,7 @@
                 }
               }
             },
-            "description": "Creates a new traceId, saved as {{traceId}} for the verify folder. The child span has db.system, so it shows as a dependency in topology."
+            "description": "Creates a new traceId, saved as {{traceId}} for the verify folder. The child span has db.system, so it shows as a dependency in topology. Spans are stored only in ClickHouse; this healthy trace writes nothing to PostgreSQL."
           },
           "event": [
             {
@@ -623,7 +623,7 @@
                 }
               }
             },
-            "description": "Status 500 with exception. The span name, status message and exception.message contain credentials that must be stored as [REDACTED]."
+            "description": "Status 500 with exception. The span name, status message and exception.message contain credentials that must be stored as [REDACTED]. The failed span opens an incident; PostgreSQL keeps only its envelope without attributes, and the full span stays in ClickHouse."
           },
           "event": [
             {
@@ -653,7 +653,7 @@
         {
           "name": "Logs: error linked to the trace",
           "request": {
-            "description": "Two identical error logs one nanosecond apart must remain distinct; retrying the same records must keep their IDs. Severity number 20 belongs to ERROR, while raw exporter text Error is preserved. ACK waits for ClickHouse flush and required PostgreSQL incident/outbox transactions. Legacy PostgreSQL logs must be copied with the previous release before upgrading to the release that drops that table.",
+            "description": "Two identical error logs one nanosecond apart must remain distinct; retrying the same records must keep their IDs. Severity number 20 belongs to ERROR, while raw exporter text Error is preserved. ACK waits for ClickHouse flush and the PostgreSQL incident/outbox transaction of the error logs. Legacy PostgreSQL logs must be copied with the previous release before upgrading to the release that drops that table.",
             "method": "POST",
             "header": [
               {
@@ -750,6 +750,7 @@
           "name": "Metrics: gauge",
           "request": {
             "method": "POST",
+            "description": "Metric points are stored only in ClickHouse (tracepilot_metric_points).",
             "header": [
               {
                 "key": "Authorization",
@@ -931,6 +932,7 @@
         {
           "name": "Logs: search this run",
           "request": {
+            "description": "Search matches the stored JSON body case-insensitively; quotes, newlines, % and _ match literally. Without from (and without traceId) the list covers the hour before to, the page cursor, or now.",
             "method": "GET",
             "header": [
               {

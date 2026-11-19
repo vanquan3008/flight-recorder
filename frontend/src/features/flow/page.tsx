@@ -16,14 +16,14 @@ const writeFlow: FlowNode[] = [
   { icon: Activity, step: "01 · Producer", title: "Your applications", copy: "OpenTelemetry SDKs emit application traces, logs, metrics and errors.", tags: ["OTel SDK", "OTLP"] },
   { icon: RadioTower, step: "02 · Write API", title: "OTLP ingestion API", copy: "A dedicated gRPC or HTTP listener accepts standard OpenTelemetry export requests.", tags: ["gRPC :4317", "HTTP :4318", "scope: ingest"] },
   { icon: ShieldCheck, step: "03 · Admission", title: "Validate and normalize", copy: "Authentication, size limits and redaction run before records enter the bounded pipeline.", tags: ["Backpressure", "Canonical event"] },
-  { icon: Database, step: "04 · Durability", title: "Persist telemetry", copy: "TracePilot acknowledges traces and logs after raw logs flush to ClickHouse and all required PostgreSQL transactions commit.", tags: ["PostgreSQL", "ClickHouse", "Commit before ACK"] },
+  { icon: Database, step: "04 · Durability", title: "Persist telemetry", copy: "TracePilot acknowledges traces and logs after they flush to ClickHouse and the PostgreSQL incident transaction for any failures commits.", tags: ["ClickHouse", "PostgreSQL", "Commit before ACK"] },
 ];
 
 const readFlow: FlowNode[] = [
   { icon: Search, step: "01 · Consumer", title: "Console or API client", copy: "The browser console and external tools request telemetry independently of ingestion.", tags: ["React Console", "External client"] },
   { icon: FileSearch, step: "02 · Read API", title: "Management REST API", copy: "A separate HTTP listener exposes versioned query and management endpoints.", tags: [":8080/api/v1", "JSON", "scope: read"] },
   { icon: KeyRound, step: "03 · Authorization", title: "Project-scoped query", copy: "The signed-in account and its role in the chosen project decide what it can read; a project you do not belong to answers as forbidden.", tags: ["JWT access token", "Project roles"] },
-  { icon: Database, step: "04 · Result", title: "Read stored telemetry", copy: "Scoped queries read raw logs from ClickHouse and traces, metrics and incidents from PostgreSQL.", tags: ["Read path", "JSON response"] },
+  { icon: Database, step: "04 · Result", title: "Read stored telemetry", copy: "Scoped queries read logs, traces and metrics from ClickHouse and incidents from PostgreSQL.", tags: ["Read path", "JSON response"] },
 ];
 
 const intelligenceFlow: FlowNode[] = [
@@ -56,7 +56,7 @@ export function FlowPage() {
     <section className="flow-contracts mb-5.5 grid grid-cols-2 gap-3 max-[900px]:grid-cols-1 [&>article]:grid [&>article]:min-w-0 [&>article]:grid-cols-[auto_minmax(0,1fr)_auto] [&>article]:items-center [&>article]:gap-3.5 [&>article]:rounded-xl [&>article]:border [&>article]:border-glass-divider [&>article]:bg-glass-nested [&>article]:p-4.5 [&>article>svg]:text-cyan [&_article_span]:text-[10px] [&_article_span]:font-bold [&_article_span]:tracking-wider [&_article_span]:text-accent [&_article_span]:uppercase [&_h2]:mt-0.5 [&_h2]:mb-0.75 [&_h2]:text-lg [&_p]:m-0 [&_p]:text-xs [&_p]:text-muted [&_code]:rounded-lg [&_code]:border [&_code]:border-line [&_code]:bg-surface-sunken [&_code]:px-2.25 [&_code]:py-1.5 [&_code]:whitespace-nowrap [&>p]:col-span-full [&>p]:flex [&>p]:items-center [&>p]:justify-center [&>p]:gap-1.75 [&>p]:text-center [&>p]:text-faint max-[620px]:[&>article]:grid-cols-[auto_minmax(0,1fr)] max-[620px]:[&_code]:col-span-full max-[620px]:[&_code]:text-center" aria-label="API boundaries">
       <article className="write"><RadioTower size={22} /><div><span>Write boundary</span><h2>OTLP ingestion</h2><p>Applications push telemetry into TracePilot.</p></div><code>:4317 · :4318</code></article>
       <article className="read"><FileSearch size={22} /><div><span>Read boundary</span><h2>Management REST</h2><p>Console and clients query telemetry from TracePilot.</p></div><code>:8080/api/v1</code></article>
-      <p><Database size={16} /> PostgreSQL stores traces, metrics and incidents; ClickHouse stores raw logs.</p>
+      <p><Database size={16} /> ClickHouse stores logs, traces and metrics; PostgreSQL stores incidents and project settings.</p>
     </section>
 
     <FlowLane eyebrow="Write API · Ingestion" title="Applications push OpenTelemetry data into TracePilot" nodes={writeFlow} />
@@ -68,7 +68,7 @@ export function FlowPage() {
       <div className="flow-steps grid grid-cols-4 gap-2.5 max-[1200px]:grid-cols-2 max-[620px]:grid-cols-1 [&>article]:grid [&>article]:min-w-0 [&>article]:grid-cols-[auto_auto_minmax(0,1fr)] [&>article]:items-start [&>article]:gap-2.5 [&>article]:rounded-xl [&>article]:border [&>article]:border-glass-divider [&>article]:bg-glass-nested [&>article]:p-3.75 [&_svg]:mt-0.5 [&_svg]:text-blue [&_strong]:mb-0.75 [&_strong]:block [&_p]:m-0 [&_p]:text-xs [&_p]:text-muted">{firstRun.map(([Icon, title, copy], index) => <article key={title}>
         <span className="flow-step-number grid size-5.5 place-items-center rounded-md bg-neutral-bg text-[10px] font-bold text-neutral-fg">{index + 1}</span><Icon size={21} /><div><strong>{title}</strong><p>{copy}</p></div>
       </article>)}</div>
-      <div className="flow-promise mt-3.5 flex items-start gap-2.25 rounded-lg border border-accent/40 bg-accent/10 px-3.75 py-3.25 text-xs text-text [&>svg]:shrink-0 [&>svg]:text-accent"><CheckCircle2 size={19} /><span><strong>The durability promise:</strong> traces and logs are acknowledged after ClickHouse flushes raw logs and all required PostgreSQL transactions commit. Metrics remain best-effort by design.</span></div>
+      <div className="flow-promise mt-3.5 flex items-start gap-2.25 rounded-lg border border-accent/40 bg-accent/10 px-3.75 py-3.25 text-xs text-text [&>svg]:shrink-0 [&>svg]:text-accent"><CheckCircle2 size={19} /><span><strong>The durability promise:</strong> traces and logs are acknowledged after ClickHouse flushes them and the PostgreSQL incident transaction for any failures commits. Metrics remain best-effort by design.</span></div>
     </section>
   </div>;
 }
