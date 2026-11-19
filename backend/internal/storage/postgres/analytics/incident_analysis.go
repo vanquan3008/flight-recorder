@@ -33,12 +33,6 @@ func (store *AnalyticsStore) PersistObservabilityIncident(ctx context.Context, i
 	}
 	persistError := pgx.BeginFunc(ctx, store.pool, func(transaction pgx.Tx) error {
 		queries := store.queries.WithTx(transaction)
-		if err := queries.EnsureService(ctx, sqlcstore.EnsureServiceParams{
-			ID:        telemetry.DeterministicID(end, ingestion.EnvironmentID, service),
-			ProjectID: ingestion.ProjectID, EnvironmentID: ingestion.EnvironmentID, Name: service,
-		}); err != nil {
-			return fmt.Errorf("ensure detected service: %w", err)
-		}
 		if err := queries.InsertObservabilityEvent(ctx, sqlcstore.InsertObservabilityEventParams{
 			ID: eventID, ProjectID: ingestion.ProjectID, EnvironmentID: ingestion.EnvironmentID,
 			ServiceName: service, OccurredAt: end, Attributes: attributes,
@@ -90,22 +84,21 @@ func (store *AnalyticsStore) PersistObservabilityIncident(ctx context.Context, i
 	return nil
 }
 
-// GetIncidentAnalysis ranks RCA hypotheses from the incident's latest evidence
-// and the dependencies observed in the same window. A missing incident yields
-// an empty analysis.
-func (store *AnalyticsStore) GetIncidentAnalysis(ctx context.Context, projectID, environmentID, incidentID string) (analysis.IncidentAnalysis, error) {
-	service, err := store.queries.GetIncidentPrimaryService(ctx, sqlcstore.GetIncidentPrimaryServiceParams{ProjectID: projectID, EnvironmentID: environmentID, ID: incidentID})
+// IncidentEvidence returns an incident's primary service and latest evidence.
+// found is false for a missing incident.
+func (store *AnalyticsStore) IncidentEvidence(ctx context.Context, projectID, environmentID, incidentID string) (service string, evidence []analysis.Evidence, found bool, err error) {
+	service, err = store.queries.GetIncidentPrimaryService(ctx, sqlcstore.GetIncidentPrimaryServiceParams{ProjectID: projectID, EnvironmentID: environmentID, ID: incidentID})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return analysis.IncidentAnalysis{}, nil
+		return "", nil, false, nil
 	}
 	if err != nil {
-		return analysis.IncidentAnalysis{}, fmt.Errorf("load incident for analysis: %w", err)
+		return "", nil, false, fmt.Errorf("load incident for analysis: %w", err)
 	}
 	rows, err := store.queries.ListLatestIncidentEvidence(ctx, sqlcstore.ListLatestIncidentEvidenceParams{ProjectID: projectID, EnvironmentID: environmentID, IncidentID: incidentID})
 	if err != nil {
-		return analysis.IncidentAnalysis{}, fmt.Errorf("list incident evidence: %w", err)
+		return "", nil, false, fmt.Errorf("list incident evidence: %w", err)
 	}
-	evidence := make([]analysis.Evidence, 0, len(rows))
+	evidence = make([]analysis.Evidence, 0, len(rows))
 	for _, row := range rows {
 		evidence = append(evidence, analysis.Evidence{
 			ID: row.ID, SeriesID: row.SeriesID, SignalType: row.SignalType, EntityType: row.EntityType,
@@ -115,34 +108,7 @@ func (store *AnalyticsStore) GetIncidentAnalysis(ctx context.Context, projectID,
 			TraceIDs: row.TraceIDs, Summary: row.Summary,
 		})
 	}
-	dependencies := []analysis.TopologyEdge{}
-	if len(evidence) > 1 {
-		from, to := evidenceWindow(evidence)
-		topology, err := store.ListTopology(ctx, projectID, analysis.Filter{EnvironmentID: environmentID, From: from, To: to})
-		if err != nil {
-			return analysis.IncidentAnalysis{}, err
-		}
-		dependencies = topology.Edges
-	}
-	return analysis.BuildRCA(incidentID, service, evidence, dependencies), nil
-}
-
-// evidenceWindow spans every evidence window, widened to one detection window
-// when they all end at the same instant.
-func evidenceWindow(evidence []analysis.Evidence) (time.Time, time.Time) {
-	from, to := evidence[0].WindowStartedAt, evidence[0].WindowEndedAt
-	for _, item := range evidence {
-		if item.WindowStartedAt.Before(from) {
-			from = item.WindowStartedAt
-		}
-		if item.WindowEndedAt.After(to) {
-			to = item.WindowEndedAt
-		}
-	}
-	if !from.Before(to) {
-		from = to.Add(-currentWindow)
-	}
-	return from, to
+	return service, evidence, true, nil
 }
 
 // nonNilStrings stores a missing list as an empty array; the column is NOT NULL.

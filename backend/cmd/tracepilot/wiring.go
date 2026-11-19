@@ -9,6 +9,7 @@ import (
 	"github.com/vanquan3008/tracepilot/internal/application/replay"
 	"github.com/vanquan3008/tracepilot/internal/auth"
 	"github.com/vanquan3008/tracepilot/internal/config"
+	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
 	ingestotlp "github.com/vanquan3008/tracepilot/internal/ingest/otlp"
 	"github.com/vanquan3008/tracepilot/internal/ingest/pipeline"
 	"github.com/vanquan3008/tracepilot/internal/observability/metrics"
@@ -16,7 +17,7 @@ import (
 )
 
 // buildMetricsPipeline constructs the metrics telemetry ingestion pipeline.
-func buildMetricsPipeline(cfg config.Config, database *postgres.Database, catalog *scopeCatalog, selfMetrics *metrics.Registry) *pipeline.MetricsPipeline {
+func buildMetricsPipeline(cfg config.Config, storeMetrics func(context.Context, config.IngestionConfig, []telemetry.MetricDataPoint) error, catalog *scopeCatalog, selfMetrics *metrics.Registry) *pipeline.MetricsPipeline {
 	return pipeline.NewMetricsPipeline(
 		pipeline.MetricsPipelineConfig{
 			QueueSize:     cfg.Ingestion.QueueSize,
@@ -25,7 +26,7 @@ func buildMetricsPipeline(cfg config.Config, database *postgres.Database, catalo
 			Workers:       cfg.Ingestion.Workers,
 			Metrics:       selfMetrics,
 		},
-		storeMetricsByScope(catalog, database.StoreMetrics),
+		storeMetricsByScope(catalog, storeMetrics),
 	)
 }
 

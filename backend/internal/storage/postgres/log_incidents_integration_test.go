@@ -10,7 +10,7 @@ import (
 	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
 )
 
-func TestCompactLogIncidentsReuseTimelineAndOutboxWithoutRawLogs(t *testing.T) {
+func TestErrorLogsOpenIncidentsWithoutRawLogs(t *testing.T) {
 	database, scope := newFlowTestDatabase(t)
 	ctx, at := context.Background(), time.Now().UTC().Truncate(time.Second)
 	if _, err := database.CreateWebhook(ctx, scope.ProjectID, "", notificationdomain.CreateWebhookParams{Name: "log-errors", URL: "https://example.com/hook", Events: []string{"incident.opened"}}); err != nil {
@@ -24,7 +24,7 @@ func TestCompactLogIncidentsReuseTimelineAndOutboxWithoutRawLogs(t *testing.T) {
 	info := event
 	info.ID, info.SeverityNumber, info.Severity = telemetry.DeterministicID(at, "info"), 9, "INFO"
 	for range 2 {
-		if err := database.StoreLogIncidents(ctx, scope, []telemetry.Event{event, info}); err != nil {
+		if err := database.StoreEvents(ctx, scope, []telemetry.Event{event, info}); err != nil {
 			t.Fatal(err)
 		}
 	}

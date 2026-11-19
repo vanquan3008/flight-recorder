@@ -64,13 +64,15 @@ func (store *recordingStore) ListRetentionProjects(context.Context) ([]string, e
 func (store *recordingStore) CountExpiredProjectEvents(context.Context, time.Time, time.Duration) (int64, error) {
 	return 0, nil
 }
-func (store *recordingStore) DropExpiredTelemetryPartitions(_ context.Context, now time.Time, fallback time.Duration) (int64, int64, error) {
-	_, err := store.record("shared-partitions", now.Add(-fallback))
-	return 0, 0, err
+func (store *recordingStore) DropExpiredTelemetryPartitions(_ context.Context, now time.Time, fallback time.Duration) (int64, error) {
+	return store.record("shared-partitions", now.Add(-fallback))
 }
-func (store *recordingStore) PruneProjectTelemetry(_ context.Context, project string, now time.Time, fallback time.Duration, _ int) (int64, int64, error) {
-	_, err := store.record("telemetry-"+project, now.Add(-fallback))
-	return 0, 0, err
+func (store *recordingStore) DropExpiredClickHousePartitions(_ context.Context, now time.Time, fallback time.Duration) error {
+	_, err := store.record("clickhouse-partitions", now.Add(-fallback))
+	return err
+}
+func (store *recordingStore) PruneProjectTelemetry(_ context.Context, project string, now time.Time, fallback time.Duration, _ int) (int64, error) {
+	return store.record("telemetry-"+project, now.Add(-fallback))
 }
 func (store *recordingStore) PruneProjectLogs(_ context.Context, project string, now time.Time, fallback time.Duration) error {
 	_, err := store.record("logs-"+project, now.Add(-fallback))

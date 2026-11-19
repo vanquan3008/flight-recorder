@@ -38,18 +38,6 @@ CREATE TABLE users (
 
 CREATE UNIQUE INDEX users_email_key ON users (email);
 
-CREATE TABLE services (
-    id              uuid PRIMARY KEY,
-    project_id      uuid NOT NULL,
-    environment_id  uuid NOT NULL,
-    name            text NOT NULL,
-    created_at      timestamptz NOT NULL DEFAULT now(),
-    updated_at      timestamptz NOT NULL DEFAULT now(),
-    FOREIGN KEY (project_id, environment_id) REFERENCES environments(project_id, id) ON DELETE CASCADE,
-    UNIQUE (project_id, environment_id, name),
-    UNIQUE (project_id, id)
-);
-
 -- A project has owners (who made it, and run it) and users (who were allowed to see its telemetry).
 CREATE TABLE project_members (
     project_id  uuid NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -110,10 +98,8 @@ CREATE INDEX audit_events_project_idx ON audit_events (project_id, created_at DE
 
 CREATE INDEX audit_events_created_idx ON audit_events (created_at);
 
--- telemetry
--- Canonical telemetry and signal tables, indexes and default partitions.
-
-CREATE EXTENSION IF NOT EXISTS pg_trgm;
+-- incident envelopes
+-- Failing spans and logs keep a compact envelope here for incident timelines; telemetry lives in ClickHouse.
 
 CREATE TABLE events (
     id               uuid NOT NULL,
@@ -142,151 +128,6 @@ CREATE TABLE events (
 ) PARTITION BY RANGE (occurred_at);
 
 CREATE TABLE events_default PARTITION OF events DEFAULT;
-
-CREATE TABLE spans (
-    event_id                 uuid NOT NULL,
-    project_id               uuid NOT NULL,
-    environment_id           uuid NOT NULL,
-    trace_id                 text NOT NULL,
-    span_id                  text NOT NULL,
-    parent_span_id           text,
-    trace_state              text NOT NULL DEFAULT '',
-    span_name                text NOT NULL,
-    span_kind                integer NOT NULL,
-    started_at               timestamptz NOT NULL,
-    ended_at                 timestamptz NOT NULL,
-    status_code              text NOT NULL,
-    status_message           text NOT NULL DEFAULT '',
-    flags                    bigint NOT NULL DEFAULT 0,
-    service_name             text NOT NULL,
-    service_version          text,
-    resource_schema_url      text NOT NULL DEFAULT '',
-    resource_attributes      jsonb NOT NULL DEFAULT '{}'::jsonb,
-    scope_name               text NOT NULL DEFAULT '',
-    scope_version            text NOT NULL DEFAULT '',
-    scope_schema_url         text NOT NULL DEFAULT '',
-    scope_attributes         jsonb NOT NULL DEFAULT '{}'::jsonb,
-    span_attributes          jsonb NOT NULL DEFAULT '{}'::jsonb,
-    span_events              jsonb NOT NULL DEFAULT '[]'::jsonb,
-    span_links               jsonb NOT NULL DEFAULT '[]'::jsonb,
-    dropped_attributes_count integer NOT NULL DEFAULT 0,
-    dropped_events_count     integer NOT NULL DEFAULT 0,
-    dropped_links_count      integer NOT NULL DEFAULT 0,
-    PRIMARY KEY (event_id, started_at),
-    FOREIGN KEY (project_id, environment_id) REFERENCES environments(project_id, id),
-    UNIQUE (project_id, environment_id, trace_id, span_id, started_at),
-    CONSTRAINT spans_resource_attributes_object CHECK (jsonb_typeof(resource_attributes) = 'object'),
-    CONSTRAINT spans_scope_attributes_object CHECK (jsonb_typeof(scope_attributes) = 'object'),
-    CONSTRAINT spans_span_attributes_object CHECK (jsonb_typeof(span_attributes) = 'object'),
-    CONSTRAINT spans_events_array CHECK (jsonb_typeof(span_events) = 'array'),
-    CONSTRAINT spans_links_array CHECK (jsonb_typeof(span_links) = 'array')
-) PARTITION BY RANGE (started_at);
-
-CREATE TABLE spans_default PARTITION OF spans DEFAULT;
-
-CREATE INDEX spans_trace_time_idx
-    ON spans (project_id, trace_id, started_at, event_id);
-
-CREATE INDEX spans_service_time_idx
-    ON spans (project_id, environment_id, service_name, started_at DESC, event_id DESC);
-
--- Detection, topology and quality queries read one environment's spans in a
--- recent window. Without a time-led index the planner read the whole daily
--- partition to find a 5 to 35 minute slice. Measured on 2M spans: detection
--- window 28 ms -> 12 ms, quality check 100 ms -> 31 ms, about 18% slower span
--- inserts. A BRIN index was tried and lost (coarse ranges, slower than a scan).
-CREATE INDEX spans_window_idx
-    ON spans (project_id, environment_id, started_at);
-
-CREATE TABLE logs (
-    event_id                 uuid NOT NULL,
-    project_id               uuid NOT NULL,
-    environment_id           uuid NOT NULL,
-    occurred_at              timestamptz NOT NULL,
-    observed_at              timestamptz,
-    trace_id                 text,
-    span_id                  text,
-    trace_flags              bigint NOT NULL DEFAULT 0,
-    severity_number          integer NOT NULL DEFAULT 0,
-    severity_text            text NOT NULL DEFAULT '',
-    body                     jsonb,
-    event_name               text NOT NULL DEFAULT '',
-    service_name             text NOT NULL,
-    service_version          text,
-    resource_schema_url      text NOT NULL DEFAULT '',
-    resource_attributes      jsonb NOT NULL DEFAULT '{}'::jsonb,
-    scope_name               text NOT NULL DEFAULT '',
-    scope_version            text NOT NULL DEFAULT '',
-    scope_schema_url         text NOT NULL DEFAULT '',
-    scope_attributes         jsonb NOT NULL DEFAULT '{}'::jsonb,
-    log_attributes           jsonb NOT NULL DEFAULT '{}'::jsonb,
-    dropped_attributes_count integer NOT NULL DEFAULT 0,
-    PRIMARY KEY (event_id, occurred_at),
-    FOREIGN KEY (project_id, environment_id) REFERENCES environments(project_id, id),
-    CONSTRAINT logs_resource_attributes_object CHECK (jsonb_typeof(resource_attributes) = 'object'),
-    CONSTRAINT logs_scope_attributes_object CHECK (jsonb_typeof(scope_attributes) = 'object'),
-    CONSTRAINT logs_attributes_object CHECK (jsonb_typeof(log_attributes) = 'object')
-) PARTITION BY RANGE (occurred_at);
-
-CREATE TABLE logs_default PARTITION OF logs DEFAULT;
-
-CREATE INDEX logs_time_idx
-    ON logs (project_id, environment_id, occurred_at DESC, event_id DESC);
-
-CREATE INDEX logs_trace_idx
-    ON logs (project_id, trace_id, occurred_at, event_id) WHERE trace_id IS NOT NULL;
-
-CREATE INDEX logs_body_trgm_idx ON logs USING GIN (
-    (body::text) gin_trgm_ops
-) WHERE body IS NOT NULL;
-
-CREATE TABLE metric_data_points (
-    id                  uuid NOT NULL,
-    project_id          uuid NOT NULL,
-    environment_id      uuid NOT NULL,
-    metric_name         text NOT NULL,
-    metric_unit         text NOT NULL DEFAULT '',
-    metric_type         text NOT NULL, -- 'gauge', 'sum', 'histogram'
-    service_name        text NOT NULL,
-    service_version     text,
-    occurred_at         timestamptz NOT NULL,
-    -- Numeric value for gauge and sum; NULL for histogram
-    value               double precision,
-    -- Histogram fields
-    hist_count          bigint,
-    hist_sum            double precision,
-    hist_min            double precision,
-    hist_max            double precision,
-    hist_buckets        jsonb,          -- [{bound: float, count: int}, ...]
-    -- Cumulative vs delta
-    temporality         text NOT NULL DEFAULT 'cumulative',
-    is_monotonic        boolean,
-    -- Dimensions and metadata
-    attributes          jsonb NOT NULL DEFAULT '{}'::jsonb,
-    resource_attributes jsonb NOT NULL DEFAULT '{}'::jsonb,
-    scope_name          text NOT NULL DEFAULT '',
-    scope_version       text NOT NULL DEFAULT '',
-    ingested_at         timestamptz NOT NULL DEFAULT now(),
-    exemplars           jsonb NOT NULL DEFAULT '[]'::jsonb,
-    -- Metric start times distinguish counter intervals and resets.
-    started_at          timestamptz,
-    flags               bigint NOT NULL DEFAULT 0,
-    scope_attributes    jsonb NOT NULL DEFAULT '{}',
-    PRIMARY KEY (project_id, id, occurred_at),
-    FOREIGN KEY (project_id, environment_id) REFERENCES environments(project_id, id),
-    CONSTRAINT metric_data_points_attributes_object CHECK (jsonb_typeof(attributes) = 'object'),
-    CONSTRAINT metric_data_points_resource_object   CHECK (jsonb_typeof(resource_attributes) = 'object'),
-    CONSTRAINT metric_data_points_type_check CHECK (metric_type IN ('gauge', 'sum', 'histogram')),
-    CONSTRAINT metric_data_points_exemplars_array CHECK (jsonb_typeof(exemplars) = 'array')
-) PARTITION BY RANGE (occurred_at);
-
-CREATE TABLE metric_data_points_default PARTITION OF metric_data_points DEFAULT;
-
-CREATE INDEX metric_data_points_browse_idx
-    ON metric_data_points (project_id, environment_id, metric_name, occurred_at DESC, id DESC);
-
-CREATE INDEX metric_data_points_service_idx
-    ON metric_data_points (project_id, environment_id, service_name, metric_name, occurred_at DESC);
 
 -- incidents
 -- Incidents, investigation history, evidence and replay executions.
@@ -340,10 +181,8 @@ CREATE TABLE incident_occurrences (
     UNIQUE (incident_id, event_id)
 );
 
--- events keeps every signal but has no secondary indexes on purpose. Reads go
--- through spans, logs and metric_data_points; events is only joined by
+-- events has no secondary indexes on purpose: it is only joined by
 -- (project_id, id) for incident evidence and counted by time for retention.
--- Four indexes that no query used cost about 29% of insert throughput.
 CREATE INDEX incident_occurrences_time_idx
     ON incident_occurrences (incident_id, occurred_at DESC, id DESC);
 
@@ -476,126 +315,5 @@ CREATE INDEX webhook_deliveries_pending_idx
 
 CREATE INDEX webhook_deliveries_webhook_idx
     ON webhook_deliveries (project_id, webhook_id, created_at DESC, id DESC);
-
--- span_analysis
--- Shared SQL functions for span classification and request analysis.
-
--- Dependency identity of a span, shared by topology and detection queries so
--- both name the same database, queue or external target. Single-statement
--- IMMUTABLE SQL functions are inlined by the planner, so they cost nothing
--- per row compared with writing the expressions in each query.
-
--- A span calls a dependency when it is a database or messaging operation, or
--- any CLIENT span (kind 3).
-CREATE FUNCTION span_is_dependency(span_attributes jsonb, span_kind integer)
-RETURNS boolean
-LANGUAGE sql IMMUTABLE PARALLEL SAFE
-AS $$
-    SELECT span_attributes ? 'db.system'
-        OR span_attributes ? 'db.system.name'
-        OR span_attributes ? 'messaging.system'
-        OR span_kind = 3
-$$;
-
-CREATE FUNCTION span_dependency_type(span_attributes jsonb)
-RETURNS text
-LANGUAGE sql IMMUTABLE PARALLEL SAFE
-AS $$
-    SELECT CASE
-        WHEN span_attributes ? 'db.system' OR span_attributes ? 'db.system.name' THEN 'database'
-        WHEN span_attributes ? 'messaging.system' THEN 'queue'
-        ELSE 'external'
-    END
-$$;
-
-CREATE FUNCTION span_dependency_name(span_attributes jsonb)
-RETURNS text
-LANGUAGE sql IMMUTABLE PARALLEL SAFE
-AS $$
-    SELECT CASE
-        WHEN span_attributes ? 'db.system' OR span_attributes ? 'db.system.name' THEN
-            COALESCE(
-                NULLIF(span_attributes->>'db.namespace', ''),
-                NULLIF(span_attributes->>'db.name', ''),
-                NULLIF(span_attributes->>'server.address', ''),
-                NULLIF(span_attributes->>'db.system.name', ''),
-                span_attributes->>'db.system')
-        WHEN span_attributes ? 'messaging.system' THEN
-            COALESCE(
-                NULLIF(span_attributes->>'messaging.destination.name', ''),
-                NULLIF(span_attributes->>'messaging.destination', ''),
-                span_attributes->>'messaging.system')
-        ELSE
-            COALESCE(
-                NULLIF(span_attributes->>'peer.service', ''),
-                NULLIF(span_attributes->>'server.address', ''),
-                NULLIF(span_attributes->>'http.host', ''),
-                NULLIF(span_attributes->>'url.full', ''))
-    END
-$$;
-
-CREATE FUNCTION span_request_endpoint(attributes jsonb, name text)
-RETURNS text LANGUAGE sql STABLE PARALLEL SAFE AS $$
-    SELECT CASE
-        WHEN NULLIF(attributes->>'http.route', '') IS NOT NULL THEN
-            concat_ws(' ', COALESCE(NULLIF(attributes->>'http.request.method', ''),
-                NULLIF(attributes->>'http.method', '')), attributes->>'http.route')
-        WHEN NULLIF(attributes->>'rpc.method', '') IS NOT NULL THEN
-            concat_ws('/', NULLIF(attributes->>'rpc.service', ''), attributes->>'rpc.method')
-        ELSE COALESCE(NULLIF(name, ''), '(unnamed)') END
-$$;
-
-CREATE FUNCTION span_request_failed(status text, attributes jsonb)
-RETURNS boolean LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
-    SELECT status = 'ERROR' OR COALESCE(NULLIF(attributes->>'http.response.status_code', ''),
-        attributes->>'http.status_code', '') ~ '^5[0-9]{2}$'
-$$;
-
--- span_rollups
--- Derived minute summaries and bounded backfill scheduling.
-
--- Derived data stays separate from telemetry. A dirty minute is always read
--- from spans until its replacement summary commits.
-CREATE TABLE span_rollup_buckets (
-    project_id uuid NOT NULL,
-    environment_id uuid NOT NULL,
-    bucket_start timestamptz NOT NULL,
-    dirty boolean NOT NULL DEFAULT true,
-    PRIMARY KEY (project_id, environment_id, bucket_start),
-    FOREIGN KEY (project_id, environment_id) REFERENCES environments(project_id, id) ON DELETE CASCADE
-);
-
-CREATE INDEX span_rollup_buckets_pending_idx
-    ON span_rollup_buckets (project_id, environment_id, bucket_start) WHERE dirty;
-
--- Existing telemetry is backfilled by the same bounded background work as new
--- arrivals. No percentile arrays are built during migration.
-INSERT INTO span_rollup_buckets (project_id, environment_id, bucket_start)
-SELECT DISTINCT project_id, environment_id,
-    date_bin('1 minute', started_at, TIMESTAMPTZ '2000-01-01 00:00:00+00')
-FROM spans;
-
-CREATE TABLE span_minute_rollups (
-    project_id uuid NOT NULL,
-    environment_id uuid NOT NULL,
-    bucket_start timestamptz NOT NULL,
-    service_name text NOT NULL,
-    span_kind integer NOT NULL,
-    endpoint text NOT NULL,
-    entity_type text NOT NULL,
-    entity_name text NOT NULL,
-    calls bigint NOT NULL,
-    errors bigint NOT NULL,
-    duration_sum numeric NOT NULL,
-    trace_ids text[] NOT NULL,
-    request_started_at timestamptz[] NOT NULL,
-    request_duration_ns bigint[] NOT NULL,
-    request_failed boolean[] NOT NULL,
-    FOREIGN KEY (project_id, environment_id, bucket_start)
-        REFERENCES span_rollup_buckets(project_id, environment_id, bucket_start) ON DELETE CASCADE
-);
-
-CREATE INDEX span_minute_rollups_window_idx
-    ON span_minute_rollups (project_id, environment_id, bucket_start);
 
 COMMIT;

@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -77,7 +76,7 @@ func TestHybridLogsPreserveIncidentsAndRetry(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		defer pool.Close()
-		for _, table := range []string{"incidents", "span_rollup_buckets", "span_minute_rollups", "spans", "events", "projects"} {
+		for _, table := range []string{"incidents", "events", "projects"} {
 			column := "project_id"
 			if table == "projects" {
 				column = "id"
@@ -104,11 +103,11 @@ func TestHybridLogsPreserveIncidentsAndRetry(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// PostgreSQL has no logs table; it keeps only the span and the error log's incident envelope.
-	var logsTableExists bool
-	var envelopes int
-	if err := pool.QueryRow(ctx, "SELECT to_regclass('logs') IS NOT NULL, (SELECT count(*) FROM events WHERE project_id=$1)", project).Scan(&logsTableExists, &envelopes); err != nil || logsTableExists || envelopes != 2 {
-		t.Fatalf("logs reached PG: logs table=%v events=%d error=%v", logsTableExists, envelopes, err)
+	// PostgreSQL has no signal tables; it keeps only the error log's incident envelope.
+	var signalTables, envelopes int
+	if err := pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM pg_class WHERE relname IN ('logs', 'spans', 'metric_data_points')),
+		(SELECT count(*) FROM events WHERE project_id=$1)`, project).Scan(&signalTables, &envelopes); err != nil || signalTables != 0 || envelopes != 1 {
+		t.Fatalf("healthy telemetry reached PG: signal tables=%d events=%d error=%v", signalTables, envelopes, err)
 	}
 	// A PostgreSQL failure after ClickHouse commits must not ACK; retry repairs it.
 	broken, err := postgres.Open(ctx, cfg.Database)
@@ -134,9 +133,12 @@ func TestHybridLogsPreserveIncidentsAndRetry(t *testing.T) {
 	if err != nil || quality.Spans != 1 || quality.Logs != 3 || quality.UncorrelatedLogs != 0 {
 		t.Fatalf("hybrid quality mixed stores incorrectly: %+v, %v", quality, err)
 	}
-	// A log routed straight to PostgreSQL is refused as a storage error, never dropped as invalid.
-	if err := database.StoreEvents(ctx, scope, []telemetry.Event{info}); err == nil || errors.Is(err, telemetry.ErrInvalidEvent) {
-		t.Fatalf("PostgreSQL accepted or dropped a log: %v", err)
+	// A healthy log routed straight to PostgreSQL writes nothing there.
+	if err := database.StoreEvents(ctx, scope, []telemetry.Event{info}); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM events WHERE project_id=$1", project).Scan(&envelopes); err != nil || envelopes != 2 {
+		t.Fatalf("envelopes = %d, want the error log and its retry only, %v", envelopes, err)
 	}
 	if record, err := store.GetLog(ctx, project, scope.EnvironmentID, info.ID); err != nil || record.EventID != info.ID {
 		t.Fatalf("log missing from ClickHouse: %+v, %v", record, err)

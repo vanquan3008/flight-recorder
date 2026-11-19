@@ -12,7 +12,6 @@ import (
 	notificationdomain "github.com/vanquan3008/tracepilot/internal/domain/notification"
 	"github.com/vanquan3008/tracepilot/internal/observability/metrics"
 	"github.com/vanquan3008/tracepilot/internal/storage/postgres/analytics"
-	"github.com/vanquan3008/tracepilot/internal/storage/postgres/explorer"
 	"github.com/vanquan3008/tracepilot/internal/storage/postgres/identity"
 	"github.com/vanquan3008/tracepilot/internal/storage/postgres/incidents"
 	"github.com/vanquan3008/tracepilot/internal/storage/postgres/maintenance"
@@ -38,7 +37,6 @@ type Database struct {
 	*webhooks.WebhookStore
 	*identity.IdentityStore
 	*replays.ReplayStore
-	*explorer.QueryStore
 	*analytics.AnalyticsStore
 	*maintenance.PartitionStore
 }
@@ -83,7 +81,6 @@ func open(applicationContext context.Context, configuration config.DatabaseConfi
 		WebhookStore:   webhooks.New(databasePool, webhookKey),
 		IdentityStore:  identity.New(databasePool),
 		ReplayStore:    replays.New(databasePool),
-		QueryStore:     explorer.New(databasePool),
 		AnalyticsStore: analytics.New(databasePool),
 		PartitionStore: maintenance.New(databasePool),
 	}, nil

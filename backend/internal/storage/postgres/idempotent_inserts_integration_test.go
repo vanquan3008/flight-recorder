@@ -49,33 +49,6 @@ func TestIdempotentInsertsAbsorbConcurrentIdenticalRows(t *testing.T) {
 	const rounds = 150
 	at := time.Now().UTC().Truncate(time.Second).Add(-time.Minute)
 
-	t.Run("service", func(t *testing.T) {
-		raceIdenticalRows(t, database, rounds, func(ctx context.Context, queries *sqlcstore.Queries, round int) error {
-			return queries.EnsureService(ctx, sqlcstore.EnsureServiceParams{
-				ID:        telemetry.DeterministicID(at, "race-service", scope.ProjectID, fmt.Sprint(round)),
-				ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID, Name: fmt.Sprintf("race-%d", round),
-			})
-		})
-		if got := countRows(t, database, "SELECT count(*) FROM services WHERE project_id = $1 AND name LIKE 'race-%'", scope.ProjectID); got != rounds {
-			t.Fatalf("services = %d, want one per round (%d)", got, rounds)
-		}
-	})
-
-	t.Run("span", func(t *testing.T) {
-		raceIdenticalRows(t, database, rounds, func(ctx context.Context, queries *sqlcstore.Queries, round int) error {
-			return queries.InsertSpan(ctx, sqlcstore.InsertSpanParams{
-				EventID:   telemetry.DeterministicID(at, "race-span", scope.ProjectID, fmt.Sprint(round)),
-				ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID,
-				TraceID: pagingTraceID, SpanID: fmt.Sprintf("%016x", round+1), SpanName: "work", StartedAt: at, EndedAt: at.Add(time.Millisecond),
-				StatusCode: "OK", ServiceName: "api",
-				ResourceAttributes: []byte("{}"), ScopeAttributes: []byte("{}"), SpanAttributes: []byte("{}"), SpanEvents: []byte("[]"), SpanLinks: []byte("[]"),
-			})
-		})
-		if got := countRows(t, database, "SELECT count(*) FROM spans WHERE project_id = $1", scope.ProjectID); got != rounds {
-			t.Fatalf("spans = %d, want one per round (%d)", got, rounds)
-		}
-	})
-
 	t.Run("webhook delivery", func(t *testing.T) {
 		hook, err := database.CreateWebhook(context.Background(), scope.ProjectID, "", notificationdomain.CreateWebhookParams{Name: "race", URL: "https://example.com/hook", Events: []string{"incident.opened"}})
 		if err != nil {

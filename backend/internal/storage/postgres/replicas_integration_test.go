@@ -96,10 +96,9 @@ func TestReplicasIngestingTheSameRetriedBatchStoreItOnce(t *testing.T) {
 		}
 	}
 
-	var events, spans, occurrences, incidents, occurrenceCount, deliveries int
+	var events, occurrences, incidents, occurrenceCount, deliveries int
 	for query, target := range map[string]*int{
 		"SELECT count(*) FROM events WHERE project_id = $1":                              &events,
-		"SELECT count(*) FROM spans WHERE project_id = $1":                               &spans,
 		"SELECT count(*) FROM incident_occurrences WHERE project_id = $1":                &occurrences,
 		"SELECT count(*) FROM incidents WHERE project_id = $1":                           &incidents,
 		"SELECT COALESCE(sum(occurrence_count), 0) FROM incidents WHERE project_id = $1": &occurrenceCount,
@@ -109,9 +108,9 @@ func TestReplicasIngestingTheSameRetriedBatchStoreItOnce(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if events != 40 || spans != 40 || occurrences != 40 || incidents != 1 || occurrenceCount != 40 || deliveries != 1 {
-		t.Fatalf("events=%d spans=%d occurrences=%d incidents=%d counted=%d deliveries=%d; three replicas must leave exactly one copy and one notification",
-			events, spans, occurrences, incidents, occurrenceCount, deliveries)
+	if events != 40 || occurrences != 40 || incidents != 1 || occurrenceCount != 40 || deliveries != 1 {
+		t.Fatalf("events=%d occurrences=%d incidents=%d counted=%d deliveries=%d; three replicas must leave exactly one copy and one notification",
+			events, occurrences, incidents, occurrenceCount, deliveries)
 	}
 }
 

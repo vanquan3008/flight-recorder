@@ -1,4 +1,4 @@
-// Package logs coordinates durable log writes with the existing incident workflow.
+// Package logs coordinates telemetry writes with the incident workflow.
 package logs
 
 import (
@@ -10,32 +10,34 @@ import (
 
 type WriteEvents func(context.Context, []telemetry.Event) error
 
-// Persist acknowledges only after every participating store succeeds. A retry
-// may repeat an already committed log write; stores must deduplicate by event ID.
-func Persist(ctx context.Context, events []telemetry.Event, writeLogs, writeOther, writeFailures WriteEvents) error {
-	var logs, other, failures []telemetry.Event
+// Persist writes logs and spans to the telemetry store, then the failures among
+// them to the incident store, and acknowledges only after every write succeeds.
+// A retry may repeat an already committed write; stores deduplicate by event ID.
+func Persist(ctx context.Context, events []telemetry.Event, writeLogs, writeSpans, writeFailures WriteEvents) error {
+	var logs, spans, failures []telemetry.Event
 	for _, event := range events {
-		if event.Signal != telemetry.SignalLog {
-			other = append(other, event)
+		switch event.Signal {
+		case telemetry.SignalLog:
+			logs = append(logs, event)
+		case telemetry.SignalTrace:
+			spans = append(spans, event)
+		default:
 			continue
 		}
-		logs = append(logs, event)
 		if incident.Candidate(event) {
 			failures = append(failures, event)
 		}
 	}
-	if len(logs) > 0 {
-		if err := writeLogs(ctx, logs); err != nil {
+	for _, write := range []struct {
+		events []telemetry.Event
+		store  WriteEvents
+	}{{logs, writeLogs}, {spans, writeSpans}, {failures, writeFailures}} {
+		if len(write.events) == 0 {
+			continue
+		}
+		if err := write.store(ctx, write.events); err != nil {
 			return err
 		}
-	}
-	if len(other) > 0 {
-		if err := writeOther(ctx, other); err != nil {
-			return err
-		}
-	}
-	if len(failures) > 0 {
-		return writeFailures(ctx, failures)
 	}
 	return nil
 }

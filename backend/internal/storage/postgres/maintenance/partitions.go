@@ -20,12 +20,8 @@ import (
 // Partitions are named <table>_pYYYYMMDD (UTC day). Rows whose day has no
 // partition go to <table>_default, so a missing partition never rejects data.
 
-// partitionedTables is every PostgreSQL table partitioned by day. Logs live in ClickHouse.
-var partitionedTables = []string{"events", "spans", "metric_data_points"}
-
-// eventPartitionedTables expire together: a span is only useful next to its
-// event, so both are dropped on the same day boundary.
-var eventPartitionedTables = []string{"events", "spans"}
+// partitionedTables is every PostgreSQL table partitioned by day; telemetry lives in ClickHouse.
+var partitionedTables = []string{"events"}
 
 const (
 	// partitionNameDateLayout is the YYYYMMDD suffix of a partition name.

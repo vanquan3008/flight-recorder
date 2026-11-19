@@ -106,7 +106,7 @@ func runServer(arguments []string) int {
 	scopes := newScopeCatalog(cfg.Ingestion, database)
 
 	ingestionPipeline := buildIngestionPipeline(cfg, eventWriter{store: store}, scopes, selfMetrics)
-	metricsPipeline := buildMetricsPipeline(cfg, database, scopes, selfMetrics)
+	metricsPipeline := buildMetricsPipeline(cfg, store.StoreMetrics, scopes, selfMetrics)
 
 	// ---------------------------------------------------------
 	// 5. Transport servers & Caching
@@ -145,7 +145,7 @@ func runServer(arguments []string) int {
 		{"management-server", true, managementServer.Run},
 		{"otlp-server", true, otlpServer.Run},
 		{"intelligence", false, func(ctx context.Context) error {
-			return intelligence.Run(ctx, logger, buildObservabilityDetectionFunc(scopes, database, selfMetrics), intelligence.DefaultInterval)
+			return intelligence.Run(ctx, logger, buildObservabilityDetectionFunc(scopes, store, selfMetrics), intelligence.DefaultInterval)
 		}},
 		{"partition-maintenance", false, func(ctx context.Context) error {
 			return partition.Run(ctx, logger, database, cfg.Database.PartitionWindowDays, cfg.Database.PartitionCheckInterval)

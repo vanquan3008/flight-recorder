@@ -9,10 +9,8 @@ import (
 	"time"
 
 	"github.com/vanquan3008/tracepilot/internal/config"
-	"github.com/vanquan3008/tracepilot/internal/domain/analysis"
 	notificationdomain "github.com/vanquan3008/tracepilot/internal/domain/notification"
 	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
-	"github.com/vanquan3008/tracepilot/internal/query"
 )
 
 func newFlowTestDatabase(t *testing.T) (*Database, config.IngestionConfig) {
@@ -75,47 +73,6 @@ func TestErrorSpanIngestCommitsIncidentEvidenceAndOutbox(t *testing.T) {
 	}
 	if incidents != 1 || occurrences != 2 || deliveries != 2 || evidence != 2 || !first.Equal(two.Timestamp) || !last.Equal(one.Timestamp) {
 		t.Fatalf("incident=%d occurrence=%d delivery=%d evidence=%d window=%s..%s", incidents, occurrences, deliveries, evidence, first, last)
-	}
-}
-
-func TestTraceFilterAggregatesWholeTraceAndPrefersActualRoot(t *testing.T) {
-	database, scope := newFlowTestDatabase(t)
-	ctx := context.Background()
-	now := time.Now().UTC().Truncate(time.Second)
-	root := flowSpan(scope, "gateway", now, "1111111111111111", "")
-	child := flowSpan(scope, "worker", now.Add(-time.Second), "2222222222222222", root.SpanID)
-	child.Status = "ERROR"
-	if err := database.StoreEvents(ctx, scope, []telemetry.Event{root, child}); err != nil {
-		t.Fatal(err)
-	}
-	traces, err := database.ListTraces(ctx, scope.ProjectID, query.TraceFilter{EnvironmentID: scope.EnvironmentID, Service: "worker", Status: "ERROR", From: child.Timestamp, To: child.Timestamp, Limit: 50})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(traces) != 1 || traces[0].SpanCount != 2 || traces[0].RootService != "gateway" || traces[0].DurationNanos != int64(time.Second+root.Duration) {
-		t.Fatalf("partial/wrong trace: %#v", traces)
-	}
-}
-
-func TestTopologyKeepsIsolatedServicesAndParentOutsideWindow(t *testing.T) {
-	database, scope := newFlowTestDatabase(t)
-	now := time.Now().UTC().Truncate(time.Second)
-	parent := flowSpan(scope, "gateway", now.Add(-time.Minute), "1111111111111111", "")
-	child := flowSpan(scope, "worker", now, "2222222222222222", parent.SpanID)
-	lonely := flowSpan(scope, "standalone", now, "3333333333333333", "")
-	if err := database.StoreEvents(context.Background(), scope, []telemetry.Event{parent, child, lonely}); err != nil {
-		t.Fatal(err)
-	}
-	topology, err := database.ListTopology(context.Background(), scope.ProjectID, analysis.Filter{EnvironmentID: scope.EnvironmentID, From: now, To: now.Add(time.Second)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	found := false
-	for _, node := range topology.Nodes {
-		found = found || node.ID == "service:standalone"
-	}
-	if !found || len(topology.Edges) != 1 || topology.Edges[0].SourceNodeID != "service:gateway" || topology.Edges[0].TargetNodeID != "service:worker" {
-		t.Fatalf("topology=%#v", topology)
 	}
 }
 

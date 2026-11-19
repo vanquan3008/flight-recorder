@@ -17,7 +17,6 @@ import (
 	replaydomain "github.com/vanquan3008/tracepilot/internal/domain/replay"
 	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
 	"github.com/vanquan3008/tracepilot/internal/observability/metrics"
-	"github.com/vanquan3008/tracepilot/internal/query"
 	"github.com/vanquan3008/tracepilot/internal/transport/httpapi"
 )
 
@@ -43,24 +42,9 @@ func TestAuthenticatedQueryIntegration(t *testing.T) {
 	secondEvent := event
 	secondEvent.ID = telemetry.DeterministicID(timestamp.Add(time.Second), "query-integration", projectID)
 	secondEvent.Timestamp = timestamp.Add(time.Second)
-	spanEvent := telemetry.Event{
-		ID: telemetry.DeterministicID(timestamp, "query-integration-span", projectID), ProjectID: ingestion.ProjectID,
-		Environment: ingestion.EnvironmentName, ServiceName: "query-service", Type: telemetry.EventHTTPServer,
-		Timestamp: timestamp, Duration: 500 * time.Millisecond, Operation: "GET /slow", Status: "OK",
-		TraceID: "0123456789abcdef0123456789abcdef", SpanID: "0123456789abcdef", Signal: telemetry.SignalTrace,
-		Attributes: map[string]any{}, ResourceAttributes: map[string]any{}, ScopeAttributes: map[string]any{}, RecordAttributes: map[string]any{},
-	}
 	// Raw logs go to ClickHouse; PostgreSQL keeps only the incident envelope of error logs.
-	if storeError := database.StoreLogIncidents(context.Background(), ingestion, []telemetry.Event{event, secondEvent}); storeError != nil {
+	if storeError := database.StoreEvents(context.Background(), ingestion, []telemetry.Event{event, secondEvent}); storeError != nil {
 		t.Fatal(storeError)
-	}
-	if storeError := database.StoreEvents(context.Background(), ingestion, []telemetry.Event{spanEvent}); storeError != nil {
-		t.Fatal(storeError)
-	}
-	minimumDuration := int64(250 * time.Millisecond)
-	traces, traceError := database.ListTraces(context.Background(), ingestion.ProjectID, query.TraceFilter{EnvironmentID: ingestion.EnvironmentID, MinDurationNs: &minimumDuration, Limit: 10})
-	if traceError != nil || len(traces) != 1 || traces[0].TraceID != spanEvent.TraceID {
-		t.Fatalf("duration trace query = %#v, error = %v", traces, traceError)
 	}
 
 	configuration := config.Config{
@@ -88,13 +72,13 @@ func TestAuthenticatedQueryIntegration(t *testing.T) {
 	}
 	replayService := replay.NewService(database, executor)
 	server := httpapi.New(configuration, slog.New(slog.NewTextHandler(io.Discard, nil)), func(context.Context) error { return nil }, metrics.New("test", "test", "test"), postgresBackend{database}, replayService)
-	// The span is months old; without `from` the list would cover only the last hour.
+	// Trace contents come from ClickHouse, whose integration suite covers them.
 	window := "&from=" + timestamp.Add(-time.Minute).Format(time.RFC3339) + "&to=" + timestamp.Add(time.Minute).Format(time.RFC3339)
 	traceRequest := httptest.NewRequest(http.MethodGet, "/api/v1/traces?minDuration=250ms"+window, nil)
 	integrationAuth(traceRequest, bootstrapKey, ingestion.ProjectID)
 	traceResponse := httptest.NewRecorder()
 	server.ServeHTTP(traceResponse, traceRequest)
-	if traceResponse.Code != http.StatusOK || !strings.Contains(traceResponse.Body.String(), spanEvent.TraceID) {
+	if traceResponse.Code != http.StatusOK || !strings.Contains(traceResponse.Body.String(), `"data":[]`) {
 		t.Fatalf("trace query status = %d, body = %s", traceResponse.Code, traceResponse.Body.String())
 	}
 	secureConfiguration := configuration
