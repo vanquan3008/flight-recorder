@@ -57,6 +57,7 @@ type Server struct {
 	allowedOrigins          map[string]struct{}
 	trustedProxies          []netip.Prefix
 	queryGate               chan struct{}
+	logQueryGate            chan struct{}
 	authGate                chan struct{}
 	tokenInvalidator        TokenInvalidator
 	requestTimeout          time.Duration
@@ -127,6 +128,7 @@ func New(configuration config.Config, logger *slog.Logger, readinessCheck func(c
 	}
 	server.trustedProxies = configuration.HTTP.TrustedProxyPrefixes()
 	server.queryGate = make(chan struct{}, positiveOr(configuration.HTTP.MaxConcurrentQueries, defaultConcurrentQueries))
+	server.logQueryGate = make(chan struct{}, positiveOr(configuration.HTTP.MaxConcurrentLogQueries, defaultConcurrentLogQueries))
 	server.authGate = make(chan struct{}, defaultAuthConcurrentQueries)
 	server.requestTimeout = configuration.HTTP.RequestTimeout
 	if server.requestTimeout <= 0 {

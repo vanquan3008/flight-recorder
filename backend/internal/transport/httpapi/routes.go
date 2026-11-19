@@ -30,6 +30,8 @@ type apiRouteDefinition struct {
 	// public routes need no credentials; they authenticate the request themselves.
 	public    bool
 	streaming bool
+	// logQuery routes read logs from ClickHouse and take slots from their own gate.
+	logQuery bool
 	// OpenAPI metadata: reusable query and header parameter names, the request body type and the success body.
 	query    []string
 	headers  []string
@@ -69,16 +71,27 @@ func (server *Server) registerAPIRoutes(router *http.ServeMux) {
 			router.HandleFunc(route.method+" "+route.path, server.requireScopeStreaming(route.scope, handle))
 			continue
 		}
-		router.HandleFunc(route.method+" "+route.path, server.requireScope(route.scope, handle))
+		gate := queryGate{name: "query", slots: server.queryGate}
+		if route.logQuery {
+			gate = queryGate{name: "logs", slots: server.logQueryGate}
+		}
+		router.HandleFunc(route.method+" "+route.path, server.requireScope(route.scope, gate, handle))
 	}
+}
+
+// queryGate is a bounded pool of slots. Log reads have their own, so they never
+// wait behind slow PostgreSQL queries.
+type queryGate struct {
+	name  string
+	slots chan struct{}
 }
 
 // requireScope authenticates every API request against the scope its route
 // declares, so handlers cannot forget the check or drift from OpenAPI. An
-// authenticated request then takes one of a bounded number of query slots and
-// runs under a deadline, so API load can neither take every database
-// connection from ingestion nor hold one indefinitely.
-func (server *Server) requireScope(scope string, handle apiHandler) http.HandlerFunc {
+// authenticated request then takes one of a bounded number of slots from the
+// route's gate and runs under a deadline, so API load can neither take every
+// database connection from ingestion nor hold one indefinitely.
+func (server *Server) requireScope(scope string, gate queryGate, handle apiHandler) http.HandlerFunc {
 	return func(responseWriter http.ResponseWriter, request *http.Request) {
 		// The deadline starts before authentication: the user and environment
 		// lookups also wait for a pooled connection, and without it a request
@@ -102,7 +115,7 @@ func (server *Server) requireScope(scope string, handle apiHandler) http.Handler
 			}
 			principal.EnvironmentID = environmentID
 		}
-		release, admitted := server.admitQuery(request.Context())
+		release, admitted := server.admitQuery(request.Context(), gate)
 		if !admitted {
 			responseWriter.Header().Set("Retry-After", "1")
 			writeAPIError(responseWriter, http.StatusServiceUnavailable, "OVERLOADED", "too many requests are running; retry shortly")
@@ -163,6 +176,7 @@ func (server *Server) publicRoute(handle apiHandler) http.HandlerFunc {
 
 const (
 	defaultConcurrentQueries     = 4
+	defaultConcurrentLogQueries  = 8
 	defaultAuthConcurrentQueries = 16
 	defaultRequestTimeout        = 20 * time.Second
 	// queryWait is how long a request waits for a free slot before it is refused.
@@ -178,25 +192,25 @@ func positiveOr(value, fallback int) int {
 	return fallback
 }
 
-// admitQuery takes a query slot, waiting briefly for one. The returned func
+// admitQuery takes a slot from gate, waiting briefly for one. The returned func
 // frees the slot.
-func (server *Server) admitQuery(ctx context.Context) (func(), bool) {
+func (server *Server) admitQuery(ctx context.Context, gate queryGate) (func(), bool) {
 	start := time.Now()
 	timer := time.NewTimer(queryWait)
 	defer timer.Stop()
 	select {
-	case server.queryGate <- struct{}{}:
-		server.metrics.ObserveGateWait("query", time.Since(start))
-		server.metrics.IncGateActive("query")
+	case gate.slots <- struct{}{}:
+		server.metrics.ObserveGateWait(gate.name, time.Since(start))
+		server.metrics.IncGateActive(gate.name)
 		return func() {
-			<-server.queryGate
-			server.metrics.DecGateActive("query")
+			<-gate.slots
+			server.metrics.DecGateActive(gate.name)
 		}, true
 	case <-timer.C:
-		server.metrics.ObserveGateWait("query", time.Since(start))
+		server.metrics.ObserveGateWait(gate.name, time.Since(start))
 		return nil, false
 	case <-ctx.Done():
-		server.metrics.ObserveGateWait("query", time.Since(start))
+		server.metrics.ObserveGateWait(gate.name, time.Since(start))
 		return nil, false
 	}
 }

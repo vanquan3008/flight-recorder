@@ -16,9 +16,9 @@ import (
 var traceRoutes = []apiRouteDefinition{
 	{path: "/api/v1/traces", method: http.MethodGet, scope: "read", tags: []string{"traces"}, operationID: "listTraces", query: []string{"Limit", "Cursor", "TraceListFrom", "To", "Service", "Operation", "Status", "TraceID", "MinDuration", "MaxDuration"}, handler: (*Server).listTraces, response: openapi.Page[query.TraceSummary]()},
 	{path: "/api/v1/traces/{traceID}", method: http.MethodGet, scope: "read", tags: []string{"traces"}, operationID: "getTrace", query: []string{"SpanLimit", "Cursor"}, handler: (*Server).getTrace, response: openapi.Object[traceResponse]()},
-	{path: "/api/v1/traces/{traceID}/logs", method: http.MethodGet, scope: "read", tags: []string{"traces", "logs"}, operationID: "listTraceLogs", query: []string{"Limit", "Cursor", "From", "To", "Service", "LogSeverity", "SpanID", "Search"}, handler: (*Server).listTraceLogs, response: openapi.Page[query.LogRecord]()},
-	{path: "/api/v1/logs", method: http.MethodGet, scope: "read", tags: []string{"logs"}, operationID: "listLogs", query: []string{"Limit", "Cursor", "From", "To", "Service", "LogSeverity", "TraceID", "SpanID", "Search"}, handler: (*Server).listLogs, response: openapi.Page[query.LogRecord]()},
-	{path: "/api/v1/logs/{eventID}", method: http.MethodGet, scope: "read", tags: []string{"logs"}, operationID: "getLog", handler: (*Server).getLog, response: openapi.Object[query.LogRecord]()},
+	{path: "/api/v1/traces/{traceID}/logs", method: http.MethodGet, scope: "read", tags: []string{"traces", "logs"}, operationID: "listTraceLogs", query: []string{"Limit", "Cursor", "From", "To", "Service", "LogSeverity", "SpanID", "Search"}, handler: (*Server).listTraceLogs, response: openapi.Page[query.LogRecord](), logQuery: true},
+	{path: "/api/v1/logs", method: http.MethodGet, scope: "read", tags: []string{"logs"}, operationID: "listLogs", query: []string{"Limit", "Cursor", "LogListFrom", "To", "Service", "LogSeverity", "TraceID", "SpanID", "Search"}, handler: (*Server).listLogs, response: openapi.Page[query.LogRecord](), logQuery: true},
+	{path: "/api/v1/logs/{eventID}", method: http.MethodGet, scope: "read", tags: []string{"logs"}, operationID: "getLog", handler: (*Server).getLog, response: openapi.Object[query.LogRecord](), logQuery: true},
 }
 
 func (server *Server) listTraces(responseWriter http.ResponseWriter, request *http.Request, principal auth.Principal) {
@@ -49,6 +49,22 @@ const defaultTraceWindow = time.Hour
 // end: `to` when given, else the page cursor, else now. Later pages therefore
 // keep reading backwards one bounded window at a time.
 func applyDefaultTraceWindow(filter *query.TraceFilter, now time.Time) {
+	if !filter.From.IsZero() || filter.TraceID != "" {
+		return
+	}
+	end := now
+	switch {
+	case !filter.To.IsZero():
+		end = filter.To
+	case !filter.Before.IsZero():
+		end = filter.Before
+	}
+	filter.From = end.Add(-defaultTraceWindow)
+}
+
+// applyDefaultLogWindow bounds a log list like applyDefaultTraceWindow; trace
+// lookups use the trace_id index and stay unbounded.
+func applyDefaultLogWindow(filter *query.LogFilter, now time.Time) {
 	if !filter.From.IsZero() || filter.TraceID != "" {
 		return
 	}
@@ -168,6 +184,7 @@ func (server *Server) getLog(responseWriter http.ResponseWriter, request *http.R
 func (server *Server) writeLogPage(responseWriter http.ResponseWriter, request *http.Request, principal auth.Principal, operation string, filter query.LogFilter, cursor pageCursor) {
 	filter.EnvironmentID = principal.EnvironmentID
 	filter.Before, filter.CursorID = cursor.At, cursor.ID
+	applyDefaultLogWindow(&filter, time.Now())
 	logs, queryError := server.backend.ListLogs(request.Context(), principal.ProjectID, filter)
 	if queryError != nil {
 		server.writeInternalError(responseWriter, operation, queryError)

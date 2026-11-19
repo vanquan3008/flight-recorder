@@ -52,6 +52,9 @@ var parameterComponents = map[string]func() map[string]any{
 	"TraceListFrom": func() map[string]any {
 		return queryParameter("from", "Start of the window. When omitted without traceId, the list covers the hour before to, the page cursor, or now.", dateTimeSchema())
 	},
+	"LogListFrom": func() map[string]any {
+		return queryParameter("from", "Start of the window. When omitted without traceId, the list covers the hour before to, the page cursor, or now.", dateTimeSchema())
+	},
 	"Service":   func() map[string]any { return queryParameter("service", "Service name.", stringSchema()) },
 	"Operation": func() map[string]any { return queryParameter("operation", "Span operation name.", stringSchema()) },
 	"Status":    func() map[string]any { return queryParameter("status", "Status filter.", stringSchema()) },

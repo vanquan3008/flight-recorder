@@ -57,7 +57,7 @@ func New(version, commit, buildTime string) *Registry {
 	ingestedRecords := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "tracepilot",
 		Name:      "ingested_records_total",
-		Help:      "OTLP traces/logs committed to PostgreSQL; metrics accepted into the best-effort queue.",
+		Help:      "OTLP traces/logs committed to storage; metrics accepted into the best-effort queue.",
 	}, []string{"signal"})
 	rejectedRecords := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "tracepilot",
@@ -87,7 +87,7 @@ func New(version, commit, buildTime string) *Registry {
 	batchDuration := prometheus.NewHistogram(prometheus.HistogramOpts{
 		Namespace: "tracepilot",
 		Name:      "event_batch_duration_seconds",
-		Help:      "PostgreSQL event batch commit latency.",
+		Help:      "Event batch commit latency across ClickHouse and PostgreSQL.",
 		Buckets:   prometheus.DefBuckets,
 	})
 	storageErrors := prometheus.NewCounter(prometheus.CounterOpts{
