@@ -113,7 +113,7 @@ export function TracesPage() {
           empty={
             hasActiveFilters ? (
               <div className="flex flex-col items-center justify-center gap-2 py-2">
-                <span>No traces match the active filters.</span>
+                <span>No traces match those filters.</span>
                 <button
                   type="button"
                   onClick={clearFilters}
@@ -124,7 +124,7 @@ export function TracesPage() {
                 </button>
               </div>
             ) : (
-              <>No traces yet in this time window. <Link to="/overview">Review the setup steps.</Link></>
+              <>No traces match those filters. <Link to="/overview">Review the setup steps.</Link></>
             )
           }
           headers={["Started", "Service", "Duration", "Spans", "Errors", "Trace ID", ""]}

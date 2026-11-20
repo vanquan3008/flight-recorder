@@ -120,7 +120,7 @@ it("shows smart empty state with clear filters button when active filters match 
   vi.stubGlobal("fetch", fetchMock);
   render(<App />);
 
-  expect(await screen.findByText("No traces match the active filters.")).toBeTruthy();
+  expect(await screen.findByText("No traces match those filters.")).toBeTruthy();
   const clearButtons = screen.getAllByRole("button", { name: /Clear/i });
   expect(clearButtons.length).toBeGreaterThan(0);
 
