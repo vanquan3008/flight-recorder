@@ -20,6 +20,8 @@ env:
   TRACEPILOT_DATABASE_URL: postgres://tracepilot:tracepilot-test@127.0.0.1:5432/tracepilot?sslmode=disable
   TRACEPILOT_CLICKHOUSE_URL: http://127.0.0.1:8123
   TRACEPILOT_CLICKHOUSE_TEST_URL: http://127.0.0.1:8123
+  TRACEPILOT_SEED_ADMIN_EMAIL: admin@tracepilot.local
+  TRACEPILOT_SEED_ADMIN_PASSWORD: admin-password-123
 
 jobs:
   frontend:
