@@ -33,10 +33,10 @@ func TestPasswordHashVerifiesOnlyTheRightPassword(t *testing.T) {
 
 func TestValidatePassword(t *testing.T) {
 	for password, valid := range map[string]bool{
-		"short":                        false,
-		"aaaaaaaaaaaaaaaa":             false,
-		strings.Repeat("ab", 129):      false,
-		"a-long-enough-passphrase":     true,
+		"short":                    false,
+		"aaaaaaaaaaaaaaaa":         false,
+		strings.Repeat("ab", 129):  false,
+		"a-long-enough-passphrase": true,
 		"mật khẩu dài đủ để hợp lệ":    true,
 		"correct horse battery staple": true,
 	} {

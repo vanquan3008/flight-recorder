@@ -2,9 +2,7 @@ import { IncidentMetrics, StatusBadge } from "./incident-metrics";
 import { ArrowRight, RotateCcw, Search, Server } from "lucide-react";
 import type { FormEvent } from "react";
 import { useSearchParams } from "react-router-dom";
-import { useAuth } from "../../shared/session";
-import { compactSearchParams, pageItems, queryString, usePagedQuery } from "../../shared/api";
-import type { Incident } from "../../shared/types";
+import { compactSearchParams } from "../../shared/api";
 import {
   Badge,
   DetailLink,
@@ -16,29 +14,21 @@ import {
   TimeWindowFilter,
   useTimeWindow,
 } from "../../shared/ui";
+import { useIncidentsQuery } from "./use-incidents-query";
 
 export function OperationsPage() {
-  const { credential } = useAuth();
   const [params, setParams] = useSearchParams();
   const window = useTimeWindow();
 
   const currentService = params.get("service") || "";
   const currentStatus = params.get("status") || "";
 
-  const path = `/api/v1/incidents?${queryString({
-    service: currentService || undefined,
-    status: currentStatus || undefined,
+  const { query, incidents, counts } = useIncidentsQuery({
+    service: currentService,
+    status: currentStatus,
     from: window.from,
     to: window.to,
-  })}`;
-
-  const query = usePagedQuery<Incident>(["incidents"], path, credential);
-  const incidents = pageItems(query.data?.pages);
-
-  const openCount = incidents.filter((i) => i.status.toUpperCase() === "OPEN").length;
-  const investigatingCount = incidents.filter((i) => i.status.toUpperCase() === "INVESTIGATING").length;
-  const resolvedCount = incidents.filter((i) => i.status.toUpperCase() === "RESOLVED").length;
-  const totalOccurrences = incidents.reduce((sum, i) => sum + (i.occurrence_count || 0), 0);
+  });
 
   const setStatusFilter = (nextStatus: string) => {
     const next = new URLSearchParams(params);
@@ -69,11 +59,16 @@ export function OperationsPage() {
           Investigate application failures from their timeline and correlated telemetry.
         </PageHeader>
 
-        <IncidentMetrics currentStatus={currentStatus} openCount={openCount} investigatingCount={investigatingCount} resolvedCount={resolvedCount} totalOccurrences={totalOccurrences} setStatusFilter={setStatusFilter} />
+        <IncidentMetrics
+          currentStatus={currentStatus}
+          openCount={counts.open}
+          investigatingCount={counts.investigating}
+          resolvedCount={counts.resolved}
+          totalOccurrences={counts.totalOccurrences}
+          setStatusFilter={setStatusFilter}
+        />
 
-        {/* Filter and Quick Chips Bar */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-3.5">
-          {/* Quick Status Chips */}
           <div
             className="inline-flex items-center gap-1.5 p-1 rounded-full backdrop-blur-2xl bg-white/70 dark:bg-white/5 border border-white/80 dark:border-white/10 shadow-xs overflow-x-auto"
             role="tablist"
@@ -81,10 +76,10 @@ export function OperationsPage() {
           >
             {[
               { key: "", label: "All", count: incidents.length },
-              { key: "OPEN", label: "Open", count: openCount },
-              { key: "INVESTIGATING", label: "Investigating", count: investigatingCount },
-              { key: "RESOLVED", label: "Resolved", count: resolvedCount },
-              { key: "IGNORED", label: "Ignored", count: incidents.filter((i) => i.status.toUpperCase() === "IGNORED").length },
+              { key: "OPEN", label: "Open", count: counts.open },
+              { key: "INVESTIGATING", label: "Investigating", count: counts.investigating },
+              { key: "RESOLVED", label: "Resolved", count: counts.resolved },
+              { key: "IGNORED", label: "Ignored", count: counts.ignored },
             ].map((chip) => {
               const active = currentStatus === chip.key;
               return (
@@ -115,7 +110,6 @@ export function OperationsPage() {
             })}
           </div>
 
-          {/* Filter Form */}
           <form className="flex items-center gap-2" onSubmit={submit}>
             <div className="relative inline-flex items-center">
               <Search size={14} className="pointer-events-none absolute left-3 text-slate-400" aria-hidden="true" />
@@ -185,19 +179,28 @@ export function OperationsPage() {
       >
         <PagedTable
           query={query}
-          empty="No incidents yet."
+          empty={
+            currentService || currentStatus ? (
+              <div className="flex flex-col items-center justify-center gap-2 py-2">
+                <span>No incidents match the active filters.</span>
+                <button
+                  type="button"
+                  onClick={clearAllFilters}
+                  className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-white/70 dark:bg-white/5 border border-slate-200/80 dark:border-white/10 text-slate-700 dark:text-sky-300 hover:text-sky-600 dark:hover:text-white transition-all cursor-pointer"
+                >
+                  <RotateCcw size={12} aria-hidden="true" />
+                  Clear filters
+                </button>
+              </div>
+            ) : (
+              "No incidents yet."
+            )
+          }
           headers={["Last seen", "Severity", "Status", "Title", "Occurrences", ""]}
           rows={incidents.map((incident) => [
-            /* 1. Last seen: Stacked time cell */
             <TimeCell key={`time-${incident.id}`} value={incident.last_seen_at} />,
-
-            /* 2. Severity */
             <Badge key={`sev-${incident.id}`} value={incident.severity} />,
-
-            /* 3. Status */
             <StatusBadge key={`stat-${incident.id}`} status={incident.status} />,
-
-            /* 4. Service & Title */
             <div key={`title-${incident.id}`} className="flex flex-col gap-1 min-w-0 flex-1 py-0.5">
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-mono font-bold bg-sky-500/10 text-sky-700 dark:text-sky-300 border border-sky-500/20">
@@ -223,8 +226,6 @@ export function OperationsPage() {
                 </p>
               )}
             </div>,
-
-            /* 5. Occurrences count with volume highlight */
             <div
               key={`occ-${incident.id}`}
               className="flex items-center gap-1.5"
@@ -243,8 +244,6 @@ export function OperationsPage() {
               </span>
               <span className="text-[11px] text-slate-500 dark:text-slate-400 hidden md:inline">events</span>
             </div>,
-
-            /* 6. Inspect Action Link */
             <DetailLink
               key={`action-${incident.id}`}
               to={`/incidents/${incident.id}`}

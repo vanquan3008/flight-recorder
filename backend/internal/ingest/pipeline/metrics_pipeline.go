@@ -250,7 +250,6 @@ func (p *MetricsPipeline) flush(ctx context.Context, batches []metricBatch) {
 		totalPoints += len(batch.points)
 	}
 
-	// Tối ưu: Pre-allocate slice để tránh cấp phát lại bộ nhớ trên heap
 	points := make([]telemetry.MetricDataPoint, 0, totalPoints)
 	for _, batch := range batches {
 		points = append(points, batch.points...)

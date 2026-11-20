@@ -1,7 +1,8 @@
 import { secondaryButtonClass, primaryButtonClass } from "../../shared/ui/styles";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import type { Incident, RequestPerformance } from "../../shared/types";
 import { Badge, DetailLink, formatCount, formatDuration, formatPercent } from "../../shared/ui";
+import { contextURL } from "../../shared/ui/navigation";
 import { PerformanceTrend } from "../performance/trend";
 
 export type StatusTone = "danger" | "warning" | "ok" | "idle";
@@ -29,6 +30,7 @@ export function overviewStatus({ openIncidents, failedTraces, performance, incid
 }
 
 export function StatusHero({ status, incidents, performance, pending, filters }: { status: OverviewStatus; incidents: Incident[]; performance?: RequestPerformance; pending: boolean; filters: string }) {
+  const location = useLocation();
   const toneClasses = {
     danger: "border-danger/35 from-danger/15",
     warning: "border-warning/35 from-warning/15",
@@ -52,12 +54,12 @@ export function StatusHero({ status, incidents, performance, pending, filters }:
           <Badge value={incident.severity} /><span className="status-incident-text grid min-w-0 [&>small]:text-[11px] [&>small]:font-medium [&>small]:text-faint"><span className="status-incident-title truncate font-semibold">{incident.title}</span><small>{incident.primary_service}</small></span>
           <DetailLink to={`/incidents/${incident.id}`} className={`status-investigate-pill ${secondaryButtonClass} rounded-full px-2.5 py-0.75 text-[11px] text-accent no-underline`}>Investigate</DetailLink>
         </li>)}
-        {incidents.length > shownIncidents && <li className="status-more block border-0 bg-transparent px-1 py-0 [&_a]:text-[11.5px] [&_a]:font-semibold [&_a]:text-accent [&_a]:no-underline"><Link to={`/incidents?${filters}`}>All {incidents.length} incidents →</Link></li>}
-      </ul> : <Link className={`status-cta ${primaryButtonClass} mt-2 self-start no-underline`} to={`/traces?${filters}`}>Explore traces →</Link>}
+        {incidents.length > shownIncidents && <li className="status-more block border-0 bg-transparent px-1 py-0 [&_a]:text-[11.5px] [&_a]:font-semibold [&_a]:text-accent [&_a]:no-underline"><Link to={contextURL(`/incidents?${filters}`, location.search, true)}>All {incidents.length} incidents →</Link></li>}
+      </ul> : <Link className={`status-cta ${primaryButtonClass} mt-2 self-start no-underline`} to={contextURL(`/traces?${filters}`, location.search, true)}>Explore traces →</Link>}
     </div>
     <div className="status-chart flex min-w-0 flex-col justify-between border-t border-glass-divider bg-surface/22 px-4.5 pt-3.5 pb-2.5 min-[1041px]:border-t-0 min-[1041px]:border-l [&>.performance-trend]:border-0 [&>.performance-trend]:bg-transparent [&>.performance-trend]:p-0 [&_.empty]:py-9">
       {pending ? <p className="empty m-0 p-8 text-center text-sm text-muted">Loading traffic…</p> : performance ? <PerformanceTrend series={performance.series} kind="rate" /> : <p className="empty m-0 p-8 text-center text-sm text-muted">Traffic is unavailable right now.</p>}
-      <Link className="status-chart-link inline-flex items-center gap-1 self-end px-0.5 pt-0.5 pb-1 text-[11.5px] font-semibold text-accent no-underline hover:underline" to={`/performance?${filters}`}>Performance details →</Link>
+      <Link className="status-chart-link inline-flex items-center gap-1 self-end px-0.5 pt-0.5 pb-1 text-[11.5px] font-semibold text-accent no-underline hover:underline" to={contextURL(`/performance?${filters}`, location.search, true)}>Performance details →</Link>
     </div>
   </section>;
 }

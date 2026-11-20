@@ -1,5 +1,6 @@
 import { lazy, Suspense } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
+import { ErrorBoundary } from "../shared/ui";
 import { Welcome } from "./welcome";
 
 const FlowPage = lazy(() => import("../features/flow/page").then((m) => ({ default: m.FlowPage })));
@@ -24,29 +25,33 @@ function RouteLoading() {
 export function AppRoutes({ isAuthenticated }: { isAuthenticated: boolean }) {
   if (!isAuthenticated) {
     return (
-      <Suspense fallback={<RouteLoading />}>
-        <Routes>
-          <Route path="/flow" element={<FlowPage />} />
-          <Route path="*" element={<Welcome />} />
-        </Routes>
-      </Suspense>
+      <ErrorBoundary>
+        <Suspense fallback={<RouteLoading />}>
+          <Routes>
+            <Route path="/flow" element={<FlowPage />} />
+            <Route path="*" element={<Welcome />} />
+          </Routes>
+        </Suspense>
+      </ErrorBoundary>
     );
   }
   return (
-    <Suspense fallback={<RouteLoading />}>
-      <Routes>
-        <Route path="/overview" element={<OverviewPage />} />
-        <Route path="/flow" element={<FlowPage />} />
-        <Route path="/performance" element={<PerformancePage />} />
-        <Route path="/traces" element={<TracesPage />} />
-        <Route path="/traces/:traceID" element={<TraceDetailPage />} />
-        <Route path="/logs" element={<LogsPage />} />
-        <Route path="/settings" element={<SettingsPage />} />
-        <Route path="/topology" element={<TopologyPage />} />
-        <Route path="/incidents" element={<OperationsPage />} />
-        <Route path="/incidents/:incidentID" element={<IncidentPage />} />
-        <Route path="*" element={<Navigate replace to="/overview" />} />
-      </Routes>
-    </Suspense>
+    <ErrorBoundary>
+      <Suspense fallback={<RouteLoading />}>
+        <Routes>
+          <Route path="/overview" element={<OverviewPage />} />
+          <Route path="/flow" element={<FlowPage />} />
+          <Route path="/performance" element={<PerformancePage />} />
+          <Route path="/traces" element={<TracesPage />} />
+          <Route path="/traces/:traceID" element={<TraceDetailPage />} />
+          <Route path="/logs" element={<LogsPage />} />
+          <Route path="/settings" element={<SettingsPage />} />
+          <Route path="/topology" element={<TopologyPage />} />
+          <Route path="/incidents" element={<OperationsPage />} />
+          <Route path="/incidents/:incidentID" element={<IncidentPage />} />
+          <Route path="*" element={<Navigate replace to="/overview" />} />
+        </Routes>
+      </Suspense>
+    </ErrorBoundary>
   );
 }

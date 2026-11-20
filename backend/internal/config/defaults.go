@@ -150,5 +150,6 @@ func defaultConfig() Config {
 		Ingestion:       ingestionDefaults,
 		Replay:          replayDefaults,
 		Notifications:   notificationsDefaults,
+		Seed:            SeedConfig{AdminName: "Admin"},
 	}
 }

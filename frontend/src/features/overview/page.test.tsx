@@ -29,3 +29,41 @@ it("uses one selected window and labels the complete metric count accurately", a
   fireEvent.click(screen.getByLabelText("Last 24 hours"));
   await waitFor(() => expect(window.location.search).toContain("range=24h"));
 });
+
+it("renders overview gracefully even when telemetry quality query fails", async () => {
+  localStorage.setItem("tracepilot-signed-in", "1");
+  window.history.pushState(null, "", "/overview?range=1h");
+  window.location.hash = "";
+
+  const fetchMock = vi.fn().mockImplementation((input: string) => {
+    if (input.startsWith("/api/v1/telemetry/quality")) {
+      return new Response(JSON.stringify({ error: "Telemetry quality disabled" }), { status: 501 });
+    }
+    if (input.startsWith("/api/v1/traces")) {
+      return new Response(JSON.stringify({
+        data: [{
+          trace_id: "0123456789abcdef0123456789abcdef",
+          started_at: "2026-10-01T00:10:00Z",
+          ended_at: "2026-10-01T00:10:01Z",
+          duration_nanos: 1e9,
+          root_service: "checkout",
+          span_count: 3,
+          error_count: 0,
+        }],
+      }), { status: 200 });
+    }
+    if (input.startsWith("/api/v1/performance")) {
+      return new Response(JSON.stringify(emptyPerformance), { status: 200 });
+    }
+    return new Response(JSON.stringify({ data: [] }), { status: 200 });
+  });
+
+  vi.stubGlobal("fetch", fetchMock);
+  render(<App />);
+
+  // Should successfully render traces and not be blocked by quality query failure
+  expect(await screen.findByText("checkout")).toBeTruthy();
+  expect(screen.getByText("Telemetry overview")).toBeTruthy();
+  // Metric points should show fallback "—"
+  expect(await screen.findByText("—")).toBeTruthy();
+});

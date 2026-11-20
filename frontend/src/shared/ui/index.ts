@@ -1,5 +1,5 @@
 export { formatTime, formatTimeIso, formatTimeOnly, formatTimeParts, formatDuration, formatPercent, formatCount, json, logBodyText, type TimeParts } from "./formatters";
-export { PageHeader, Panel, Badge, TimeCell, Empty, Loading, errorGuidance, Notice, ErrorState, CopyButton, ExpandableText, type ErrorGuidance } from "./components";
+export { PageHeader, Panel, Badge, TimeCell, Empty, Loading, errorGuidance, Notice, ErrorState, CopyButton, ExpandableText, ErrorBoundary, type ErrorGuidance, type ErrorBoundaryProps } from "./components";
 export { FormField, FormAlert, type FormFieldProps } from "./form-controls";
 export { PagedTable, PaginationBar, type PagedQuery, type TablePagination } from "./paged-table";
 export { useTimeWindow, TimeWindowFilter } from "./time-window";

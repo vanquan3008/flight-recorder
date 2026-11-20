@@ -1,7 +1,6 @@
 import { secondaryButtonClass } from "./styles";
-import type { ReactNode } from "react";
+import { Component, useState, type ErrorInfo, type ReactNode } from "react";
 import { AlertTriangle, Check, Copy, KeyRound, LoaderCircle, RefreshCw, WifiOff } from "lucide-react";
-import { useState } from "react";
 import { APIError } from "../api";
 import { formatTime, formatTimeIso } from "./formatters";
 
@@ -250,4 +249,41 @@ export function ExpandableText({ value, limit = 360 }: { value: string; limit?: 
       </button>
     </div>
   );
+}
+
+// ── Error Boundary ────────────────────────────────────────────────────────────
+
+export type ErrorBoundaryProps = {
+  children: ReactNode;
+  fallback?: (error: Error, reset: () => void) => ReactNode;
+};
+
+type ErrorBoundaryState = {
+  error: Error | null;
+};
+
+export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  override state: ErrorBoundaryState = { error: null };
+
+  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+    return { error };
+  }
+
+  override componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error("ErrorBoundary caught an unhandled render error:", error, info);
+  }
+
+  reset = () => {
+    this.setState({ error: null });
+  };
+
+  override render() {
+    if (this.state.error) {
+      if (this.props.fallback) {
+        return this.props.fallback(this.state.error, this.reset);
+      }
+      return <ErrorState error={this.state.error} retry={this.reset} fullPage />;
+    }
+    return this.props.children;
+  }
 }
