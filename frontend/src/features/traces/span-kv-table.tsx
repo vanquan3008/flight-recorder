@@ -43,7 +43,7 @@ export function findException(span: Span): ExceptionInfo | null {
   return null;
 }
 
-export function renderVal(val: unknown): ReactNode {
+function renderVal(val: unknown): ReactNode {
   if (val === null || val === undefined) return <span className="text-faint">null</span>;
   if (typeof val === "boolean") return <span className="text-violet-600 dark:text-violet-300">{String(val)}</span>;
   if (typeof val === "number") return <span className="text-sky-700 dark:text-sky-300">{val}</span>;

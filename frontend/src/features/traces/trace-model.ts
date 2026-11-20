@@ -36,7 +36,7 @@ export function timeMs(value: string): number {
   return match ? parsed + Number(`0.${match[2]}`) : parsed;
 }
 
-export function spanDurationMs(span: Span): number {
+function spanDurationMs(span: Span): number {
   if (typeof span.duration_nanos === "number" && Number.isFinite(span.duration_nanos)) return Math.max(span.duration_nanos / 1e6, 0);
   return Math.max(timeMs(span.ended_at) - timeMs(span.started_at), 0);
 }

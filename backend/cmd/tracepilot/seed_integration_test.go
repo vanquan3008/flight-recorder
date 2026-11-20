@@ -54,6 +54,9 @@ func TestSeedCreatesOnlySuperAdminAndPreservesAccountOnRerunIntegration(t *testi
 	t.Setenv("TRACEPILOT_CLICKHOUSE_URL", "http://127.0.0.1:8123")
 	t.Setenv("TRACEPILOT_PRODUCTION", "false")
 	t.Setenv("TRACEPILOT_APP_PRODUCTION", "false")
+	t.Setenv("TRACEPILOT_SEED_ADMIN_EMAIL", "seed-integration@tracepilot.test")
+	t.Setenv("TRACEPILOT_SEED_ADMIN_PASSWORD", "seed-integration-pass-123")
+	t.Setenv("TRACEPILOT_SEED_ADMIN_NAME", "Admin")
 	if code := runSeed(nil); code != 0 {
 		t.Fatalf("seed exit = %d, want 0", code)
 	}
@@ -63,7 +66,7 @@ func TestSeedCreatesOnlySuperAdminAndPreservesAccountOnRerunIntegration(t *testi
 		Scan(&userID, &email, &passwordHash, &platformAdmin); err != nil {
 		t.Fatal(err)
 	}
-	if email != adminEmail || !platformAdmin || !auth.VerifyPassword("admin-password-123", passwordHash) {
+	if email != "seed-integration@tracepilot.test" || !platformAdmin || !auth.VerifyPassword("seed-integration-pass-123", passwordHash) {
 		t.Fatal("seed did not create the documented super admin credentials")
 	}
 	if _, err := connection.Exec(ctx, "UPDATE users SET display_name = 'Existing admin' WHERE id = $1", userID); err != nil {

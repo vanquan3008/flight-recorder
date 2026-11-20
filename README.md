@@ -49,6 +49,7 @@ Set the following values in `backend/.env`. Variables already set in the shell t
 | `TRACEPILOT_CLICKHOUSE_URL` | ClickHouse HTTP endpoint, for example `http://localhost:8123`. |
 | `TRACEPILOT_CLICKHOUSE_DATABASE`, `TRACEPILOT_CLICKHOUSE_USERNAME`, `TRACEPILOT_CLICKHOUSE_PASSWORD` | Your ClickHouse database and credentials. |
 | `TRACEPILOT_AUTH_JWT_SECRET` | A persistent random secret of at least 32 characters. Use `openssl rand -hex 32` if OpenSSL is installed, or the PowerShell example below. |
+| `TRACEPILOT_SEED_ADMIN_EMAIL`, `TRACEPILOT_SEED_ADMIN_PASSWORD` | (Optional) Development administrator credentials for `tracepilot seed`. Defaults to `admin@tracepilot.local` and `admin-password-123`. |
 
 <details>
 <summary>Generate a secret with PowerShell</summary>
@@ -79,17 +80,22 @@ go -C backend run ./cmd/tracepilot serve
 In a second terminal, from the repository root:
 
 ```powershell
+if (-not (Test-Path frontend/.env)) {
+    Copy-Item frontend/.env.example frontend/.env
+}
 npm --prefix frontend ci
 if ($LASTEXITCODE -ne 0) { throw 'Frontend dependency installation failed.' }
 npm --prefix frontend run dev
 ```
 
-Open [localhost:5173](http://localhost:5173) and register an account. Local configuration enables registration by default. Vite proxies `/api` and `/health` to the backend on port `8080`.
+Open [localhost:5173](http://localhost:5173) and register an account, or sign in with the seeded administrator. Local configuration enables registration by default. Vite proxies `/api` and `/health` to the backend on port `8080`.
 
 <details>
 <summary>Optional development administrator</summary>
 
-Run `go -C backend run ./cmd/tracepilot seed` after migration. Sign in as `admin@tracepilot.local` with `admin-password-123`. The command creates only this administrator and preserves existing accounts on rerun. Create your project and environment from the console. Seeding is disabled in production.
+Run `go -C backend run ./cmd/tracepilot seed` after migration to seed the administrator account configured in `TRACEPILOT_SEED_ADMIN_EMAIL` and `TRACEPILOT_SEED_ADMIN_PASSWORD` (defaults to `admin@tracepilot.local` in `backend/.env.example`). The command creates only this administrator and preserves existing accounts on rerun. Create your project and environment from the console. Seeding is strictly disabled in production.
+
+Copying `frontend/.env.example` to `frontend/.env` enables the **Fill Dev Admin credentials** button on the local sign-in page, allowing instant one-click login in development.
 
 </details>
 
@@ -110,6 +116,7 @@ go -C backend run ./cmd/tracepilot migrate all &&
 In a second terminal:
 
 ```bash
+test -e frontend/.env || cp frontend/.env.example frontend/.env
 npm --prefix frontend ci && npm --prefix frontend run dev
 ```
 
@@ -139,7 +146,7 @@ With the backend running and the optional development administrator seeded, run 
 go -C backend run ./cmd/loadgen -spans-per-second 16 -spans-per-request 8 -warmup 0s -duration 5s
 ```
 
-The command creates a project named `Load <timestamp>` and an environment named `load`. Select them in the console and open **Traces**.
+The command creates a project named `Load <timestamp>` and an environment named `load`. Select them in the console and open **Traces**. Operator credentials automatically resolve from `TRACEPILOT_SEED_ADMIN_EMAIL` and `TRACEPILOT_SEED_ADMIN_PASSWORD` (or via `-email` and `-password`).
 
 </details>
 

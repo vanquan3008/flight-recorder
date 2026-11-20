@@ -64,8 +64,8 @@ func parseOptions(arguments []string) (options, error) {
 	flags := flag.NewFlagSet("loadgen", flag.ContinueOnError)
 	flags.StringVar(&settings.apiURL, "api-url", "http://127.0.0.1:8080", "management API base URL")
 	flags.StringVar(&settings.ingestURL, "ingest-url", "http://127.0.0.1:4318", "OTLP HTTP base URL")
-	flags.StringVar(&settings.email, "email", envOr("TRACEPILOT_LOAD_EMAIL", "admin@tracepilot.local"), "account that may create projects")
-	flags.StringVar(&settings.password, "password", envOr("TRACEPILOT_LOAD_PASSWORD", "admin-password-123"), "password for -email")
+	flags.StringVar(&settings.email, "email", envOr("TRACEPILOT_LOAD_EMAIL", os.Getenv("TRACEPILOT_SEED_ADMIN_EMAIL")), "account that may create projects")
+	flags.StringVar(&settings.password, "password", envOr("TRACEPILOT_LOAD_PASSWORD", os.Getenv("TRACEPILOT_SEED_ADMIN_PASSWORD")), "password for -email")
 	flags.StringVar(&settings.metricsToken, "metrics-token", os.Getenv("TRACEPILOT_HTTP_METRICS_TOKEN"), "scrape token when /metrics requires authentication")
 	flags.IntVar(&settings.spansPerSecond, "spans-per-second", 0, "span ingest rate; 0 disables traces")
 	flags.IntVar(&settings.spansPerRequest, "spans-per-request", 64, "spans in each OTLP trace export")
@@ -83,6 +83,8 @@ func parseOptions(arguments []string) (options, error) {
 		return settings, err
 	}
 	switch {
+	case settings.email == "" || settings.password == "":
+		return settings, fmt.Errorf("email and password required: set -email and -password or TRACEPILOT_LOAD_EMAIL / TRACEPILOT_LOAD_PASSWORD")
 	case settings.spansPerSecond <= 0 && settings.logsPerSecond <= 0 && settings.readsPerSecond <= 0:
 		return settings, fmt.Errorf("set at least one of -spans-per-second, -logs-per-second or -reads-per-second")
 	case settings.spansPerRequest <= 0 || settings.logsPerRequest <= 0 || settings.maxInFlight <= 0:

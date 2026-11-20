@@ -79,11 +79,21 @@ tracepilot_ingestion_retries_total 1
 }
 
 func TestParseOptionsRequiresAWorkload(t *testing.T) {
-	if _, err := parseOptions(nil); err == nil {
+	if _, err := parseOptions([]string{"-email", "load@test.local", "-password", "pass-123"}); err == nil {
 		t.Fatal("a run without any rate was accepted")
 	}
-	settings, err := parseOptions([]string{"-spans-per-second", "100", "-run", "fixed"})
+	settings, err := parseOptions([]string{"-email", "load@test.local", "-password", "pass-123", "-spans-per-second", "100", "-run", "fixed"})
 	if err != nil || settings.spansPerSecond != 100 || settings.runLabel != "fixed" {
 		t.Fatalf("settings = %+v, err = %v", settings, err)
+	}
+}
+
+func TestParseOptionsRequiresCredentials(t *testing.T) {
+	t.Setenv("TRACEPILOT_LOAD_EMAIL", "")
+	t.Setenv("TRACEPILOT_LOAD_PASSWORD", "")
+	t.Setenv("TRACEPILOT_SEED_ADMIN_EMAIL", "")
+	t.Setenv("TRACEPILOT_SEED_ADMIN_PASSWORD", "")
+	if _, err := parseOptions([]string{"-spans-per-second", "100"}); err == nil {
+		t.Fatal("expected error when credentials are not provided")
 	}
 }

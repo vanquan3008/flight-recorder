@@ -110,3 +110,24 @@ it("supports selecting page size and re-fetches with new limit", async () => {
     expect(lastCall).toContain("limit=25");
   });
 });
+
+it("shows smart empty state with clear filters button when active filters match nothing", async () => {
+  localStorage.setItem("tracepilot-signed-in", "1");
+  window.history.pushState(null, "", "/traces?service=unknown-service&status=ERROR");
+  window.location.hash = "";
+
+  const fetchMock = vi.fn().mockImplementation(() => respond({ data: [] }));
+  vi.stubGlobal("fetch", fetchMock);
+  render(<App />);
+
+  expect(await screen.findByText("No traces match those filters.")).toBeTruthy();
+  const clearButtons = screen.getAllByRole("button", { name: /Clear/i });
+  expect(clearButtons.length).toBeGreaterThan(0);
+
+  // Click clear filters button
+  fireEvent.click(clearButtons[0]);
+  await waitFor(() => {
+    expect(window.location.search).not.toContain("service=unknown-service");
+    expect(window.location.search).not.toContain("status=ERROR");
+  });
+});

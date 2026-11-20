@@ -32,16 +32,19 @@ func TestPasswordHashVerifiesOnlyTheRightPassword(t *testing.T) {
 }
 
 func TestValidatePassword(t *testing.T) {
-	for password, valid := range map[string]bool{
-		"short":                        false,
-		"aaaaaaaaaaaaaaaa":             false,
-		strings.Repeat("ab", 129):      false,
-		"a-long-enough-passphrase":     true,
-		"mật khẩu dài đủ để hợp lệ":    true,
-		"correct horse battery staple": true,
+	for _, tc := range []struct {
+		password string
+		valid    bool
+	}{
+		{password: "short", valid: false},
+		{password: "aaaaaaaaaaaaaaaa", valid: false},
+		{password: strings.Repeat("ab", 129), valid: false},
+		{password: "a-long-enough-passphrase", valid: true},
+		{password: "mật khẩu dài đủ để hợp lệ", valid: true},
+		{password: "correct horse battery staple", valid: true},
 	} {
-		if err := ValidatePassword(password); (err == nil) != valid {
-			t.Errorf("ValidatePassword(%q) = %v, want valid=%t", password, err, valid)
+		if err := ValidatePassword(tc.password); (err == nil) != tc.valid {
+			t.Errorf("ValidatePassword(%q) = %v, want valid=%t", tc.password, err, tc.valid)
 		}
 	}
 }

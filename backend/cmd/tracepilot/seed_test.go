@@ -7,19 +7,48 @@ import (
 	"testing"
 
 	"github.com/vanquan3008/tracepilot/internal/auth"
+	"github.com/vanquan3008/tracepilot/internal/config"
 )
 
-func TestSeedAdminParamsDescribeOnlyTheDocumentedSuperAdmin(t *testing.T) {
-	params, err := auth.NormalizeCreateUserParams(seedAdminParams())
+func TestSeedAdminParamsUsesConfiguredSeedData(t *testing.T) {
+	cfg := config.SeedConfig{
+		AdminEmail:    "admin@tracepilot.test",
+		AdminPassword: "admin-password-test-123",
+		AdminName:     "Test Admin",
+	}
+	raw, err := seedAdminParams(cfg)
+	if err != nil {
+		t.Fatalf("seedAdminParams failed: %v", err)
+	}
+	params, err := auth.NormalizeCreateUserParams(raw)
 	if err != nil {
 		t.Fatalf("seed account fails account validation: %v", err)
 	}
-	if params.Email != adminEmail || params.Password != "admin-password-123" || !params.PlatformAdmin || params.MustChangePassword {
-		t.Fatalf("seed account = %+v, want the documented super admin", params)
+	if params.Email != cfg.AdminEmail || params.Password != cfg.AdminPassword || params.DisplayName != cfg.AdminName || !params.PlatformAdmin || params.MustChangePassword {
+		t.Fatalf("seed account = %+v, want configured super admin", params)
+	}
+}
+
+func TestSeedAdminParamsRequiresEmailAndPassword(t *testing.T) {
+	if _, err := seedAdminParams(config.SeedConfig{AdminPassword: "password-123"}); err == nil {
+		t.Fatal("expected error when email is missing")
+	}
+	if _, err := seedAdminParams(config.SeedConfig{AdminEmail: "admin@test.local"}); err == nil {
+		t.Fatal("expected error when password is missing")
 	}
 }
 
 func TestSeedAdminKeepsAnExistingAccount(t *testing.T) {
+	cfg := config.SeedConfig{
+		AdminEmail:    "admin@tracepilot.test",
+		AdminPassword: "admin-password-test-123",
+		AdminName:     "Admin",
+	}
+	expectedParams, err := seedAdminParams(cfg)
+	if err != nil {
+		t.Fatalf("seedAdminParams failed: %v", err)
+	}
+
 	unavailable := errors.New("database unavailable")
 	for name, test := range map[string]struct {
 		result      error
@@ -33,9 +62,9 @@ func TestSeedAdminKeepsAnExistingAccount(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			var calls int
-			created, err := seedAdmin(context.Background(), func(_ context.Context, params auth.CreateUserParams, actor auth.Actor) (auth.User, error) {
+			created, err := seedAdmin(context.Background(), cfg, func(_ context.Context, params auth.CreateUserParams, actor auth.Actor) (auth.User, error) {
 				calls++
-				if params != seedAdminParams() || actor != (auth.Actor{}) {
+				if params != expectedParams || actor != (auth.Actor{}) {
 					t.Fatalf("seed created %+v as %+v", params, actor)
 				}
 				return auth.User{}, test.result

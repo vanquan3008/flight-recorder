@@ -191,7 +191,7 @@ grace period of at least 35 seconds. Exporters retry unacknowledged data.
   transaction. It reads a single password line from stdin and excludes it from arguments and logs. An
   existing email causes the command to fail and leaves that account intact.
 - **Registration.** The development command `tracepilot seed` creates only the super admin account
-  `admin@tracepilot.local` with password `admin-password-123`. It uses the same account creation path
+  configured in `TRACEPILOT_SEED_ADMIN_EMAIL` and `TRACEPILOT_SEED_ADMIN_PASSWORD`. It uses the same account creation path
   as `create-admin`, so it requires a migrated schema and records an audit entry. Reruns leave an
   existing account with that email unchanged. Create the project and environment in the console after signing in. When
   `ALLOW_REGISTRATION=true`, the form and API create regular accounts. A super admin can grant

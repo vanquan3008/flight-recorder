@@ -66,7 +66,6 @@ func buildReplaySubsystem(ctx context.Context, cfg config.Config, database *post
 		return nil, fmt.Errorf("init replay executor: %w", err)
 	}
 
-	// Sử dụng defer để đảm bảo cancelCleanup luôn được gọi, tránh rò rỉ context resource
 	cleanupCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 

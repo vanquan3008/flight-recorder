@@ -71,9 +71,15 @@ export function Welcome() {
     }
   };
 
+  const devAdminEmail = import.meta.env.VITE_DEV_ADMIN_EMAIL || "";
+  const devAdminPassword = import.meta.env.VITE_DEV_ADMIN_PASSWORD || "";
+  const devLoginEnabled = !import.meta.env.PROD && Boolean(devAdminEmail && devAdminPassword);
+
   const fillDevCredentials = () => {
-    setEmail("admin@tracepilot.local");
-    setPassword("admin-password-123");
+    if (devAdminEmail && devAdminPassword) {
+      setEmail(devAdminEmail);
+      setPassword(devAdminPassword);
+    }
   };
 
   const subtitle = registering
@@ -82,41 +88,17 @@ export function Welcome() {
 
   return (
     <section className="relative flex min-h-full flex-1 w-full items-center justify-center overflow-y-auto p-4 sm:p-6 lg:p-8">
-      {/* Subtle Dot-Matrix Ambient Grid Background */}
-      <div
-        className="pointer-events-none absolute inset-0 -z-20 bg-[radial-gradient(color-mix(in_srgb,var(--text)_12%,transparent)_1px,transparent_1px)] [background-size:20px_20px] [mask-image:radial-gradient(ellipse_60%_50%_at_50%_45%,#000_70%,transparent_100%)] opacity-40"
-        aria-hidden="true"
-      />
-
-      {/* Atmospheric Luminous Mesh Glows */}
-      <div
-        className="pointer-events-none absolute -top-32 left-1/2 -z-10 h-80 w-96 -translate-x-1/2 rounded-full bg-linear-to-tr from-indigo-500/25 via-sky-400/20 to-purple-500/25 blur-3xl"
-        aria-hidden="true"
-      />
-      <div
-        className="pointer-events-none absolute -bottom-20 right-1/4 -z-10 h-64 w-64 rounded-full bg-linear-to-bl from-indigo-600/15 to-transparent blur-3xl"
-        aria-hidden="true"
-      />
+      <div className="pointer-events-none absolute inset-0 -z-20 bg-[radial-gradient(color-mix(in_srgb,var(--text)_12%,transparent)_1px,transparent_1px)] [background-size:20px_20px] [mask-image:radial-gradient(ellipse_60%_50%_at_50%_45%,#000_70%,transparent_100%)] opacity-40" aria-hidden="true" />
+      <div className="pointer-events-none absolute -top-32 left-1/2 -z-10 h-80 w-96 -translate-x-1/2 rounded-full bg-linear-to-tr from-indigo-500/25 via-sky-400/20 to-purple-500/25 blur-3xl" aria-hidden="true" />
+      <div className="pointer-events-none absolute -bottom-20 right-1/4 -z-10 h-64 w-64 rounded-full bg-linear-to-bl from-indigo-600/15 to-transparent blur-3xl" aria-hidden="true" />
 
       <WelcomeSignal />
-      {/* Modern Bento Glassmorphic Container */}
       <div className="relative m-auto w-full max-w-[430px] rounded-3xl border border-glass-edge bg-glass-strong p-7 text-center backdrop-blur-2xl shadow-glass transition-all duration-300 motion-safe:animate-appear sm:p-8">
-        {/* Subtle Top Glass Reflection Highlight */}
-        <div
-          className="pointer-events-none absolute inset-x-8 top-0 h-px bg-linear-to-r from-transparent via-white/30 dark:via-white/20 to-transparent"
-          aria-hidden="true"
-        />
+        <div className="pointer-events-none absolute inset-x-8 top-0 h-px bg-linear-to-r from-transparent via-white/30 dark:via-white/20 to-transparent" aria-hidden="true" />
 
-        {/* Brand Icon with multi-layer glowing depth */}
         <div className="relative mx-auto mb-4 flex size-14 items-center justify-center motion-safe:animate-telemetry-drift">
-          <div
-            className="absolute inset-0 rounded-2xl bg-indigo-500/35 blur-md"
-            aria-hidden="true"
-          />
-          <div
-            className="relative flex size-14 items-center justify-center rounded-2xl bg-linear-to-b from-indigo-500 via-indigo-600 to-blue-700 text-white shadow-xl shadow-indigo-600/30 ring-1 ring-white/30"
-            aria-hidden="true"
-          >
+          <div className="absolute inset-0 rounded-2xl bg-indigo-500/35 blur-md" aria-hidden="true" />
+          <div className="relative flex size-14 items-center justify-center rounded-2xl bg-linear-to-b from-indigo-500 via-indigo-600 to-blue-700 text-white shadow-xl shadow-indigo-600/30 ring-1 ring-white/30" aria-hidden="true">
             <Gauge className="size-7 drop-shadow-sm" strokeWidth={2.2} />
           </div>
         </div>
@@ -249,7 +231,7 @@ export function Welcome() {
         </form>
 
         {/* Quick Dev Login Helper */}
-        {!registering && (
+        {!registering && devLoginEnabled && (
           <div className="mt-5 border-t border-line-soft pt-4">
             <div className="flex flex-col items-center gap-2">
               <div className="flex items-center gap-1.5 text-[11px] font-medium text-faint">
@@ -262,7 +244,7 @@ export function Welcome() {
                 className="group inline-flex items-center gap-2 rounded-xl border border-glass-field-edge bg-glass-field px-3 py-1.5 text-xs text-muted transition-all duration-150 hover:border-accent/40 hover:bg-glass-field-focus hover:text-text active:scale-[0.98]"
                 title="Autofill default admin credentials"
               >
-                <span className="font-mono text-[11.5px] text-accent">admin@tracepilot.local</span>
+                <span className="font-mono text-[11.5px] text-accent">{devAdminEmail}</span>
                 <span className="rounded-md bg-accent/15 px-1.5 py-0.5 text-[10px] font-semibold tracking-wider text-accent uppercase transition-colors group-hover:bg-accent/25">
                   Autofill
                 </span>

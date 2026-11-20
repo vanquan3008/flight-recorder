@@ -24,6 +24,7 @@ type Config struct {
 	Retention       RetentionConfig     `config:"retention"`
 	Ingestion       IngestionConfig     `config:"ingestion"`
 	LogLevel        slog.Level          `config:"log_level"`
+	Seed            SeedConfig          `config:"seed"`
 }
 
 // Load initializes configuration using the following precedence:

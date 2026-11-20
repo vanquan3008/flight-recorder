@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { App } from "../app/app";
 
 const traceID = "0123456789abcdef0123456789abcdef";
@@ -28,7 +28,7 @@ it("returns from a trace to the filtered, time-bounded trace list", async () => 
   expect(await screen.findByRole("heading", { name: "Trace detail" })).toBeTruthy();
   fireEvent.click(screen.getByRole("link", { name: /Back to traces/ }));
   expect(await screen.findByLabelText("Filter by service")).toBeTruthy();
-  expect(window.location.search).toContain("service=checkout");
+  await waitFor(() => expect(window.location.search).toContain("service=checkout"));
   expect(window.location.search).toContain("status=ERROR");
   expect(window.location.search).toContain("from=2026-10-01T00");
   expect((screen.getByLabelText("Filter by service") as HTMLInputElement).value).toBe("checkout");
@@ -48,7 +48,7 @@ it("returns from an incident to the filtered incident list and labels a direct v
   fireEvent.click(await screen.findByRole("link", { name: "Inspect" }));
   fireEvent.click(await screen.findByRole("link", { name: /Back to incidents/ }));
   expect(await screen.findByLabelText("Filter by service")).toBeTruthy();
-  expect(window.location.search).toContain("status=OPEN");
+  await waitFor(() => expect(window.location.search).toContain("status=OPEN"));
   expect(window.location.search).toContain("service=checkout");
 });
 

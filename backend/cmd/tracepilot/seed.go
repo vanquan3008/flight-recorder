@@ -10,20 +10,35 @@ import (
 	"github.com/vanquan3008/tracepilot/internal/config"
 )
 
-const (
-	seedTimeout   = 20 * time.Second
-	adminEmail    = "admin@tracepilot.local"
-	adminPassword = "admin-password-123"
-)
+const seedTimeout = 20 * time.Second
 
-func seedAdminParams() auth.CreateUserParams {
-	return auth.CreateUserParams{Email: adminEmail, DisplayName: "Admin", Password: adminPassword, PlatformAdmin: true}
+func seedAdminParams(cfg config.SeedConfig) (auth.CreateUserParams, error) {
+	if cfg.AdminEmail == "" {
+		return auth.CreateUserParams{}, errors.New("seed admin email is required; set TRACEPILOT_SEED_ADMIN_EMAIL")
+	}
+	if cfg.AdminPassword == "" {
+		return auth.CreateUserParams{}, errors.New("seed admin password is required; set TRACEPILOT_SEED_ADMIN_PASSWORD")
+	}
+	name := cfg.AdminName
+	if name == "" {
+		name = "Admin"
+	}
+	return auth.CreateUserParams{
+		Email:         cfg.AdminEmail,
+		DisplayName:   name,
+		Password:      cfg.AdminPassword,
+		PlatformAdmin: true,
+	}, nil
 }
 
 type userCreator func(context.Context, auth.CreateUserParams, auth.Actor) (auth.User, error)
 
-func seedAdmin(ctx context.Context, create userCreator) (created bool, err error) {
-	if _, err := create(ctx, seedAdminParams(), auth.Actor{}); err != nil {
+func seedAdmin(ctx context.Context, cfg config.SeedConfig, create userCreator) (created bool, err error) {
+	params, err := seedAdminParams(cfg)
+	if err != nil {
+		return false, err
+	}
+	if _, err := create(ctx, params, auth.Actor{}); err != nil {
 		if errors.Is(err, auth.ErrEmailExists) {
 			return false, nil
 		}
@@ -58,15 +73,15 @@ func runSeed(args []string) int {
 	}
 	defer database.Close()
 
-	created, err := seedAdmin(ctx, database.CreateUser)
+	created, err := seedAdmin(ctx, cfg.Seed, database.CreateUser)
 	if err != nil {
 		logger.Error("seed execution failed", "error", err)
 		return 1
 	}
 	if !created {
-		logger.Info("development super admin account already exists", "email", adminEmail)
+		logger.Info("development super admin account already exists", "email", cfg.Seed.AdminEmail)
 		return 0
 	}
-	logger.Info("development super admin account seeded", "email", adminEmail)
+	logger.Info("development super admin account seeded", "email", cfg.Seed.AdminEmail)
 	return 0
 }
