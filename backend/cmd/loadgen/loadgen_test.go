@@ -89,6 +89,10 @@ func TestParseOptionsRequiresAWorkload(t *testing.T) {
 }
 
 func TestParseOptionsRequiresCredentials(t *testing.T) {
+	t.Setenv("TRACEPILOT_LOAD_EMAIL", "")
+	t.Setenv("TRACEPILOT_LOAD_PASSWORD", "")
+	t.Setenv("TRACEPILOT_SEED_ADMIN_EMAIL", "")
+	t.Setenv("TRACEPILOT_SEED_ADMIN_PASSWORD", "")
 	if _, err := parseOptions([]string{"-spans-per-second", "100"}); err == nil {
 		t.Fatal("expected error when credentials are not provided")
 	}
