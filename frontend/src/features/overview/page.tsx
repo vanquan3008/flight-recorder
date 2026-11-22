@@ -99,6 +99,7 @@ export function OverviewPage() {
         <Onboarding
           credential={credential}
           projectID={session?.project?.project.id ?? ""}
+          environment={session?.environment ?? ""}
           canCreate={session?.role === "owner"}
           hasTrace={hasTrace}
         />

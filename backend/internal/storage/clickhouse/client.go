@@ -49,6 +49,26 @@ func parameter(value string) string {
 }
 
 func (store *Store) execute(ctx context.Context, sql string, parameters map[string]string, payload []byte, insert bool) ([]byte, error) {
+	response, err := store.openResponse(ctx, sql, parameters, payload, insert)
+	if err != nil {
+		return nil, err
+	}
+	defer response.Close()
+	data, err := io.ReadAll(io.LimitReader(response, maxResponseBytes+1))
+	if err != nil {
+		return nil, responseError(ctx, err, "read ClickHouse response")
+	}
+	if len(data) > maxResponseBytes {
+		return nil, errors.New("ClickHouse result exceeds 32 MiB; narrow the log query")
+	}
+	if insert && len(bytes.TrimSpace(data)) != 0 {
+		return nil, errors.New("ClickHouse did not confirm the insert")
+	}
+	return data, nil
+}
+
+// openResponse returns a successful response body. The caller must close it.
+func (store *Store) openResponse(ctx context.Context, sql string, parameters map[string]string, payload []byte, insert bool) (io.ReadCloser, error) {
 	endpoint := *store.endpoint
 	values := url.Values{"query": {sql}, "database": {store.cfg.Database},
 		"date_time_input_format": {"best_effort"}, "date_time_output_format": {"iso"},
@@ -91,34 +111,22 @@ func (store *Store) execute(ctx context.Context, sql string, parameters map[stri
 	}
 	response, err := store.client.Do(request)
 	if err != nil {
-		// Keep endpoint, credentials, filters and telemetry out of error logs.
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-		if errors.Is(err, context.DeadlineExceeded) {
-			return nil, context.DeadlineExceeded
-		}
-		return nil, errors.New("ClickHouse request failed")
-	}
-	defer response.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(response.Body, maxResponseBytes+1))
-	if err != nil {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-		if errors.Is(err, context.DeadlineExceeded) {
-			return nil, context.DeadlineExceeded
-		}
-		return nil, errors.New("read ClickHouse response")
-	}
-	if len(data) > maxResponseBytes {
-		return nil, errors.New("ClickHouse result exceeds 32 MiB; narrow the log query")
+		return nil, responseError(ctx, err, "ClickHouse request failed")
 	}
 	if response.StatusCode != http.StatusOK || response.Header.Get("X-ClickHouse-Exception-Code") != "" {
+		response.Body.Close()
 		return nil, fmt.Errorf("ClickHouse query failed (HTTP %d)", response.StatusCode)
 	}
-	if insert && len(bytes.TrimSpace(data)) != 0 {
-		return nil, errors.New("ClickHouse did not confirm the insert")
+	return response.Body, nil
+}
+
+func responseError(ctx context.Context, err error, message string) error {
+	// Keep endpoint, credentials, filters and telemetry out of error logs.
+	if ctx.Err() != nil {
+		return ctx.Err()
 	}
-	return data, nil
+	if errors.Is(err, context.DeadlineExceeded) {
+		return context.DeadlineExceeded
+	}
+	return errors.New(message)
 }

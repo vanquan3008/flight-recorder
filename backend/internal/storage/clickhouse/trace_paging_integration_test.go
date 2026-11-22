@@ -14,6 +14,31 @@ import (
 
 const pagingTraceID = "22222222222222222222222222222222"
 
+func TestAnalyticsParentLookbackRespectsRetentionIntegration(t *testing.T) {
+	store, ctx := integrationStore(t), context.Background()
+	cutoff := time.Now().UTC().Truncate(time.Second).Add(-time.Minute)
+	expiredParent := flowSpan("private-api", cutoff.Add(-time.Second), "0000000000000001", "")
+	retainedParent := flowSpan("api", cutoff, "0000000000000002", "")
+	childOfExpired := flowSpan("queue", cutoff.Add(time.Second), "0000000000000003", expiredParent.SpanID)
+	childOfRetained := flowSpan("worker", cutoff.Add(time.Second), "0000000000000004", retainedParent.SpanID)
+	storeSpans(t, store, expiredParent, retainedParent, childOfExpired, childOfRetained)
+
+	filter := analysis.Filter{EnvironmentID: testEnvironment, From: cutoff.Add(time.Second), To: cutoff.Add(time.Minute), Since: cutoff}
+	topology, err := store.ListTopology(ctx, testProject, filter)
+	if err != nil || len(topology.Edges) != 1 || topology.Edges[0].SourceNodeID != "service:api" {
+		t.Fatalf("topology should join only the retained parent before the window: %+v, %v", topology, err)
+	}
+	if spans, orphans, _, err := store.SignalQuality(ctx, testProject, filter); err != nil || spans != 2 || orphans != 1 {
+		t.Fatalf("span quality returned %d spans and %d orphans, want 2 and 1: %v", spans, orphans, err)
+	}
+	if deps, err := store.ListServiceDependencies(ctx, testProject, testEnvironment, expiredParent.ServiceName, cutoff); err != nil || len(deps) != 0 {
+		t.Fatalf("dependencies used an expired parent: %+v, %v", deps, err)
+	}
+	if deps, err := store.ListServiceDependencies(ctx, testProject, testEnvironment, retainedParent.ServiceName, cutoff); err != nil || len(deps) != 1 || deps[0].ServiceName != "worker" {
+		t.Fatalf("dependencies missed the retained parent: %+v, %v", deps, err)
+	}
+}
+
 func flowSpan(service string, at time.Time, spanID, parent string) telemetry.Event {
 	return telemetry.Event{ID: telemetry.DeterministicID(at, "flow-span", spanID), ProjectID: testProject, EnvironmentID: testEnvironment,
 		ServiceName: service, Type: telemetry.EventRPC, Signal: telemetry.SignalTrace, Timestamp: at, Duration: 100 * time.Millisecond,
@@ -175,6 +200,28 @@ func TestTraceSummaryWholeTraceWithinAnHourIntegration(t *testing.T) {
 	if err != nil || len(traces) != 1 || traces[0].SpanCount != 2 || traces[0].RootService != "gateway" ||
 		traces[0].DurationNanos != int64(time.Second+root.Duration) {
 		t.Fatalf("traces = %+v, %v; want the whole trace within an hour of the match, rooted at gateway", traces, err)
+	}
+}
+
+func TestTraceSummaryExcludesExpiredSpansIntegration(t *testing.T) {
+	store, ctx := integrationStore(t), context.Background()
+	cutoff := time.Now().UTC().Add(-24 * time.Hour).Truncate(time.Second)
+	root := flowSpan("expired", cutoff.Add(-time.Second), "1111111111111111", "")
+	root.Status = "ERROR"
+	child := flowSpan("retained", cutoff, "2222222222222222", root.SpanID)
+	expired := flowSpan("expired-only", cutoff.Add(-time.Second), "3333333333333333", "")
+	expired.TraceID = "33333333333333333333333333333333"
+	storeSpans(t, store, root, child, expired)
+
+	duration := child.Duration.Nanoseconds()
+	for _, maxDuration := range []*int64{nil, &duration} {
+		traces, err := store.ListTraces(ctx, testProject, query.TraceFilter{
+			EnvironmentID: testEnvironment, From: cutoff.Add(-time.Minute), Since: cutoff, Limit: 10, MaxDurationNs: maxDuration,
+		})
+		if err != nil || len(traces) != 1 || traces[0].RootService != child.ServiceName || traces[0].SpanCount != 1 ||
+			traces[0].ErrorCount != 0 || traces[0].DurationNanos != duration || !traces[0].StartedAt.Equal(cutoff) {
+			t.Fatalf("trace summary with maxDuration=%v: %+v, %v", maxDuration, traces, err)
+		}
 	}
 }
 

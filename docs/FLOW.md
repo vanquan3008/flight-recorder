@@ -2,7 +2,10 @@
 
 The [HTML source map](diagrams.html#reading-guide) describes file responsibilities, function signatures,
 usage examples, and call chains. Its [file and function index](diagrams.html#source-map) includes search
-and filters for tests and generated code.
+and filters for tests and generated code. After installing the console dependencies, run
+`node scripts/update-source-map.cjs` from the repository root to update the index or add `--check`
+to verify it matches the current source. The generator uses Go and the parser shipped with the
+console build tools.
 
 The corresponding [diagrams](diagrams.html) open in a browser and need an internet connection to load
 the rendering library. Numbers in the form `[n]` refer to diagram numbers.
@@ -120,7 +123,8 @@ their keys and values. String values are stored as they are, other values as JSO
 empty string, so API responses return attribute values as strings. A string log body is stored as
 plain text, and other bodies as JSON with `body_is_json` set. Log records also keep the resource and
 scope schema URLs and the dropped attribute count. Readiness checks the columns of the current log,
-span, trace index, and metric tables.
+span, trace index, and metric tables. It also checks the rollup tables and the materialized views that
+populate the trace index and mark minutes for rollup refresh.
 
 The binary embeds SQL from `backend/db/postgres/migrations` and `backend/db/clickhouse/migrations`. Each
 database derives its target version from its own migration files and history. The PostgreSQL baseline
@@ -167,9 +171,10 @@ The server starts in this order:
    short incident and management queries it would speed up. A URL `jit` parameter takes precedence.
 4. Check both databases concurrently under the longer of `DATABASE_CONNECT_TIMEOUT` and
    `CLICKHOUSE_REQUEST_TIMEOUT` (10 seconds by default). PostgreSQL checks the embedded target version
-   and clean state through the runtime pool. ClickHouse checks the version, dirty state, the columns of every table,
-   and read access. A failure cancels the other check and closes both clients. Databases with
-   auto-migration disabled must be migrated in advance with an individual command or `migrate all`.
+   and clean state through the runtime pool. ClickHouse checks the version, dirty state, telemetry
+   columns, rollup tables, and both materialized views. A failure cancels the other check and closes
+   both clients. Databases with auto-migration disabled must be migrated in advance with an individual
+   command or `migrate all`.
    Next, prepare PostgreSQL partitions. Projects and environments are created through the console or
    API. Readiness checks both stores concurrently under a shared 2-second deadline. The PostgreSQL
    version query also verifies connectivity. A ClickHouse outage causes readiness to fail.
@@ -334,11 +339,12 @@ calls in each window. Throughput needs at least 30 baseline calls. An anomaly cr
 incident with evidence. The incident analysis uses evidence and dependency relationships to rank
 hypotheses by confidence.
 
-Detection reads the 35 minutes of deduplicated spans and metric points it needs directly from
-ClickHouse (`tracepilot_spans` and `tracepilot_metric_points` with `FINAL`), so every scope's signals
-cost one bounded query per kind. Service signals use SERVER and consumer spans; dependency signals use the
-dependency type and name stored with each span; metric signals compare each series' mean, counter rate,
-or observation-weighted histogram mean. A counter's new start time marks a reset.
+Detection reads deduplicated spans and metric points directly from ClickHouse with `FINAL`, using one
+time-bounded query per signal kind and scope. Service signals use SERVER and consumer spans. Dependency
+signals use the dependency type and name stored with each span. Metric detection reads five extra minutes
+for prior counter values and decodes the ordered result one row at a time. It keeps the first and previous
+samples and window totals for the active series, then compares its mean, counter rate, or
+observation-weighted histogram mean. A counter's new start time marks a reset.
 
 Before each pass the worker refreshes the minute rollups under a separate 20-second deadline. A
 materialized view stamps `tracepilot_span_minute_marks` with the ClickHouse clock for every minute that
@@ -351,15 +357,20 @@ retries, and a span that arrives while its minute is being rebuilt marks it dirt
 refresh leaves detection unaffected.
 
 `RequestPerformance` summarizes SERVER spans for the window, each service, each endpoint, and each
-chart bucket in one `GROUPING SETS` query. Windows of an hour or longer read clean minutes from the
-rollups and every other minute from spans, then merge the t-digest states, so p95 and p99 are
+chart bucket in one `GROUPING SETS` query. Windows of an hour or longer read clean minutes fully
+inside the retained query range from rollups. A minute cut by the retention cutoff uses raw spans
+on the retained side. The query merges the t-digest states, so p95 and p99 are
 approximations over individual requests rather than averages of per-minute percentiles.
 
 Topology joins each child span to a parent in another service that started up to one hour before the
 window, and adds edges from services to the databases, queues, and external targets they call.
+Topology, service dependency counts, and telemetry quality apply the retention cutoff to both sides
+of the parent join.
 Services without edges still appear as nodes. Trace lists choose their page from matching spans before
-summarizing those traces within an hour of the match; trace pages use `tracepilot_trace_index` to bound
-the span read to the trace's own time range and stop at the byte budget. Incident analysis reads its
+summarizing those traces within an hour of the matching window. Both steps respect the project's
+retention cutoff. Trace pages use `tracepilot_trace_index` to bound the span read to the trace's own
+time range. The backend reads one ClickHouse row at a time and emits a cursor when another span
+would cross the page budget. A single large span can still form its own page. Incident analysis reads its
 evidence from PostgreSQL and the dependencies ClickHouse observed during that evidence window.
 
 ## 8. Ingest tokens [8]
@@ -369,6 +380,10 @@ default and can last up to three years. The JWT is displayed **once**. The datab
 metadata. Tokens use the separate `INGEST_JWT_SECRET` signing key. Production requires that key to
 differ from `JWT_SECRET`. In development, a missing ingest key falls back to `JWT_SECRET` and logs a
 warning.
+
+The console's onboarding template adds the selected environment as the percent-encoded `x-environment`
+value in `OTEL_EXPORTER_OTLP_HEADERS`. With the default environment selected, it omits that header so
+the receiver uses the project's default.
 
 The receiver looks up token metadata in a cache with a configured TTL. When the owner revokes a token
 through the API, the replica handling the request clears its local entry and the shared cache entry.
@@ -420,8 +435,9 @@ event ID. The ID hash includes the full nanosecond timestamp, so otherwise ident
 in the same millisecond can have distinct IDs. Stored timestamps and cursors retain nanosecond
 precision.
 
-Log reads enforce the current project cutoff. Each replica caches the policy for the scope cache TTL
-(30 seconds by default); the replica that saves a change applies it at once, and others within the TTL. Each sweep first drops,
+Log reads, trace matching, and trace summaries enforce the current project cutoff. Each replica caches
+the policy for the scope cache TTL (30 seconds by default). The replica that saves a change applies it
+at once, and others within the TTL. Each sweep first drops,
 in every ClickHouse telemetry table, the partitions whose whole time range is older than the longest
 project policy. It holds the same PostgreSQL policy catalog lock as PostgreSQL partition drops and
 skips this step while any project keeps telemetry indefinitely. Then, for each project, it checks each
@@ -431,7 +447,9 @@ summarize. Dropped partitions free disk space at once; space under deleted rows 
 merge. The runtime user needs `INSERT` and `SELECT` on every TracePilot table and `ALTER DELETE` and
 `ALTER DROP PARTITION` on `tracepilot_log_records`, `tracepilot_spans`, `tracepilot_trace_index`,
 `tracepilot_metric_points`, `tracepilot_span_minutes`, `tracepilot_span_minute_marks`, and
-`tracepilot_span_minute_done`. Shortening a policy can delete previously stored data at the next sweep.
+`tracepilot_span_minute_done`. If the runtime role has per-table grants, give it `SHOW TABLES` on
+`tracepilot_trace_index_mv` and `tracepilot_span_minute_marks_mv` so readiness can see both views.
+Shortening a policy can delete previously stored data at the next sweep.
 The partition setting applies when the log table is created. Changing it later requires a new table
 and data migration.
 

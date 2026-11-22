@@ -1,6 +1,7 @@
 package clickhouse
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -48,7 +49,7 @@ func (store *Store) ListTraces(ctx context.Context, projectID string, filter que
 	if err != nil {
 		return nil, err
 	}
-	matching := addTime(append([]string{}, where...), parameters, "started_at", "from", ">=", filter.From)
+	matching := addTime(append([]string{}, where...), parameters, "started_at", "from", ">=", maxTime(filter.From, filter.Since))
 	matching = addTime(matching, parameters, "started_at", "to", "<=", filter.To)
 	matching = addEquals(matching, parameters, [3]string{"service_name", "service", filter.Service},
 		[3]string{"span_name", "operation", filter.Operation}, [3]string{"status_code", "status", filter.Status},
@@ -60,9 +61,11 @@ func (store *Store) ListTraces(ctx context.Context, projectID string, filter que
 	}
 	parameters["limit"] = strconv.Itoa(filter.Limit + 1)
 	summaryWhere := []string{"s.project_id = {project:UUID}", "s.environment_id = {environment:UUID}"}
+	summaryFrom := filter.Since
 	if !filter.From.IsZero() {
-		summaryWhere = addTime(summaryWhere, parameters, "s.started_at", "summary_from", ">=", filter.From.Add(-traceSummaryLookaround))
+		summaryFrom = maxTime(summaryFrom, filter.From.Add(-traceSummaryLookaround))
 	}
+	summaryWhere = addTime(summaryWhere, parameters, "s.started_at", "summary_from", ">=", summaryFrom)
 	if !filter.To.IsZero() {
 		summaryWhere = addTime(summaryWhere, parameters, "s.started_at", "summary_to", "<=", filter.To.Add(traceSummaryLookaround))
 	}
@@ -152,24 +155,38 @@ func (store *Store) GetTrace(ctx context.Context, projectID, environmentID, trac
 		parameters["after"], parameters["after_id"] = chTime(page.AfterStartedAt), page.AfterEventID
 	}
 	parameters["limit"] = strconv.Itoa(page.Limit + 1)
-	rows, err := queryRows[storedSpan](ctx, store, "SELECT "+spanColumns+" FROM tracepilot_spans FINAL WHERE "+strings.Join(where, " AND ")+
-		" ORDER BY started_at, toString(event_id) LIMIT {limit:UInt32}"+finalSettings+" FORMAT JSONEachRow", parameters)
+	response, err := store.openResponse(ctx, "SELECT "+spanColumns+" FROM tracepilot_spans FINAL WHERE "+strings.Join(where, " AND ")+
+		" ORDER BY started_at, toString(event_id) LIMIT {limit:UInt32}"+finalSettings+" FORMAT JSONEachRow", parameters, nil, false)
 	if err != nil {
 		return nil, false, err
 	}
-	fetched, spans, size := len(rows), make([]query.SpanRecord, 0, min(len(rows), page.Limit)), int64(0)
-	for _, row := range rows {
+	defer response.Close()
+	rows := bufio.NewScanner(response)
+	rows.Buffer(make([]byte, 4096), maxResponseBytes)
+	spans, size := []query.SpanRecord{}, int64(0)
+	for rows.Scan() {
+		line := rows.Bytes()
+		var row storedSpan
+		if err := json.Unmarshal(line, &row); err != nil {
+			if readErr := rows.Err(); readErr != nil {
+				return nil, false, responseError(ctx, readErr, "read ClickHouse span")
+			}
+			return nil, false, errors.New("decode ClickHouse span")
+		}
+		size += int64(len(line))
+		if len(spans) == page.Limit || (len(spans) > 0 && page.MaxBytes > 0 && size > page.MaxBytes) {
+			return spans, true, nil
+		}
 		record, err := row.record()
 		if err != nil {
 			return nil, false, err
 		}
-		size += int64(len(record.ResourceAttributes) + len(record.ScopeAttributes) + len(record.Attributes) + len(record.Events) + len(record.Links))
-		if len(spans) == page.Limit || (len(spans) > 0 && page.MaxBytes > 0 && size > page.MaxBytes) {
-			break
-		}
 		spans = append(spans, record)
 	}
-	return spans, fetched > len(spans), nil
+	if err := rows.Err(); err != nil {
+		return nil, false, responseError(ctx, err, "read ClickHouse span")
+	}
+	return spans, false, nil
 }
 
 func (row storedSpan) record() (query.SpanRecord, error) {

@@ -70,9 +70,7 @@ func (current *session) login(ctx context.Context) error {
 	if err := current.do(request, &signedIn); err != nil {
 		return fmt.Errorf("sign in as %s: %w", current.settings.email, err)
 	}
-	current.mutex.Lock()
 	current.accessToken, current.issuedAt = signedIn.AccessToken, time.Now()
-	current.mutex.Unlock()
 	return nil
 }
 
@@ -80,15 +78,11 @@ func (current *session) login(ctx context.Context) error {
 // configured 15 minute lifetime runs out on long runs.
 func (current *session) bearer(ctx context.Context) string {
 	current.mutex.Lock()
-	expired := time.Since(current.issuedAt) > accessTokenRenewal
-	token := current.accessToken
-	current.mutex.Unlock()
-	if expired && current.login(ctx) == nil {
-		current.mutex.Lock()
-		token = current.accessToken
-		current.mutex.Unlock()
+	defer current.mutex.Unlock()
+	if time.Since(current.issuedAt) > accessTokenRenewal {
+		_ = current.login(ctx)
 	}
-	return token
+	return current.accessToken
 }
 
 func (current *session) scopeHeaders(ctx context.Context, header http.Header) {

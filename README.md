@@ -403,16 +403,13 @@ go -C backend run ./cmd/loadgen -spans-per-second 500 -logs-per-second 500 -span
 
 The tool creates its own project, environment, and token. Use `-email` and `-password` for an account with permission to create projects and `-metrics-token` for a protected metrics endpoint. Keep `TRACEPILOT_DATABASE_MAX_CONNECTIONS` at least twice the ingestion worker count plus two.
 
+To run a mixed workload, add `-projects 3 -metric-points-per-second 100`. The offered rates are split across the projects. To populate historical data before measuring, add `-prefill 5m -history 167h`. The prefill stage sends telemetry at the configured rates and spreads its timestamps across the specified history. Its duration controls how many records are sent. Size it for the retained volume you want to test and keep the timestamp range within your retention policy. Use `-read-window 24h` to query a day of retained data and `-duration 60m` for an hour-long measurement.
+
 </details>
 
 ### Development roadmap
 
-| Priority | Work |
-| --- | --- |
-| P0 | Validate the MVP across CI, the browser journey, migration recovery, and representative workloads. |
-| P1 | Improve OpenTelemetry onboarding and add account recovery with expiring, single-use tokens. |
-| P2 | Add scoped incident rules, evaluation previews, and notification routing controls. |
-| P3 | Profile query and ingestion bottlenecks, then add capacity where repeatable measurements justify it. |
+The [development roadmap](docs/ROADMAP.md) defines the sustained workload test, two-replica pilot, capacity work, and enterprise controls.
 
 ## Reference
 

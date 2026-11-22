@@ -13,6 +13,8 @@ type TraceFilter struct {
 	TraceID       string
 	From          time.Time
 	To            time.Time
+	// Since bounds both matching spans and the spans used to summarize a trace.
+	Since         time.Time
 	MinDurationNs *int64
 	MaxDurationNs *int64
 	Before        time.Time

@@ -2,10 +2,13 @@ package clickhouse
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/vanquan3008/tracepilot/db"
 	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
+	"github.com/vanquan3008/tracepilot/internal/query"
 )
 
 func TestClickHouseRerunAfterLostJournalKeepsLogsIntegration(t *testing.T) {
@@ -56,5 +59,36 @@ func TestClickHouseRefusesNewerSchemaIntegration(t *testing.T) {
 	}
 	if err := store.Ready(ctx); err == nil {
 		t.Fatal("newer ClickHouse schema passed readiness")
+	}
+}
+
+func TestClickHouseReadinessRequiresMaterializedViewsIntegration(t *testing.T) {
+	store, ctx := integrationStore(t), context.Background()
+	for _, view := range []struct{ name, migration string }{
+		{"tracepilot_trace_index_mv", "000004_tracepilot_trace_index_view.up.sql"},
+		{"tracepilot_span_minute_marks_mv", "000008_tracepilot_span_minute_marks_view.up.sql"},
+	} {
+		if _, err := store.execute(ctx, "DROP VIEW "+view.name, nil, nil, false); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.Ready(ctx); err == nil || !strings.Contains(err.Error(), view.name) {
+			t.Fatalf("readiness without %s: %v", view.name, err)
+		}
+		ddl, err := db.SQL.ReadFile("clickhouse/migrations/" + view.migration)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.applyMigration(ctx, string(ddl)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.Ready(ctx); err != nil {
+		t.Fatal(err)
+	}
+	span := testSpan(time.Now().UTC(), "after-view-repair")
+	storeSpans(t, store, span)
+	spans, _, err := store.GetTrace(ctx, testProject, testEnvironment, span.TraceID, query.SpanPage{Limit: 1})
+	if err != nil || len(spans) != 1 || spans[0].EventID != span.ID {
+		t.Fatalf("trace detail after view repair: %+v, %v", spans, err)
 	}
 }

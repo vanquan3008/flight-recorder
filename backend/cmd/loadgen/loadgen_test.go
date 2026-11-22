@@ -1,9 +1,13 @@
 package main
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
+
+	collectormetricspb "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
+	"google.golang.org/protobuf/encoding/protojson"
 )
 
 func TestPercentileUsesNearestRank(t *testing.T) {
@@ -95,5 +99,27 @@ func TestParseOptionsRequiresCredentials(t *testing.T) {
 	t.Setenv("TRACEPILOT_SEED_ADMIN_PASSWORD", "")
 	if _, err := parseOptions([]string{"-spans-per-second", "100"}); err == nil {
 		t.Fatal("expected error when credentials are not provided")
+	}
+}
+
+func TestMetricWorkloadCanPrefillMultipleProjects(t *testing.T) {
+	settings, err := parseOptions([]string{"-email", "load@test.local", "-password", "pass-123",
+		"-metric-points-per-second", "100", "-projects", "3", "-prefill", "30s", "-history", "167h"})
+	if err != nil || settings.projects != 3 || settings.pointsPerSecond != 100 || settings.prefill != 30*time.Second || settings.history != 167*time.Hour {
+		t.Fatalf("settings = %+v, err = %v", settings, err)
+	}
+
+	now := time.Now()
+	body, err := json.Marshal(metricExport(4, now))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var export collectormetricspb.ExportMetricsServiceRequest
+	if err := protojson.Unmarshal(body, &export); err != nil {
+		t.Fatal(err)
+	}
+	points := export.ResourceMetrics[0].ScopeMetrics[0].Metrics[0].GetGauge().GetDataPoints()
+	if len(points) != 4 || points[0].TimeUnixNano != uint64(now.UnixNano()) || points[3].TimeUnixNano != uint64(now.UnixNano()-3) {
+		t.Fatalf("unexpected gauge points: %v", points)
 	}
 }

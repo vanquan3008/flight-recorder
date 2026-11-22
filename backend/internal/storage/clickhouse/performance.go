@@ -42,16 +42,16 @@ func (store *Store) RequestPerformance(ctx context.Context, projectID string, fi
 	parameters["from_ns"] = strconv.FormatInt(filter.From.UnixNano(), 10)
 	parameters["bucket_ns"] = strconv.FormatInt(int64(result.BucketSeconds)*int64(time.Second), 10)
 	where = addEquals(where, parameters, [3]string{"service_name", "service", filter.Service}, [3]string{"endpoint", "endpoint", filter.Endpoint})
-	spans := addTime(append(append([]string{}, where...), "span_kind = 2"), parameters, "started_at", "from", ">=", filter.From)
+	from := maxTime(filter.From, filter.Since)
+	spans := addTime(append(append([]string{}, where...), "span_kind = 2"), parameters, "started_at", "from", ">=", from)
 	spans = addTime(spans, parameters, "started_at", "to", "<", filter.To)
-	spans = addTime(spans, parameters, "started_at", "since", ">=", filter.Since)
-	rollups := addTime(append(append([]string{}, where...), "span_kind = 2"), parameters, "minute", "since", ">=", filter.Since)
+	rollups := append(append([]string{}, where...), "span_kind = 2")
 	source := `SELECT service_name, endpoint, toInt32(intDiv(toUnixTimestamp64Nano(started_at) - {from_ns:Int64}, {bucket_ns:Int64})) AS bucket,
 count() AS calls, countIf(request_failed) AS failed, sum(duration_ns) AS duration_sum,
 quantilesTDigestState(0.95, 0.99)(duration_ns) AS quantile_state FROM tracepilot_spans FINAL WHERE ` + strings.Join(spans, " AND ")
 	prefix := ""
 	if filter.To.Sub(filter.From) >= rollupMinimumWindow {
-		prefix = "WITH clean AS (" + cleanMinutes(filter.From, filter.To, parameters) + ") "
+		prefix = "WITH clean AS (" + cleanMinutes(from, filter.To, parameters) + ") "
 		source += " AND toDateTime(toStartOfMinute(started_at), 'UTC') NOT IN (SELECT minute FROM clean) GROUP BY service_name, endpoint, bucket" +
 			` UNION ALL SELECT service_name, endpoint, toInt32(intDiv(toUnixTimestamp64Nano(toDateTime64(minute, 9, 'UTC')) - {from_ns:Int64}, {bucket_ns:Int64})),
 sum(calls), sum(failed), sum(duration_sum), quantilesTDigestMergeState(0.95, 0.99)(duration_quantiles)

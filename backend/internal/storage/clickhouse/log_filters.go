@@ -12,15 +12,8 @@ func (store *Store) logFilter(projectID string, filter query.LogFilter) ([]strin
 	if err != nil {
 		return nil, nil, err
 	}
-	for _, field := range []struct{ column, name, value string }{
-		{"service_name", "service", filter.Service},
-		{"trace_id", "trace", filter.TraceID}, {"span_id", "span", filter.SpanID},
-	} {
-		if field.value != "" {
-			where = append(where, field.column+" = {"+field.name+":String}")
-			parameters[field.name] = field.value
-		}
-	}
+	where = addEquals(where, parameters, [3]string{"service_name", "service", filter.Service},
+		[3]string{"trace_id", "trace", filter.TraceID}, [3]string{"span_id", "span", filter.SpanID})
 	if filter.Severity != "" {
 		where = append(where, logSeverityPredicate(filter.Severity, parameters))
 	}
@@ -32,7 +25,7 @@ func (store *Store) logFilter(projectID string, filter query.LogFilter) ([]strin
 	where = addTime(where, parameters, "occurred_at", "to", "<=", filter.To)
 	if !filter.Before.IsZero() {
 		where = append(where, "(occurred_at, toString(event_id)) < ({before:DateTime64(9, 'UTC')}, {cursor:String})")
-		parameters["before"], parameters["cursor"] = filter.Before.UTC().Format("2006-01-02 15:04:05.999999999"), filter.CursorID
+		parameters["before"], parameters["cursor"] = chTime(filter.Before), filter.CursorID
 	}
 	return where, parameters, nil
 }

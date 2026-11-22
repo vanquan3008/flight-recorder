@@ -79,8 +79,10 @@ it("switches project from the dropdown and preserves the time window with its ow
 it("does not reuse a fresh overview result from the previous environment", async () => {
   open("/overview?project=alpha&environment=development&range=24h&to=2026-10-02T00:00:00Z");
   await screen.findByText("500");
+  expect(screen.getByText(/x-environment=development/)).toBeTruthy();
   fireEvent.click(screen.getByRole("combobox", { name: "Environment" }));
   fireEvent.click(await screen.findByRole("option", { name: "production" }));
   await screen.findByText("900");
   expect(screen.queryByText("500")).toBeNull();
+  expect(screen.getByText(/x-environment=production/)).toBeTruthy();
 });

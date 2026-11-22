@@ -65,19 +65,22 @@ type dependencyRow struct {
 }
 
 // ListServiceDependencies counts calls from a service to other services over the last day.
-func (store *Store) ListServiceDependencies(ctx context.Context, projectID, environmentID, serviceName string) ([]query.ServiceDependency, error) {
+func (store *Store) ListServiceDependencies(ctx context.Context, projectID, environmentID, serviceName string, since time.Time) ([]query.ServiceDependency, error) {
 	_, parameters, err := store.scope(projectID, environmentID)
 	if err != nil {
 		return nil, err
 	}
 	now := time.Now().UTC()
-	parameters["service"], parameters["from"], parameters["to"] = serviceName, chTime(now.Add(-dependencyWindow)), chTime(now)
+	from := now.Add(-dependencyWindow)
+	parameters["service"], parameters["to"] = serviceName, chTime(now)
+	parameters["from"] = chTime(maxTime(from, since))
+	parameters["parent_from"] = chTime(maxTime(parentStart(from), since))
 	rows, err := queryRows[dependencyRow](ctx, store, `SELECT child.service_name AS service_name, count() AS call_count
 FROM (SELECT trace_id, parent_span_id, service_name FROM tracepilot_spans FINAL WHERE project_id = {project:UUID}
   AND environment_id = {environment:UUID} AND started_at >= {from:DateTime64(9, 'UTC')} AND started_at <= {to:DateTime64(9, 'UTC')}
   AND parent_span_id != '' AND service_name != {service:String}) AS child
 INNER JOIN (SELECT trace_id, span_id FROM tracepilot_spans FINAL WHERE project_id = {project:UUID} AND environment_id = {environment:UUID}
-  AND started_at >= {from:DateTime64(9, 'UTC')} - INTERVAL 1 HOUR AND started_at <= {to:DateTime64(9, 'UTC')}
+  AND started_at >= {parent_from:DateTime64(9, 'UTC')} AND started_at <= {to:DateTime64(9, 'UTC')}
   AND service_name = {service:String}) AS parent ON child.trace_id = parent.trace_id AND child.parent_span_id = parent.span_id
 GROUP BY service_name ORDER BY call_count DESC, service_name`+finalSettings+" FORMAT JSONEachRow", parameters)
 	if err != nil {
@@ -109,9 +112,10 @@ func (store *Store) ListTopology(ctx context.Context, projectID string, filter a
 	if err != nil {
 		return analysis.Topology{}, err
 	}
+	filter.From = maxTime(filter.From, filter.Since)
 	window := addTime(append([]string{}, where...), parameters, "started_at", "from", ">=", filter.From)
 	window = addTime(window, parameters, "started_at", "to", "<", filter.To)
-	parents := addTime(append([]string{}, where...), parameters, "started_at", "parent_from", ">=", parentStart(filter.From))
+	parents := addTime(append([]string{}, where...), parameters, "started_at", "parent_from", ">=", maxTime(parentStart(filter.From), filter.Since))
 	parents = addTime(parents, parameters, "started_at", "to", "<", filter.To)
 	edgeFilter := ""
 	if filter.Service != "" {
@@ -220,17 +224,18 @@ type signalQualityRow struct {
 	MetricPoints int64 `json:"metric_points"`
 }
 
-// SignalQuality counts spans, spans whose parent was never received, and
+// SignalQuality counts spans, spans with no retained parent in the lookback, and
 // metric points. Log counts come from LogQuality.
 func (store *Store) SignalQuality(ctx context.Context, projectID string, filter analysis.Filter) (spans, orphans, points int64, err error) {
 	where, parameters, err := store.scope(projectID, filter.EnvironmentID)
 	if err != nil {
 		return 0, 0, 0, err
 	}
+	filter.From = maxTime(filter.From, filter.Since)
 	spanWindow := addTime(append([]string{}, where...), parameters, "started_at", "from", ">=", filter.From)
 	spanWindow = addTime(spanWindow, parameters, "started_at", "to", "<=", filter.To)
 	spanWindow = addEquals(spanWindow, parameters, [3]string{"service_name", "service", filter.Service})
-	parents := addTime(append([]string{}, where...), parameters, "started_at", "parent_from", ">=", parentStart(filter.From))
+	parents := addTime(append([]string{}, where...), parameters, "started_at", "parent_from", ">=", maxTime(parentStart(filter.From), filter.Since))
 	parents = addTime(parents, parameters, "started_at", "to", "<=", filter.To)
 	metricWindow := addTime(append([]string{}, where...), parameters, "occurred_at", "from", ">=", filter.From)
 	metricWindow = addTime(metricWindow, parameters, "occurred_at", "to", "<=", filter.To)
