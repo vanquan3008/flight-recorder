@@ -10,6 +10,7 @@ type Filter struct {
 	Metric        string
 	From          time.Time
 	To            time.Time
+	Since         time.Time // Retention cutoff for the window and any parent spans it reads.
 	Limit         int
 }
 

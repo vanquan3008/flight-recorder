@@ -40,6 +40,12 @@ func TestClickHouseMigrationJournalAndRerun(t *testing.T) {
 			store := testStore(t, func(w http.ResponseWriter, r *http.Request) {
 				query := r.URL.Query().Get("query")
 				switch {
+				case strings.HasPrefix(query, "SELECT name, engine FROM system.tables"):
+					fmt.Fprintln(w, `{"name":"tracepilot_trace_index_mv","engine":"MaterializedView"}
+{"name":"tracepilot_span_minute_marks_mv","engine":"MaterializedView"}
+{"name":"tracepilot_span_minutes","engine":"ReplicatedReplacingMergeTree"}
+{"name":"tracepilot_span_minute_marks","engine":"ReplacingMergeTree"}
+{"name":"tracepilot_span_minute_done","engine":"ReplacingMergeTree"}`)
 				case strings.HasPrefix(query, "SELECT name FROM system.tables"):
 					if metadata {
 						fmt.Fprintln(w, `{"name":"tracepilot_schema_migrations"}`)

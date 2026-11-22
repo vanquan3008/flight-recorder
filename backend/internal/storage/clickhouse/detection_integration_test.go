@@ -192,3 +192,26 @@ func TestRollupsServeLongPerformanceWindowsIntegration(t *testing.T) {
 		t.Fatalf("the recomputed minute changed the total: %+v, %v", again.Summary, err)
 	}
 }
+
+func TestPerformanceRetentionCutsThroughCleanMinuteIntegration(t *testing.T) {
+	store, ctx := integrationStore(t), context.Background()
+	end := time.Now().UTC().Truncate(time.Minute)
+	from := end.Add(-2 * time.Hour)
+	storeSpans(t, store,
+		serverSpan(from.Add(time.Second), "expired", "api", 100*time.Millisecond, "ERROR"),
+		serverSpan(from.Add(40*time.Second), "retained", "api", 10*time.Millisecond, "OK"),
+		serverSpan(from.Add(2*time.Minute), "next-minute", "api", 20*time.Millisecond, "ERROR"))
+	filter := query.PerformanceFilter{EnvironmentID: testEnvironment, From: from, To: end, Since: from.Add(30 * time.Second), Limit: 10}
+	raw, err := store.RequestPerformance(ctx, testProject, filter)
+	if err != nil || raw.Summary.Requests != 2 || raw.Summary.Errors != 1 || raw.Summary.AverageLatencyNanos != int64(15*time.Millisecond) {
+		t.Fatalf("performance before rollups = %+v, %v", raw.Summary, err)
+	}
+	if count, err := store.RefreshSpanRollups(ctx); err != nil || count != 2 {
+		t.Fatalf("refresh rollups = %d, %v", count, err)
+	}
+	rolled, err := store.RequestPerformance(ctx, testProject, filter)
+	if err != nil || rolled.Summary.Requests != raw.Summary.Requests || rolled.Summary.Errors != raw.Summary.Errors ||
+		rolled.Summary.AverageLatencyNanos != raw.Summary.AverageLatencyNanos || rolled.Series[0].Requests != raw.Series[0].Requests {
+		t.Fatalf("performance before rollups = %+v, after = %+v, %v", raw.Summary, rolled.Summary, err)
+	}
+}

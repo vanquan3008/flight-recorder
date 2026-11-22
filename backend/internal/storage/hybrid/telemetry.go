@@ -20,7 +20,7 @@ func (store *Store) ListTraces(ctx context.Context, project string, filter query
 	if err != nil {
 		return nil, err
 	}
-	filter.From = maxTime(filter.From, cutoff)
+	filter.Since = cutoff
 	return store.ch.ListTraces(ctx, project, filter)
 }
 
@@ -42,7 +42,11 @@ func (store *Store) ListServices(ctx context.Context, project, environment strin
 }
 
 func (store *Store) ListServiceDependencies(ctx context.Context, project, environment, service string) ([]query.ServiceDependency, error) {
-	return store.ch.ListServiceDependencies(ctx, project, environment, service)
+	cutoff, err := store.retentionCutoff(ctx, project)
+	if err != nil {
+		return nil, err
+	}
+	return store.ch.ListServiceDependencies(ctx, project, environment, service, cutoff)
 }
 
 func (store *Store) ListTopology(ctx context.Context, project string, filter analysis.Filter) (analysis.Topology, error) {
@@ -50,7 +54,7 @@ func (store *Store) ListTopology(ctx context.Context, project string, filter ana
 	if err != nil {
 		return analysis.Topology{}, err
 	}
-	filter.From = maxTime(filter.From, cutoff)
+	filter.Since = cutoff
 	return store.ch.ListTopology(ctx, project, filter)
 }
 
@@ -69,11 +73,11 @@ func (store *Store) TelemetryQuality(ctx context.Context, project string, filter
 		return analysis.Quality{}, err
 	}
 	quality := analysis.Quality{From: filter.From, To: filter.To}
-	filter.From = maxTime(filter.From, cutoff)
+	filter.Since = cutoff
 	if quality.Spans, quality.OrphanSpans, quality.MetricPoints, err = store.ch.SignalQuality(ctx, project, filter); err != nil {
 		return quality, err
 	}
-	quality.Logs, quality.UncorrelatedLogs, err = store.ch.LogQuality(ctx, project, filter.EnvironmentID, filter.Service, filter.From, filter.To)
+	quality.Logs, quality.UncorrelatedLogs, err = store.ch.LogQuality(ctx, project, filter.EnvironmentID, filter.Service, maxTime(filter.From, cutoff), filter.To)
 	return quality, err
 }
 

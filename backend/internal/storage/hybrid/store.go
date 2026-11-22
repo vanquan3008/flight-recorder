@@ -28,7 +28,7 @@ type clickHouseStore interface {
 	ListTraces(context.Context, string, query.TraceFilter) ([]query.TraceSummary, error)
 	GetTrace(context.Context, string, string, string, query.SpanPage) ([]query.SpanRecord, bool, error)
 	ListServices(context.Context, string, string, time.Time, time.Time) ([]query.ServiceSummary, error)
-	ListServiceDependencies(context.Context, string, string, string) ([]query.ServiceDependency, error)
+	ListServiceDependencies(context.Context, string, string, string, time.Time) ([]query.ServiceDependency, error)
 	ListTopology(context.Context, string, analysis.Filter) (analysis.Topology, error)
 	ListMetricPoints(context.Context, string, analysis.Filter) ([]analysis.MetricPoint, error)
 	SignalQuality(context.Context, string, analysis.Filter) (int64, int64, int64, error)

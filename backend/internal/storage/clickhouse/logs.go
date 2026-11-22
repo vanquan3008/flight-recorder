@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"strconv"
 	"strings"
 	"time"
@@ -60,14 +59,6 @@ func (store *Store) scope(projectID, environmentID string) ([]string, map[string
 	return where, parameters, nil
 }
 
-func addTime(where []string, parameters map[string]string, column, name, comparison string, at time.Time) []string {
-	if at.IsZero() {
-		return where
-	}
-	parameters[name] = at.UTC().Format("2006-01-02 15:04:05.999999999")
-	return append(where, column+" "+comparison+" {"+name+":DateTime64(9, 'UTC')}")
-}
-
 // finalSettings is safe because a retried log lands in the partition of its
 // first copy: the partition key derives from occurred_at, a deduplication key.
 const finalSettings = " SETTINGS do_not_merge_across_partitions_select_final = 1"
@@ -112,20 +103,14 @@ func (store *Store) readLogKeys(ctx context.Context, sql string, parameters map[
 	if err != nil {
 		return nil, err
 	}
-	decoder, keys := json.NewDecoder(bytes.NewReader(data)), []logKey{}
-	for {
-		var key logKey
-		if err := decoder.Decode(&key); err != nil {
-			if errors.Is(err, io.EOF) {
-				return keys, nil
-			}
+	keys := []logKey{}
+	for key, err := range decodeJSONRows[logKey](bytes.NewReader(data)) {
+		if err != nil || key.OccurredAt.IsZero() || !validUUID(key.ID) {
 			return nil, errors.New("decode ClickHouse logs")
 		}
-		if key.OccurredAt.IsZero() || !validUUID(key.ID) {
-			return nil, errors.New("decode ClickHouse logs")
-		}
-		keys = append(keys, key)
+		keys = append(keys, *key)
 	}
+	return keys, nil
 }
 
 func (store *Store) GetLog(ctx context.Context, projectID, environmentID, eventID string) (query.LogRecord, error) {
@@ -157,13 +142,9 @@ func (store *Store) readLogs(ctx context.Context, sql string, parameters map[str
 	if err != nil {
 		return nil, err
 	}
-	decoder, records := json.NewDecoder(bytes.NewReader(data)), []query.LogRecord{}
-	for {
-		var row storedLog
-		if err := decoder.Decode(&row); err != nil {
-			if errors.Is(err, io.EOF) {
-				return records, nil
-			}
+	records := []query.LogRecord{}
+	for row, err := range decodeJSONRows[storedLog](bytes.NewReader(data)) {
+		if err != nil {
 			return nil, errors.New("decode ClickHouse logs")
 		}
 		record, err := row.record()
@@ -172,6 +153,7 @@ func (store *Store) readLogs(ctx context.Context, sql string, parameters map[str
 		}
 		records = append(records, record)
 	}
+	return records, nil
 }
 
 func (store *Store) LogQuality(ctx context.Context, projectID, environmentID, service string, from, to time.Time) (logs, uncorrelated int64, err error) {
@@ -181,10 +163,7 @@ func (store *Store) LogQuality(ctx context.Context, projectID, environmentID, se
 	}
 	where = addTime(where, parameters, "occurred_at", "from", ">=", from)
 	where = addTime(where, parameters, "occurred_at", "to", "<=", to)
-	if service != "" {
-		where = append(where, "service_name = {service:String}")
-		parameters["service"] = service
-	}
+	where = addEquals(where, parameters, [3]string{"service_name", "service", service})
 	data, err := store.execute(ctx, "SELECT count() AS logs, countIf(trace_id = '') AS uncorrelated FROM tracepilot_log_records FINAL WHERE "+
 		strings.Join(where, " AND ")+finalSettings+" FORMAT JSONEachRow", parameters, nil, false)
 	if err != nil {

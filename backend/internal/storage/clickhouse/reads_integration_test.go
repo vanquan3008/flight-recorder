@@ -92,7 +92,7 @@ func TestServiceAndTopologyReadsIntegration(t *testing.T) {
 	if err != nil || len(services) != 3 || services[1].Name != "orders" || services[1].RequestCount != 1 || services[1].ErrorCount != 1 {
 		t.Fatalf("services = %+v, %v", services, err)
 	}
-	dependencies, err := store.ListServiceDependencies(ctx, testProject, testEnvironment, "api")
+	dependencies, err := store.ListServiceDependencies(ctx, testProject, testEnvironment, "api", time.Time{})
 	if err != nil || len(dependencies) != 1 || dependencies[0].ServiceName != "orders" || dependencies[0].CallCount != 1 {
 		t.Fatalf("dependencies = %+v, %v", dependencies, err)
 	}

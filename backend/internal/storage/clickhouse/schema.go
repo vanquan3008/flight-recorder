@@ -3,6 +3,7 @@ package clickhouse
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
@@ -19,7 +20,7 @@ func (store *Store) Ready(ctx context.Context) error {
 	return store.readySchema(ctx)
 }
 
-// readySchema reads no rows but fails when a column that writes and reads use is missing.
+// readySchema checks the read columns and the materialized views that feed derived tables.
 func (store *Store) readySchema(ctx context.Context) error {
 	for _, check := range []string{
 		"SELECT " + logColumns + " FROM tracepilot_log_records LIMIT 0 FORMAT JSONEachRow",
@@ -29,6 +30,27 @@ func (store *Store) readySchema(ctx context.Context) error {
 	} {
 		if _, err := store.execute(ctx, check, nil, nil, false); err != nil {
 			return err
+		}
+	}
+	type schemaObject struct{ Name, Engine string }
+	objects, err := queryRows[schemaObject](ctx, store, `SELECT name, engine FROM system.tables
+WHERE database = {database:String} AND name IN ('tracepilot_trace_index_mv', 'tracepilot_span_minute_marks_mv',
+'tracepilot_span_minutes', 'tracepilot_span_minute_marks', 'tracepilot_span_minute_done') FORMAT JSONEachRow`,
+		map[string]string{"database": store.cfg.Database})
+	if err != nil {
+		return err
+	}
+	for _, required := range []schemaObject{
+		{"tracepilot_trace_index_mv", "MaterializedView"},
+		{"tracepilot_span_minute_marks_mv", "MaterializedView"},
+		{Name: "tracepilot_span_minutes"},
+		{Name: "tracepilot_span_minute_marks"},
+		{Name: "tracepilot_span_minute_done"},
+	} {
+		if !slices.ContainsFunc(objects, func(object schemaObject) bool {
+			return object.Name == required.Name && (required.Engine == "" || object.Engine == required.Engine)
+		}) {
+			return fmt.Errorf("ClickHouse schema requires %s; check its definition and runtime grants", required.Name)
 		}
 	}
 	return nil

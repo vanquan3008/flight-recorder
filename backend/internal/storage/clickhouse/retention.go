@@ -3,9 +3,7 @@ package clickhouse
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
-	"io"
 	"strings"
 	"time"
 
@@ -62,21 +60,17 @@ func (store *Store) ExpireProjectTelemetry(ctx context.Context, projectID string
 // DropPartitionsBefore drops every partition whose time range ends at or before
 // the cutoff, which callers derive from the longest project policy.
 func (store *Store) DropPartitionsBefore(ctx context.Context, before time.Time) error {
+	type partitionRow struct {
+		ID string `json:"partition_id"`
+	}
 	for _, table := range store.telemetryTables() {
 		data, err := store.execute(ctx, "SELECT DISTINCT partition_id FROM system.parts WHERE database = {database:String} AND table = {table:String} AND active FORMAT JSONEachRow",
 			map[string]string{"database": store.cfg.Database, "table": table.name}, nil, false)
 		if err != nil {
 			return err
 		}
-		decoder := json.NewDecoder(bytes.NewReader(data))
-		for {
-			var part struct {
-				ID string `json:"partition_id"`
-			}
-			if err := decoder.Decode(&part); err != nil {
-				if errors.Is(err, io.EOF) {
-					break
-				}
+		for part, err := range decodeJSONRows[partitionRow](bytes.NewReader(data)) {
+			if err != nil {
 				return errors.New("decode ClickHouse partitions")
 			}
 			if end, known := partitionEnd(table.partition, part.ID); !known || end.After(before) {
