@@ -5,20 +5,21 @@ import { Link } from "react-router-dom";
 import { api, APIError } from "../../shared/api";
 import { Panel } from "../../shared/ui";
 
-const otlpConfig = (ingestToken = "<ingest-token>") => `OTEL_SERVICE_NAME=my-service
+const otlpConfig = (ingestToken: string, environment: string) => `OTEL_SERVICE_NAME=my-service
 OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
 OTEL_EXPORTER_OTLP_ENDPOINT=http://<tracepilot-host>:4318
-OTEL_EXPORTER_OTLP_HEADERS=authorization=Bearer%20${ingestToken}`;
+OTEL_EXPORTER_OTLP_HEADERS=authorization=Bearer%20${ingestToken || "<ingest-token>"}${environment ? `,x-environment=${encodeURIComponent(environment)}` : ""}`;
 
 type IssuedIngestToken = { jwt: string };
 
 /** `canCreate` is false for a user who was only added to the project: its owner makes the ingest tokens. */
-export function Onboarding({ credential, projectID, canCreate, hasTrace }: { credential: string; projectID: string; canCreate: boolean; hasTrace: boolean }) {
+export function Onboarding({ credential, projectID, environment, canCreate, hasTrace }: { credential: string; projectID: string; environment: string; canCreate: boolean; hasTrace: boolean }) {
   const [ingestKey, setIngestKey] = useState("");
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState("");
   const [copied, setCopied] = useState(false);
   const [copyFailed, setCopyFailed] = useState(false);
+  const configuration = otlpConfig(ingestKey, environment);
   const createIngestToken = async () => {
     setCreating(true);
     setCreateError("");
@@ -38,7 +39,7 @@ export function Onboarding({ credential, projectID, canCreate, hasTrace }: { cre
   };
   const copy = async () => {
     try {
-      await navigator.clipboard.writeText(otlpConfig(ingestKey));
+      await navigator.clipboard.writeText(configuration);
       setCopied(true);
       setCopyFailed(false);
     } catch {
@@ -58,7 +59,7 @@ export function Onboarding({ credential, projectID, canCreate, hasTrace }: { cre
     </> },
     { title: "Configure OTLP", body: <>
       <p>Set these variables for one OpenTelemetry SDK. Replace the host placeholder for remote deployments.</p>
-      <code>{otlpConfig(ingestKey)}</code>
+      <code>{configuration}</code>
       <button type="button" className={`button-secondary ${secondaryButtonClass}`} disabled={!ingestKey} onClick={() => void copy()}>{copied ? "Copied" : "Copy OTLP config"}</button>
       {copyFailed && <p className="form-error mt-1.5 text-[12.5px] font-medium leading-relaxed text-danger-fg" role="status">Clipboard access was denied. Select the template and copy it manually.</p>}
     </> },
