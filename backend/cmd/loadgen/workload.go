@@ -7,6 +7,7 @@ import (
 	"io"
 	"math/rand/v2"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -126,8 +127,25 @@ func logExport(recordCount int, errorFraction float64, now time.Time, traces *tr
 	}}}
 }
 
-func exportTraces(client *http.Client, settings options, current *session, traces *traceIDs) sample {
-	body, exported := traceExport(settings.spansPerRequest, settings.errorFraction, time.Now())
+func metricExport(pointCount int, now time.Time) map[string]any {
+	points := make([]any, 0, pointCount)
+	for index := range pointCount {
+		points = append(points, map[string]any{
+			"timeUnixNano": strconv.FormatInt(now.Add(-time.Duration(index)).UnixNano(), 10),
+			"asDouble":     rand.Float64() * 100,
+		})
+	}
+	return map[string]any{"resourceMetrics": []any{map[string]any{
+		"resource": map[string]any{"attributes": []any{stringAttribute("service.name", "checkout")}},
+		"scopeMetrics": []any{map[string]any{
+			"scope":   map[string]any{"name": "loadgen"},
+			"metrics": []any{map[string]any{"name": "loadgen.queue.depth", "unit": "1", "gauge": map[string]any{"dataPoints": points}}},
+		}},
+	}}}
+}
+
+func exportTraces(client *http.Client, settings options, current *session, traces *traceIDs, now time.Time) sample {
+	body, exported := traceExport(settings.spansPerRequest, settings.errorFraction, now)
 	result := exportOTLP(client, settings, current, "/v1/traces", "traces", body, settings.spansPerRequest)
 	if !result.failed && result.rejected == 0 {
 		for _, traceID := range exported {
@@ -137,9 +155,14 @@ func exportTraces(client *http.Client, settings options, current *session, trace
 	return result
 }
 
-func exportLogs(client *http.Client, settings options, current *session, traces *traceIDs) sample {
-	body := logExport(settings.logsPerRequest, settings.errorFraction, time.Now(), traces)
+func exportLogs(client *http.Client, settings options, current *session, traces *traceIDs, now time.Time) sample {
+	body := logExport(settings.logsPerRequest, settings.errorFraction, now, traces)
 	return exportOTLP(client, settings, current, "/v1/logs", "logs", body, settings.logsPerRequest)
+}
+
+func exportMetrics(client *http.Client, settings options, current *session, now time.Time) sample {
+	body := metricExport(settings.pointsPerRequest, now)
+	return exportOTLP(client, settings, current, "/v1/metrics", "metrics", body, settings.pointsPerRequest)
 }
 
 func exportOTLP(client *http.Client, settings options, current *session, path, class string, body any, records int) sample {
@@ -184,7 +207,15 @@ func readAPI(ctx context.Context, client *http.Client, settings options, current
 		total += endpoint.weight
 	}
 	path, endpoint := pickReadPath(rand.IntN(total), traces.pick())
-	request, _ := http.NewRequest(http.MethodGet, settings.apiURL+path, nil)
+	if settings.readWindow > 0 && !strings.HasSuffix(endpoint, "/{id}") {
+		to := time.Now().UTC()
+		separator := "?"
+		if strings.Contains(path, "?") {
+			separator = "&"
+		}
+		path += separator + url.Values{"from": {to.Add(-settings.readWindow).Format(time.RFC3339Nano)}, "to": {to.Format(time.RFC3339Nano)}}.Encode()
+	}
+	request, _ := http.NewRequestWithContext(ctx, http.MethodGet, settings.apiURL+path, nil)
 	current.scopeHeaders(ctx, request.Header)
 	result := perform(client, request, "reads")
 	result.endpoint = endpoint
@@ -198,8 +229,16 @@ func perform(client *http.Client, request *http.Request, class string) sample {
 		return sample{class: class, at: started, latency: time.Since(started), failed: true}
 	}
 	defer response.Body.Close()
-	payload, _ := io.ReadAll(io.LimitReader(response.Body, 4<<20))
+	var payload []byte
+	if class == "reads" {
+		_, err = io.Copy(io.Discard, response.Body)
+	} else {
+		payload, err = io.ReadAll(io.LimitReader(response.Body, 4<<20))
+	}
 	result := sample{class: class, at: started, latency: time.Since(started), status: response.StatusCode, failed: response.StatusCode >= 300}
+	if err != nil {
+		result.failed = true
+	}
 	if !result.failed && class != "reads" {
 		result.rejected = rejectedRecords(payload)
 	}

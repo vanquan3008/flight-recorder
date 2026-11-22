@@ -126,9 +126,9 @@ func report(out io.Writer, settings options, collected *collector, scrape *scrap
 		}
 	}
 	collected.mutex.Unlock()
-	fmt.Fprintf(out, "measured=%s warmup=%s client-skipped-starts=%d (in-flight cap %d per class)\n",
-		settings.duration, settings.warmup, collected.skipped.Load(), settings.maxInFlight)
-	for _, class := range []string{"traces", "logs", "reads"} {
+	fmt.Fprintf(out, "measured=%s warmup=%s projects=%d client-skipped-starts=%d (in-flight cap %d per class per project)\n",
+		settings.duration, settings.warmup, settings.projects, collected.skipped.Load(), settings.maxInFlight)
+	for _, class := range []string{"traces", "logs", "metrics", "reads"} {
 		items := byClass[class]
 		if len(items) == 0 {
 			continue
@@ -150,7 +150,7 @@ func report(out io.Writer, settings options, collected *collector, scrape *scrap
 		sort.Slice(latencies, func(i, j int) bool { return latencies[i] < latencies[j] })
 		line := fmt.Sprintf("%-6s requests=%d (%.1f/s) failed=%d (%.2f%%)", class, len(items), float64(len(items))/window, failed, 100*float64(failed)/float64(len(items)))
 		if class != "reads" {
-			line += fmt.Sprintf(" accepted-records=%.0f/s partially-rejected=%d", float64(records)/window, rejected)
+			line += fmt.Sprintf(" accepted-records=%.0f/s partially-rejected=%d", float64(int64(records)-rejected)/window, rejected)
 		}
 		if len(failures) > 0 {
 			line += fmt.Sprintf(" failures-by-status=%v (0 = no response)", failures)
