@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import { Waterfall } from "./waterfall";
 import { buildTrace } from "./trace-model";
 
@@ -23,7 +24,7 @@ const span = (id: string, start: number, end: number, parentId?: string) => ({
 describe("Waterfall virtualized rendering", () => {
   it("finds errors inside a collapsed subtree and searches by operation", () => {
     const model = buildTrace([span("root", 0, 100), { ...span("failed", 10, 30, "root"), status_code: "ERROR" }, span("child", 40, 60, "root")]);
-    const { container } = render(<Waterfall model={model} traceID="trace1" focus="" onFocus={() => {}} />);
+    const { container } = render(<MemoryRouter><Waterfall model={model} traceID="trace1" focus="" onFocus={() => {}} /></MemoryRouter>);
     fireEvent.click(screen.getByRole("button", { name: "Collapse all" }));
     expect(container.querySelectorAll(".wf-row")).toHaveLength(1);
     fireEvent.click(screen.getByRole("button", { name: /^Errors/ }));
@@ -34,7 +35,7 @@ describe("Waterfall virtualized rendering", () => {
   });
   it("renders empty state when trace has no spans", () => {
     const model = buildTrace([]);
-    render(<Waterfall model={model} traceID="trace1" focus="" onFocus={() => {}} />);
+    render(<MemoryRouter><Waterfall model={model} traceID="trace1" focus="" onFocus={() => {}} /></MemoryRouter>);
     expect(screen.getByText("This trace has no spans.")).toBeTruthy();
   });
 
@@ -44,7 +45,7 @@ describe("Waterfall virtualized rendering", () => {
       ...Array.from({ length: 49 }, (_, i) => span(`child-${i}`, i * 10, i * 10 + 5, "root")),
     ];
     const model = buildTrace(spans);
-    const { container } = render(<Waterfall model={model} traceID="trace1" focus="" onFocus={() => {}} />);
+    const { container } = render(<MemoryRouter><Waterfall model={model} traceID="trace1" focus="" onFocus={() => {}} /></MemoryRouter>);
     expect(screen.getAllByText("test-svc").length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: "Collapse all" })).toBeTruthy();
     expect(container.querySelector(".wf-viewport")).not.toBeNull();

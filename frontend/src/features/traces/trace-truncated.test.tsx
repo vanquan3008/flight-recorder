@@ -27,7 +27,7 @@ function open() {
 it("warns that a very large trace is incomplete instead of presenting it as whole", async () => {
   loaded.truncated = true;
   open();
-  const notice = await screen.findByText(/more than 5,000 spans/);
+  const notice = await screen.findByText(/Loaded 1 of the trace’s spans/);
   expect(notice.getAttribute("role")).toBe("status");
   expect(notice.textContent).toMatch(/incomplete/);
 });
@@ -36,5 +36,5 @@ it("shows no warning for a complete trace", async () => {
   loaded.truncated = false;
   open();
   await screen.findByRole("heading", { name: "Request flow" });
-  expect(screen.queryByText(/more than 5,000 spans/)).toBeNull();
+  expect(screen.queryByText(/This view loads up to 5,000 spans/)).toBeNull();
 });

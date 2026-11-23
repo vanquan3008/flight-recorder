@@ -25,7 +25,7 @@ it("returns from a trace to the filtered, time-bounded trace list", async () => 
   }));
   render(<App />);
   fireEvent.click(await screen.findByRole("link", { name: "Inspect" }));
-  expect(await screen.findByRole("heading", { name: "Trace detail" })).toBeTruthy();
+  expect(await screen.findByRole("heading", { name: "Span waterfall" })).toBeTruthy();
   fireEvent.click(screen.getByRole("link", { name: /Back to traces/ }));
   expect(await screen.findByLabelText("Filter by service")).toBeTruthy();
   await waitFor(() => expect(window.location.search).toContain("service=checkout"));
@@ -59,4 +59,43 @@ it("shows a recovery path when a trace is no longer stored", async () => {
   render(<App />);
   expect(await screen.findByText(/older than the retention period/)).toBeTruthy();
   expect(screen.getByRole("link", { name: /Back to traces/ })).toBeTruthy();
+});
+
+it("returns through the selected span and incident tab to the original filtered list", async () => {
+  connect("#/incidents?status=OPEN&service=checkout");
+  const spanID = "0123456789abcdef";
+  const startedAt = "2026-10-01T00:00:00Z";
+  const incident = { id: incidentID, title: "Checkout failed", status: "OPEN", severity: "ERROR", primary_service: "checkout", occurrence_count: 1, first_seen_at: startedAt, last_seen_at: startedAt };
+  const span = { trace_id: traceID, span_id: spanID, name: "Failed payment", service_name: "checkout", status_code: "ERROR", started_at: startedAt, ended_at: startedAt, attributes: {}, events: [], links: [] };
+  const log = { event_id: "log-1", occurred_at: startedAt, trace_id: traceID, span_id: spanID, service_name: "checkout", body: "Provider timeout", severity_text: "ERROR" };
+  vi.stubGlobal("fetch", vi.fn().mockImplementation((input: string) => {
+    const path = new URL(input, "http://localhost").pathname;
+    if (path === "/api/v1/incidents") return respond({ data: [incident] });
+    if (path === `/api/v1/incidents/${incidentID}`) return respond(incident);
+    if (path.endsWith("/analysis")) return respond({ incident_id: incidentID, conclusion: "", hypotheses: [], evidence: [], causal_graph: [] });
+    if (path.endsWith("/events")) return respond({ data: [{ ...incident, trace_id: traceID, event_type: "RPC", occurred_at: startedAt, service_name: "checkout" }] });
+    if (path === `/api/v1/traces/${traceID}`) return respond({ trace_id: traceID, spans: [span] });
+    if (path.endsWith("/logs")) return respond({ data: [log] });
+    return respond({ data: [] });
+  }));
+  render(<App />);
+  fireEvent.click(await screen.findByRole("link", { name: "Inspect" }));
+  fireEvent.click(await screen.findByRole("tab", { name: "Linked telemetry" }));
+  fireEvent.click(await screen.findByRole("link", { name: /Open trace/ }));
+  fireEvent.click(await screen.findByRole("button", { name: /Failed payment/ }));
+  await screen.findByRole("region", { name: "Span Failed payment" });
+  fireEvent.click(screen.getByRole("link", { name: "Logs for this span" }));
+  await screen.findByRole("heading", { name: "Log explorer" });
+  fireEvent.click(screen.getByRole("button", { name: "ERROR" }));
+  await waitFor(() => expect(window.location.search).toContain("severity=ERROR"));
+  fireEvent.click(screen.getByLabelText("Last hour"));
+  await waitFor(() => expect(window.location.search).toContain("range=1h"));
+  fireEvent.click(screen.getByRole("link", { name: /Back to trace/ }));
+  expect(await screen.findByRole("region", { name: "Span Failed payment" })).toBeTruthy();
+  expect(window.location.search).toContain(`spanId=${spanID}`);
+  fireEvent.click(screen.getByRole("link", { name: "Back to incident" }));
+  expect((await screen.findByRole("tab", { name: "Linked telemetry" })).getAttribute("aria-selected")).toBe("true");
+  fireEvent.click(screen.getByRole("link", { name: "Back to incidents" }));
+  await screen.findByLabelText("Filter by service");
+  expect(window.location.search).toContain("service=checkout");
 });

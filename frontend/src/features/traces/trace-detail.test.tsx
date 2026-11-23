@@ -86,3 +86,45 @@ it("keeps rendering a trace with no spans", async () => {
   open([]);
   expect(await screen.findByText("This trace has no spans.")).toBeTruthy();
 });
+
+it("shows correlated logs when the trace API returns 404", async () => {
+  localStorage.setItem("tracepilot-signed-in", "1");
+  window.location.hash = "#/traces/" + traceID;
+  vi.stubGlobal("fetch", vi.fn().mockImplementation((input: string) => {
+    const path = new URL(input, "http://localhost").pathname;
+    if (path === "/api/v1/traces/" + traceID) return new Response("{}", { status: 404 });
+    const data = path.endsWith("/logs") ? [{
+      event_id: "log-1", trace_id: traceID, service_name: "tracepilot-ai-demo",
+      span_id: "0123456789abcdef", body: "policy.retrieved", severity_text: "INFO",
+      occurred_at: new Date(base).toISOString(),
+    }] : [];
+    return new Response(JSON.stringify({ data }), { status: 200 });
+  }));
+  render(<App />);
+  expect(await screen.findByText("Trace not available")).toBeTruthy();
+  expect((await screen.findAllByText(/policy\.retrieved/)).length).toBeGreaterThan(0);
+  expect(screen.getByRole("link", { name: /Open Log explorer/ }).getAttribute("href")).toContain("traceId=" + traceID);
+});
+
+it("shows logs before the trace arrives and keeps the log filter when it loads", async () => {
+  localStorage.setItem("tracepilot-signed-in", "1");
+  window.location.hash = "#/traces/" + traceID;
+  let completeTrace!: (response: Response) => void;
+  const pendingTrace = new Promise<Response>((resolve) => { completeTrace = resolve; });
+  vi.stubGlobal("fetch", vi.fn().mockImplementation((input: string) => {
+    const path = new URL(input, "http://localhost").pathname;
+    if (path === "/api/v1/traces/" + traceID) return pendingTrace;
+    return new Response(JSON.stringify({ data: path.endsWith("/logs") ? [{
+      event_id: "log-1", trace_id: traceID, service_name: "tracepilot-ai-demo",
+      body: "policy.retrieved", severity_text: "INFO", occurred_at: new Date(base).toISOString(),
+    }] : [] }), { status: 200 });
+  }));
+  render(<App />);
+  expect((await screen.findAllByText(/policy\.retrieved/)).length).toBeGreaterThan(0);
+  expect(screen.getByRole("heading", { name: "Loading trace spans" })).toBeTruthy();
+  fireEvent.change(screen.getByLabelText("Filter loaded logs"), { target: { value: "request" } });
+  completeTrace(new Response(JSON.stringify({ trace_id: traceID, spans }), { status: 200 }));
+  await screen.findByRole("heading", { name: "Span waterfall" });
+  expect((screen.getByLabelText("Filter loaded logs") as HTMLInputElement).value).toBe("request");
+  expect(screen.getByText("No loaded logs match this filter.")).toBeTruthy();
+});

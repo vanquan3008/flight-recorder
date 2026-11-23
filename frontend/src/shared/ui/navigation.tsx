@@ -2,7 +2,12 @@ import { ArrowLeft } from "lucide-react";
 import type { ReactNode } from "react";
 import { Link, useLocation, type To } from "react-router-dom";
 
-type Origin = { from?: string };
+type Origin = { from: string; previous?: Origin };
+
+export function traceURL(traceID: string, spanID?: string) {
+  const path = `/traces/${encodeURIComponent(traceID)}`;
+  return spanID ? `${path}?spanId=${encodeURIComponent(spanID)}` : path;
+}
 
 /** Carries scope on shared links; section navigation also keeps the selected window. */
 export function contextURL(to: string, search: string, includeTime = false): string {
@@ -28,15 +33,17 @@ function originLabel(from: string) {
 /** Link that remembers the list URL (path, filters, time window) it was opened from. */
 export function DetailLink({ to, className = "table-link font-medium text-accent no-underline hover:underline", title, children, ...rest }: { to: To; className?: string; title?: string; children: ReactNode; [key: string]: unknown }) {
   const location = useLocation();
-  const origin: Origin = { from: `${location.pathname}${location.search}` };
+  const origin: Origin = { from: `${location.pathname}${location.search}`, previous: (location.state as Origin | null) ?? undefined };
   const target = typeof to === "string" ? contextURL(to, location.search) : to;
   return <Link className={className} to={target} state={origin} title={title} {...rest}>{children}</Link>;
 }
 
 /** Returns to where the operator came from with filters intact, or to a stable list when opened directly. */
-export function BackLink({ fallback, fallbackLabel }: { fallback: string; fallbackLabel: string }) {
+export function BackLink({ fallback, fallbackLabel }: { fallback?: string; fallbackLabel?: string }) {
   const location = useLocation();
-  const from = (location.state as Origin | null)?.from;
-  const target = from || fallback;
-  return <Link className="back-link inline-flex items-center gap-1.5 text-xs text-muted hover:text-text" to={target}><ArrowLeft size={16} /> Back to {from ? originLabel(from) : fallbackLabel}</Link>;
+  const origin = location.state as Origin | null;
+  const from = origin?.from;
+  const target = from || (fallback && contextURL(fallback, location.search));
+  if (!target) return null;
+  return <Link className="back-link inline-flex items-center gap-1.5 text-xs text-muted hover:text-text" to={target} state={origin?.previous}><ArrowLeft size={16} /> Back to {from ? originLabel(from) : fallbackLabel}</Link>;
 }

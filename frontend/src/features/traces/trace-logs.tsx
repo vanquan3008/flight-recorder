@@ -1,11 +1,12 @@
 import { ChevronRight, FileText, Search } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import type { LogRecord } from "../../shared/types";
 import type { PagedQuery } from "../../shared/ui";
 import { CopyButton, DetailLink, Empty, ErrorState, LoadMore, Loading, formatTimeParts, logBodyText } from "../../shared/ui";
 
-export function TraceLogs({ traceID, logs, query, embedded = false }: { traceID: string; logs: LogRecord[]; query: PagedQuery; embedded?: boolean }) {
-  const [search, setSearch] = useState("");
+type Props = { traceID: string; logs: LogRecord[]; query: PagedQuery; search: string; onSearch: (value: string) => void; embedded?: boolean };
+
+export function TraceLogs({ traceID, logs, query, search, onSearch, embedded = false }: Props) {
   const filtered = useMemo(() => {
     const text = search.trim().toLowerCase();
     return text ? logs.filter((log) => `${log.service_name} ${log.severity_text} ${logBodyText(log.body)}`.toLowerCase().includes(text)) : logs;
@@ -14,7 +15,7 @@ export function TraceLogs({ traceID, logs, query, embedded = false }: { traceID:
     <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line-soft px-5 py-4">
       <div className="flex items-center gap-2"><FileText size={16} className="text-muted" /><h2 id="trace-logs-title" className="m-0 text-sm font-semibold">Correlated logs</h2><span className="rounded-md bg-neutral-bg px-1.5 py-0.5 text-[10px] font-medium text-muted">{logs.length} loaded</span></div>
       <div className="flex flex-wrap items-center gap-3">
-        <label className="relative"><Search size={13} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-faint" /><input aria-label="Filter loaded logs" placeholder="Filter loaded logs…" value={search} onChange={(event) => setSearch(event.target.value)} className="border border-glass-field-edge bg-glass-field text-text focus:border-accent focus:ring-2 focus:ring-accent/15 h-8 w-48 rounded-lg py-1 pr-2 pl-8 text-xs" /></label>
+        <label className="relative"><Search size={13} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-faint" /><input aria-label="Filter loaded logs" placeholder="Filter loaded logs…" value={search} onChange={(event) => onSearch(event.target.value)} className="border border-glass-field-edge bg-glass-field text-text focus:border-accent focus:ring-2 focus:ring-accent/15 h-8 w-48 rounded-lg py-1 pr-2 pl-8 text-xs" /></label>
         <DetailLink to={`/logs?traceId=${traceID}`} className="text-xs font-medium text-accent no-underline hover:underline">Open Log explorer ↗</DetailLink>
       </div>
     </div>

@@ -19,9 +19,10 @@ export async function loadTrace(traceID: string, credential: string, signal?: Ab
   const spans: Span[] = [];
   let cursor = "";
   for (let page = 0; page < maxPages; page++) {
-    const query = new URLSearchParams({ limit: String(pageSize) });
+    const query = new URLSearchParams({ limit: String(Math.min(pageSize, maxTraceSpans - spans.length)) });
     if (cursor) query.set("cursor", cursor);
     const result = await api<TraceDetail>(`/api/v1/traces/${traceID}?${query}`, credential, { signal });
+    if (cursor && result.next_cursor === cursor) return { spans, truncated: true };
     spans.push(...result.spans);
     if (!result.next_cursor) return { spans, truncated: false };
     if (spans.length >= maxTraceSpans) return { spans, truncated: true };

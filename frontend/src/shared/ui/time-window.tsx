@@ -1,12 +1,13 @@
 import { RefreshCw } from "lucide-react";
 import { useMemo } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useLocation, useSearchParams } from "react-router-dom";
 
 const durations = { "15m": 15 * 60_000, "1h": 60 * 60_000, "24h": 24 * 60 * 60_000, "7d": 7 * 24 * 60 * 60_000 };
 type Range = keyof typeof durations;
 
 export function useTimeWindow() {
   const [params, setParams] = useSearchParams();
+  const { state } = useLocation();
   const selected = params.get("range") || "15m";
   const preset: Range = Object.hasOwn(durations, selected) ? selected as Range : "15m";
   const anchor = params.get("to");
@@ -28,7 +29,7 @@ export function useTimeWindow() {
     next.set("range", value === "custom" ? "15m" : value);
     next.set("to", new Date(end).toISOString());
     if (value === "custom") next.set("from", new Date(end - window.duration).toISOString());
-    setParams(next);
+    setParams(next, { state });
   };
   return { ...window, select };
 }

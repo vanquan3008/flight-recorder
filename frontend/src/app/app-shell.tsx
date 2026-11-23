@@ -114,8 +114,8 @@ export function AppShell() {
     const next = new URLSearchParams(params);
     next.set("project", current.project.id);
     if (environment) next.set("environment", environment); else next.delete("environment");
-    if (next.toString() !== params.toString()) setParams(next, { replace: true });
-  }, [current, environment, environmentStorageKey, location.pathname, location.search, params, setParams]);
+    if (next.toString() !== params.toString()) setParams(next, { replace: true, state: location.state });
+  }, [current, environment, environmentStorageKey, location.pathname, location.search, location.state, params, setParams]);
 
   const credential = session ? sessionCredential : "";
   const mustChangePassword = Boolean(session?.user.must_change_password);

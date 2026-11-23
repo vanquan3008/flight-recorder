@@ -1,5 +1,6 @@
 import { ExternalLink, Globe, Tag } from "lucide-react";
 import type { LogRecord } from "../../shared/types";
+import { traceURL } from "../../shared/ui/navigation";
 import { CopyButton, DetailLink, formatTime } from "../../shared/ui";
 import { HttpStatusBadge, MethodBadge } from "./log-badges";
 import type { ParsedHttpLog } from "./log-format";
@@ -12,7 +13,7 @@ export function LogDetail({ log, body, http }: { log: LogRecord; body: string; h
     <div className="flex flex-wrap items-start justify-between gap-3 border-b border-line pb-3">
       <div className="min-w-0 text-xs"><strong className="font-semibold">{log.service_name}</strong><p className="mt-1 text-[11px] text-muted">{formatTime(log.occurred_at)}</p><p className="mt-1 break-all font-mono text-[10px] text-faint">Event {log.event_id}</p></div>
       <div className="flex flex-wrap gap-2 text-[11px] font-medium text-accent">
-        {log.trace_id && <DetailLink to={`/traces/${log.trace_id}`} className="inline-flex items-center gap-1 rounded-md border border-line bg-surface-solid px-2.5 py-1.5 no-underline hover:bg-hover"><ExternalLink size={12} />Open trace</DetailLink>}
+        {log.trace_id && <DetailLink to={traceURL(log.trace_id, log.span_id)} className="inline-flex items-center gap-1 rounded-md border border-line bg-surface-solid px-2.5 py-1.5 no-underline hover:bg-hover"><ExternalLink size={12} />Open trace</DetailLink>}
         {log.span_id && <DetailLink to={`/logs?traceId=${log.trace_id ?? ""}&spanId=${log.span_id}`} className="inline-flex items-center gap-1 rounded-md border border-line bg-surface-solid px-2.5 py-1.5 no-underline hover:bg-hover"><Tag size={12} />Logs for this span</DetailLink>}
       </div>
     </div>

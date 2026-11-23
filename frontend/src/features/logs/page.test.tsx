@@ -6,19 +6,19 @@ const traceID = "0123456789abcdef0123456789abcdef";
 const respond = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status });
 const long = "x".repeat(900);
 const logs = [
-  { event_id: "e1", occurred_at: "2026-10-01T00:00:01Z", service_name: "checkout", severity_text: "ERROR", body: { message: "card declined" }, trace_id: traceID },
+  { event_id: "e1", occurred_at: "2026-10-01T00:00:01Z", service_name: "checkout", severity_text: "ERROR", body: { message: "card declined" }, trace_id: traceID, span_id: "0123456789abcdef" },
   { event_id: "e2", occurred_at: "2026-10-01T00:00:00Z", service_name: "worker", severity_text: "INFO", body: long },
 ];
 
 afterEach(() => { cleanup(); sessionStorage.clear(); window.history.pushState(null, "", "/"); window.location.hash = ""; vi.unstubAllGlobals(); });
 
-function open(hash: string, status = 200) {
+function open(hash: string) {
   localStorage.setItem("tracepilot-signed-in", "1");
   const path = hash.startsWith("#") ? hash.slice(1) : hash;
   window.history.pushState(null, "", path);
   window.location.hash = "";
   const fetch = vi.fn().mockImplementation((input: string) => new URL(input, "http://localhost").pathname === "/api/v1/logs"
-    ? (status === 200 ? respond({ data: logs }) : respond({ error: { message: "log content search range must not exceed 24 hours" } }, status))
+    ? respond({ data: logs })
     : respond({ data: [] }));
   vi.stubGlobal("fetch", fetch);
   render(<App />);
@@ -36,6 +36,7 @@ it("reads logs on their own inside the selected time window and links correlated
   expect(url.searchParams.get("severity")).toBe("ERROR");
   const traceLink = new URL(screen.getByRole("link", { name: "Open trace" }).getAttribute("href")!, "http://localhost");
   expect(traceLink.pathname).toBe(`/traces/${traceID}`);
+  expect(traceLink.searchParams.get("spanId")).toBe("0123456789abcdef");
   await waitFor(() => {
     const scopedLink = new URL(screen.getByRole("link", { name: "Open trace" }).getAttribute("href")!, "http://localhost");
     expect(scopedLink.searchParams.get("project")).toBe("01900000-0000-7000-8000-0000000000a1");
@@ -52,23 +53,33 @@ it("collapses a very long log body until the operator expands it", async () => {
   expect(screen.getByRole("button", { name: "Collapse log details" })).toBeTruthy();
 });
 
-it("opens a trace's logs without a time bound and keeps the span filter", async () => {
-  const fetch = open(`#/logs?traceId=${traceID}&spanId=0123456789abcdef`);
+it("opens a trace's logs without a time bound and keeps the span filter on refresh", async () => {
+  const fetch = open(`#/logs?project=01900000-0000-7000-8000-0000000000a1&traceId=${traceID}&spanId=0123456789abcdef`);
   await screen.findByText(/card declined/);
   const url = logRequest(fetch);
   expect(url.searchParams.get("traceId")).toBe(traceID);
   expect(url.searchParams.get("spanId")).toBe("0123456789abcdef");
   expect(url.searchParams.has("from")).toBe(false);
   expect((screen.getByLabelText("Any time") as HTMLInputElement).checked).toBe(true);
+  const requests = () => fetch.mock.calls.filter(([path]) => String(path).startsWith("/api/v1/logs"));
+  const before = requests().length;
+  fireEvent.click(screen.getByRole("button", { name: "Refresh window" }));
+  await waitFor(() => expect(requests()).toHaveLength(before + 1));
+  expect(requests().at(-1)?.[0]).toBe(requests().at(0)?.[0]);
 });
 
-it("explains a rejected body search and lets the operator clear filters", async () => {
-  open("#/logs?range=7d&search=timeout", 400);
-  expect(await screen.findByText(/must not exceed 24 hours/)).toBeTruthy();
-  expect(screen.getByRole("note").textContent).toContain("24 hours or less");
+it("does not send body search until the operator chooses a supported window", async () => {
+  const fetch = open("#/logs?range=7d&search=timeout");
+  expect(await screen.findByText(/Body search needs a time range/)).toBeTruthy();
+  expect(fetch.mock.calls.some(([path]) => String(path).startsWith("/api/v1/logs"))).toBe(false);
+  fireEvent.click(screen.getByRole("button", { name: "Use last 24 hours" }));
+  await screen.findByText(/card declined/);
+  const request = logRequest(fetch);
+  expect(request.searchParams.get("search")).toBe("timeout");
+  expect(Date.parse(request.searchParams.get("to")!) - Date.parse(request.searchParams.get("from")!)).toBe(24 * 60 * 60_000);
   fireEvent.click(screen.getByRole("button", { name: /Clear filters/ }));
   await waitFor(() => expect(window.location.search).not.toContain("search="));
-  expect(window.location.search).toContain("range=7d");
+  expect(window.location.search).toContain("range=24h");
 });
 
 it("filters by severity from the quick chips and keeps the other filters", async () => {

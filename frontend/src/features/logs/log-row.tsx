@@ -3,6 +3,7 @@ import { memo, useId, useMemo, useState } from "react";
 import type { MouseEvent } from "react";
 import type { LogRecord } from "../../shared/types";
 import { Badge, CopyButton, DetailLink, formatTimeParts, logBodyText } from "../../shared/ui";
+import { traceURL } from "../../shared/ui/navigation";
 import { HttpStatusBadge, MethodBadge } from "./log-badges";
 import { LogDetail } from "./log-detail";
 import { normalizeSeverityText, parseHttpLog } from "./log-format";
@@ -128,7 +129,7 @@ export const LogRow = memo(function LogRow({ log, forceOpen }: LogRowProps) {
         <td className={`${cell} log-col-trace ${place.trace}`}>
           {log.trace_id ? (
             <DetailLink
-              to={`/traces/${log.trace_id}`}
+              to={traceURL(log.trace_id, log.span_id)}
               className="inline-flex items-center gap-1 whitespace-nowrap text-[11px] font-medium text-accent no-underline hover:underline"
             >
               Open trace

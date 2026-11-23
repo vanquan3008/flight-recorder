@@ -22,6 +22,7 @@ it("applies every explorer filter to live events", () => {
     search: "payment",
   });
   expect(matchesLogFilters(log, params)).toBe(true);
+  expect(matchesLogFilters(log, new URLSearchParams({ ...Object.fromEntries(params), traceId: "TRACE", spanId: "SPAN" }))).toBe(true);
 
   for (const field of ["service", "severity", "traceId", "spanId", "search"]) {
     const changed = new URLSearchParams(params);

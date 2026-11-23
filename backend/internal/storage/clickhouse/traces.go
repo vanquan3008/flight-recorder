@@ -1,10 +1,10 @@
 package clickhouse
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"sort"
 	"strconv"
 	"strings"
@@ -161,32 +161,41 @@ func (store *Store) GetTrace(ctx context.Context, projectID, environmentID, trac
 		return nil, false, err
 	}
 	defer response.Close()
-	rows := bufio.NewScanner(response)
-	rows.Buffer(make([]byte, 4096), maxResponseBytes)
-	spans, size := []query.SpanRecord{}, int64(0)
-	for rows.Scan() {
-		line := rows.Bytes()
+	return readSpanPage(ctx, response, page)
+}
+
+func readSpanPage(ctx context.Context, body io.Reader, page query.SpanPage) ([]query.SpanRecord, bool, error) {
+	// Check only the next row to decide whether a cursor is needed. Cap wire bytes
+	// independently of the smaller budget for attributes in the returned page.
+	input := &io.LimitedReader{R: body, N: maxResponseBytes + 1}
+	decoder := json.NewDecoder(input)
+	spans := make([]query.SpanRecord, 0, page.Limit)
+	var size int64
+	for {
 		var row storedSpan
-		if err := json.Unmarshal(line, &row); err != nil {
-			if readErr := rows.Err(); readErr != nil {
-				return nil, false, responseError(ctx, readErr, "read ClickHouse span")
-			}
-			return nil, false, errors.New("decode ClickHouse span")
+		err := decoder.Decode(&row)
+		if decoder.InputOffset() > maxResponseBytes || (err != nil && input.N == 0) {
+			return nil, false, errors.New("ClickHouse result exceeds 32 MiB; narrow the span query")
 		}
-		size += int64(len(line))
-		if len(spans) == page.Limit || (len(spans) > 0 && page.MaxBytes > 0 && size > page.MaxBytes) {
+		if errors.Is(err, io.EOF) {
+			return spans, false, nil
+		}
+		if err != nil {
+			return nil, false, responseError(ctx, err, "read ClickHouse response")
+		}
+		if len(spans) == page.Limit {
 			return spans, true, nil
 		}
 		record, err := row.record()
 		if err != nil {
 			return nil, false, err
 		}
+		size += int64(len(record.ResourceAttributes) + len(record.ScopeAttributes) + len(record.Attributes) + len(record.Events) + len(record.Links))
+		if len(spans) > 0 && page.MaxBytes > 0 && size > page.MaxBytes {
+			return spans, true, nil
+		}
 		spans = append(spans, record)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, false, responseError(ctx, err, "read ClickHouse span")
-	}
-	return spans, false, nil
 }
 
 func (row storedSpan) record() (query.SpanRecord, error) {
