@@ -2,11 +2,12 @@ import { secondaryButtonClass } from "../../shared/ui/styles";
 import { Columns, Radio, Rows } from "lucide-react";
 import type { FormEvent } from "react";
 import { useCallback, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useLocation, useSearchParams } from "react-router-dom";
 import { useAuth } from "../../shared/session";
 import { compactSearchParams, pageItems, queryString, useLiveStream, usePagedQuery } from "../../shared/api";
 import type { LogRecord } from "../../shared/types";
 import {
+  BackLink,
   Empty,
   ErrorState,
   Loading,
@@ -23,6 +24,7 @@ const filterNames = ["service", "severity", "search", "traceId", "spanId"];
 
 export function LogsPage() {
   const { credential } = useAuth();
+  const { state } = useLocation();
   const [params, setParams] = useSearchParams();
   const window = useTimeWindow();
   const [liveTail, setLiveTail] = useState(false);
@@ -41,11 +43,11 @@ export function LogsPage() {
 
   const traceID = params.get("traceId") || "";
   const anyTime = Boolean(traceID) && ((!params.has("range") && !params.has("from") && !params.has("to")) || params.get("range") === "any");
-  const search = params.get("search") || "";
-  const longWindow = !anyTime && window.duration > 24 * 60 * 60_000;
+  const search = params.get("search")?.trim();
+  const searchNeedsWindow = Boolean(search) && (anyTime || window.duration > 24 * 60 * 60_000);
   const values = Object.fromEntries(filterNames.map((name) => [name, params.get(name) || undefined]));
   const path = `/api/v1/logs?${queryString({ ...values, from: anyTime ? undefined : window.from, to: anyTime ? undefined : window.to })}`;
-  const query = usePagedQuery<LogRecord>(["logs"], path, credential);
+  const query = usePagedQuery<LogRecord>(["logs"], path, credential, !searchNeedsWindow);
   const pagedLogs = pageItems(query.data?.pages);
   const filteredLive = liveLogs.filter((log) => matchesLogFilters(log, params));
   const logs = liveTail ? mergeLogs(filteredLive, pagedLogs) : pagedLogs;
@@ -53,17 +55,18 @@ export function LogsPage() {
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    setParams(compactSearchParams(event.currentTarget, params, ["range", "from", "to"]));
+    setParams(compactSearchParams(event.currentTarget, params, ["range", "from", "to"]), { state });
   };
   const pick = (severity: string) => {
     const next = new URLSearchParams(params);
     if (severity) next.set("severity", severity); else next.delete("severity");
-    setParams(next);
+    setParams(next, { state });
   };
-  const clear = () => setParams(new URLSearchParams([...params].filter(([key]) => !filterNames.includes(key))));
+  const clear = () => setParams(new URLSearchParams([...params].filter(([key]) => !filterNames.includes(key))), { state });
 
   return (
     <div className="logs-page flex h-full max-h-full min-h-0 w-full max-w-full flex-1 flex-col overflow-hidden">
+      <div className="mb-2 empty:hidden"><BackLink /></div>
       <PageHeader
         title="Log explorer"
         action={
@@ -83,7 +86,7 @@ export function LogsPage() {
             </button>
             <TimeWindowFilter
               range={anyTime ? "any" : window.range}
-              select={window.select}
+              select={(range) => range === "any" && anyTime && !searchNeedsWindow ? void query.refetch() : window.select(range)}
               allowAny={Boolean(traceID)}
               from={window.from}
               to={window.to}
@@ -119,23 +122,23 @@ export function LogsPage() {
         </div>
       </div>
 
-      {search && (anyTime || longWindow) && (
-        <p className="muted text-muted log-note -mt-1 mb-4 text-xs" role="note">
-          Body search needs a time range of 24 hours or less. Choose a shorter range if the request is rejected.
-        </p>
-      )}
-
       <Panel
         fit
         className="log-panel flex min-h-0 flex-1 flex-col overflow-hidden"
         title="Logs"
         meta={
-          query.isPending
+          query.isPending || searchNeedsWindow
             ? undefined
             : `${logs.length} loaded${liveTail && liveLogs.length > 0 ? ` (${liveLogs.length} live)` : ""}${query.hasNextPage ? " · scroll for more" : ""}`
         }
       >
-        {query.isPending ? (
+        {searchNeedsWindow ? (
+          <Empty>
+            <span>Body search needs a time range of 24 hours or less.
+              {" "}<button type="button" className="text-accent underline" onClick={() => window.select("24h")}>Use last 24 hours</button>
+            </span>
+          </Empty>
+        ) : query.isPending ? (
           <Loading />
         ) : query.isError ? (
           <ErrorState error={query.error} retry={() => void query.refetch()} />

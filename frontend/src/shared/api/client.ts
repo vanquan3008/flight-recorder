@@ -139,10 +139,10 @@ function pageURL(path: string, cursor: string): string {
   return `${url.pathname}${url.search}`;
 }
 
-export function usePagedQuery<T>(key: QueryKey, path: string, credential: string) {
+export function usePagedQuery<T>(key: QueryKey, path: string, credential: string, enabled = true) {
   const query = useInfiniteQuery({
     queryKey: [...key, requestScopeKey(), path],
-    enabled: Boolean(credential),
+    enabled: Boolean(credential) && enabled,
     initialPageParam: "",
     queryFn: ({ pageParam, signal }) =>
       api<Page<T>>(pageURL(path, pageParam), credential, { signal }),

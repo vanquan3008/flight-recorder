@@ -90,7 +90,7 @@ const (
 // present exactly when more spans follow, so a client can always tell a
 // complete trace from a partial one.
 func (server *Server) getTrace(responseWriter http.ResponseWriter, request *http.Request, principal auth.Principal) {
-	traceID := request.PathValue("traceID")
+	traceID := strings.ToLower(request.PathValue("traceID"))
 	if !requireTraceID(responseWriter, traceID) {
 		return
 	}
@@ -140,7 +140,7 @@ func parseSpanPage(request *http.Request) (int, pageCursor, error) {
 }
 
 func (server *Server) listTraceLogs(responseWriter http.ResponseWriter, request *http.Request, principal auth.Principal) {
-	traceID := request.PathValue("traceID")
+	traceID := strings.ToLower(request.PathValue("traceID"))
 	if !requireTraceID(responseWriter, traceID) {
 		return
 	}
@@ -227,7 +227,8 @@ func parseTraceFilter(request *http.Request) (query.TraceFilter, pageCursor, err
 	if parseError != nil {
 		return query.TraceFilter{}, pageCursor{}, parseError
 	}
-	traceID := strings.TrimSpace(values.Get("traceId"))
+	cursor.ID = strings.ToLower(cursor.ID)
+	traceID := strings.ToLower(strings.TrimSpace(values.Get("traceId")))
 	if traceID != "" && !validTraceID(traceID) {
 		return query.TraceFilter{}, pageCursor{}, errors.New("traceId must be 16 bytes of hexadecimal")
 	}
@@ -262,11 +263,11 @@ func parseLogFilter(request *http.Request) (query.LogFilter, pageCursor, error) 
 	if parseError != nil {
 		return query.LogFilter{}, pageCursor{}, parseError
 	}
-	traceID := strings.TrimSpace(values.Get("traceId"))
+	traceID := strings.ToLower(strings.TrimSpace(values.Get("traceId")))
 	if traceID != "" && !validTraceID(traceID) {
 		return query.LogFilter{}, pageCursor{}, errors.New("traceId must be 16 bytes of hexadecimal")
 	}
-	spanID := strings.TrimSpace(values.Get("spanId"))
+	spanID := strings.ToLower(strings.TrimSpace(values.Get("spanId")))
 	if spanID != "" && !validSpanID(spanID) {
 		return query.LogFilter{}, pageCursor{}, errors.New("spanId must be 8 bytes of hexadecimal")
 	}

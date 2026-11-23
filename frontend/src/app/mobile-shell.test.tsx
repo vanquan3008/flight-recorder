@@ -83,17 +83,18 @@ describe("console on a phone", () => {
 
   it("keeps log search inline and applies the identifiers from the filter sheet", async () => {
     const fetchMock = stubServer();
-    openOnPhone(`/logs?project=${alpha.id}&service=api`);
+    openOnPhone(`/logs?project=${alpha.id}&service=api&range=15m`);
     fireEvent.change(await screen.findByRole("searchbox", { name: "Search log body" }), { target: { value: "timeout" } });
     fireEvent.click(screen.getByRole("button", { name: /^Filters/ }));
     const sheet = screen.getByRole("dialog", { name: "Filter logs" });
     expect((within(sheet).getByLabelText("Service") as HTMLInputElement).value).toBe("api");
     fireEvent.change(within(sheet).getByLabelText("Service"), { target: { value: "checkout" } });
-    fireEvent.change(within(sheet).getByLabelText("Trace ID"), { target: { value: "abc123" } });
+    const traceID = "0123456789abcdef0123456789abcdef";
+    fireEvent.change(within(sheet).getByLabelText("Trace ID"), { target: { value: traceID } });
     fireEvent.click(within(sheet).getByRole("button", { name: "Apply" }));
     await waitFor(() => {
       const params = new URLSearchParams(window.location.search);
-      expect([params.get("service"), params.get("traceId"), params.get("search")]).toEqual(["checkout", "abc123", "timeout"]);
+      expect([params.get("service"), params.get("traceId"), params.get("search")]).toEqual(["checkout", traceID, "timeout"]);
     });
     await waitFor(() => expect(fetchMock.mock.calls.some(([path]) => String(path).includes("service=checkout") && String(path).includes("search=timeout"))).toBe(true));
   });

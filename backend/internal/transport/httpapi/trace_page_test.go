@@ -17,16 +17,62 @@ const pagedTraceID = "0123456789abcdef0123456789abcdef"
 
 type tracePageBackend struct {
 	authOnlyBackend
-	spans   []query.SpanRecord
-	hasMore bool
-	err     error
-	page    query.SpanPage
-	project string
+	spans     []query.SpanRecord
+	hasMore   bool
+	err       error
+	page      query.SpanPage
+	project   string
+	traceID   string
+	logFilter query.LogFilter
 }
 
-func (backend *tracePageBackend) GetTrace(_ context.Context, project, _, _ string, page query.SpanPage) ([]query.SpanRecord, bool, error) {
-	backend.project, backend.page = project, page
+func (backend *tracePageBackend) GetTrace(_ context.Context, project, _, traceID string, page query.SpanPage) ([]query.SpanRecord, bool, error) {
+	backend.project, backend.page, backend.traceID = project, page, traceID
 	return backend.spans, backend.hasMore, backend.err
+}
+
+func (backend *tracePageBackend) ListLogs(_ context.Context, _ string, filter query.LogFilter) ([]query.LogRecord, error) {
+	backend.logFilter = filter
+	return nil, nil
+}
+
+func TestTraceAndLogReadsNormalizeHexIDs(t *testing.T) {
+	const spanID = "0123456789abcdef"
+	backend := &tracePageBackend{spans: []query.SpanRecord{spanAt(1, "01900000-0000-7000-8000-000000000001")}}
+	server := newTestServer(nil)
+	server.backend = backend
+	router := http.NewServeMux()
+	server.registerAPIRoutes(router)
+	get := func(path string) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(http.MethodGet, path, nil)
+		signIn(request, "user")
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		if response.Code != http.StatusOK {
+			t.Fatalf("GET %s: %d %s", path, response.Code, response.Body.String())
+		}
+		return response
+	}
+	upperTrace, upperSpan := strings.ToUpper(pagedTraceID), strings.ToUpper(spanID)
+	response := get("/api/v1/traces/" + upperTrace)
+	var trace traceResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &trace); err != nil || trace.TraceID != pagedTraceID || backend.traceID != pagedTraceID {
+		t.Fatalf("trace ID sent to storage %q and returned %q, decode error: %v", backend.traceID, trace.TraceID, err)
+	}
+	for _, path := range []string{
+		"/api/v1/traces/" + upperTrace + "/logs?spanId=" + upperSpan,
+		"/api/v1/logs?traceId=" + upperTrace + "&spanId=" + upperSpan,
+	} {
+		get(path)
+		if backend.logFilter.TraceID != pagedTraceID || backend.logFilter.SpanID != spanID {
+			t.Fatalf("log filters reached storage without normalization: %+v", backend.logFilter)
+		}
+	}
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/traces?traceId="+upperTrace+"&cursor="+encodeCursor(pageCursor{At: time.Now(), ID: upperTrace}), nil)
+	filter, cursor, err := parseTraceFilter(request)
+	if err != nil || filter.TraceID != pagedTraceID || cursor.ID != pagedTraceID {
+		t.Fatalf("trace list filter or cursor not normalized: %+v %+v %v", filter, cursor, err)
+	}
 }
 
 func getTracePage(t *testing.T, backend *tracePageBackend, queryString string) (*httptest.ResponseRecorder, map[string]any) {

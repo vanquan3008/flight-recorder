@@ -1,6 +1,7 @@
 import { ChevronDown, ChevronRight, CircleAlert, Layers3, Search, X } from "lucide-react";
 import type { CSSProperties, ReactNode } from "react";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useLocation, useSearchParams } from "react-router-dom";
 import { BottomSheet, Empty, useMediaQuery } from "../../shared/ui";
 import { SpanDetail } from "./span-detail";
 import { getSpanDisplayInfo } from "./trace-format";
@@ -13,7 +14,9 @@ const estimateRowHeight = () => ROW_HEIGHT;
 const columns = "grid grid-cols-[minmax(0,1fr)_26%_3.75rem] items-center gap-2 @min-[36rem]/waterfall:grid-cols-[minmax(0,42%)_minmax(0,1fr)_4.5rem]";
 
 export function Waterfall({ model, traceID, focus, onFocus, children }: Props) {
-  const [selected, setSelected] = useState("");
+  const { state } = useLocation();
+  const [params, setParams] = useSearchParams();
+  const selected = params.get("spanId")?.toLowerCase() ?? "";
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState("");
   const [errorsOnly, setErrorsOnly] = useState(false);
@@ -30,6 +33,19 @@ export function Waterfall({ model, traceID, focus, onFocus, children }: Props) {
   }, [model.rows, collapsed, search, errorsOnly, filtering]);
   const ticks = useMemo(() => axisTicks(model.totalMs), [model.totalMs]);
   const { virtualItems, totalHeight, isVirtualized } = useVirtualList({ count: rows.length, estimateHeight: estimateRowHeight, containerRef: viewportRef, overscan: 8 });
+  useEffect(() => {
+    if (!selected) return;
+    const viewport = viewportRef.current;
+    const index = rows.findIndex((row) => row.span.span_id === selected);
+    if (!viewport || index < 0) return;
+    const top = index * ROW_HEIGHT;
+    if (top < viewport.scrollTop || top + ROW_HEIGHT > viewport.scrollTop + viewport.clientHeight) viewport.scrollTop = top;
+  }, [rows, selected]);
+  const setSelected = (id: string) => {
+    const next = new URLSearchParams(params);
+    if (id) next.set("spanId", id); else next.delete("spanId");
+    setParams(next, { replace: true, state });
+  };
   const resetScroll = () => { if (viewportRef.current) viewportRef.current.scrollTop = 0; };
   const toggle = (id: string) => setCollapsed((current) => {
     const next = new Set(current);
@@ -43,7 +59,8 @@ export function Waterfall({ model, traceID, focus, onFocus, children }: Props) {
   };
   const closeInspector = () => {
     setSelected("");
-    const opener = selectedButton.current?.isConnected ? selectedButton.current : searchRef.current;
+    const highlighted = viewportRef.current?.querySelector<HTMLButtonElement>(".wf-main[aria-pressed='true']");
+    const opener = highlighted ?? (selectedButton.current?.isConnected ? selectedButton.current : searchRef.current);
     opener?.focus({ preventScroll: true });
   };
   const renderRow = (row: typeof rows[0], top?: number) => {
@@ -81,6 +98,10 @@ export function Waterfall({ model, traceID, focus, onFocus, children }: Props) {
         </div>
       </div>
     </header>
+    {selected && !selectedRow && <div className="flex flex-wrap items-center gap-2 border-b border-line-soft px-4 py-2 text-xs text-muted">
+      <span role="status">The linked span is outside the spans loaded for this trace.</span>
+      <button type="button" className="text-accent underline" onClick={closeInspector}>Clear span selection</button>
+    </div>}
     <div className={`grid min-w-0 ${selectedRow && !useSheet ? "grid-cols-[minmax(0,1fr)_clamp(23rem,35%,30rem)]" : "grid-cols-1"}`}>
       <div className="@container/waterfall min-w-0">
         {(model.rows.some((row) => row.hasChildren) || focus || filtering) && <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-line-soft px-4 py-1.5 text-xs text-muted">

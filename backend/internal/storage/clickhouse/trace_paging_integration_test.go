@@ -54,14 +54,14 @@ func storeSpans(t *testing.T, store *Store, spans ...telemetry.Event) {
 
 // seedLargeTrace stores count spans of one trace. Spans share start times in
 // threes, which is where a cursor on the timestamp alone would skip or repeat rows.
-func seedLargeTrace(t *testing.T, store *Store, count int, padding string) []string {
+func seedLargeTrace(t *testing.T, store *Store, count int, attributes map[string]any) []string {
 	t.Helper()
 	base := time.Now().UTC().Truncate(time.Second).Add(-time.Hour)
 	ids := make([]string, 0, count)
 	var spans []telemetry.Event
 	for index := range count {
 		span := flowSpan("api", base.Add(time.Duration(index/3)*time.Millisecond), fmt.Sprintf("%016x", index+1), "")
-		span.TraceID, span.RecordAttributes = pagingTraceID, map[string]any{"padding": padding}
+		span.TraceID, span.RecordAttributes = pagingTraceID, attributes
 		spans, ids = append(spans, span), append(ids, span.ID)
 	}
 	storeSpans(t, store, spans...)
@@ -94,7 +94,7 @@ func readAllPages(t *testing.T, store *Store, limit int, maxBytes int64) (ids []
 
 func TestTracePagesCoverEverySpanOnceInOrderIntegration(t *testing.T) {
 	store := integrationStore(t)
-	stored := seedLargeTrace(t, store, 1203, "x")
+	stored := seedLargeTrace(t, store, 1203, map[string]any{"padding": "x"})
 	got, pages := readAllPages(t, store, 500, 8<<20)
 	if pages != 3 || len(got) != len(stored) {
 		t.Fatalf("pages=%d spans=%d, want 3 pages covering %d spans", pages, len(got), len(stored))
@@ -115,7 +115,7 @@ func TestTracePagesCoverEverySpanOnceInOrderIntegration(t *testing.T) {
 
 func TestTracePageByteBudgetIntegration(t *testing.T) {
 	store, ctx := integrationStore(t), context.Background()
-	stored := seedLargeTrace(t, store, 60, fmt.Sprintf("%02000d", 7))
+	stored := seedLargeTrace(t, store, 60, map[string]any{"padding": strings.Repeat("x", 2000)})
 	spans, more, err := store.GetTrace(ctx, testProject, testEnvironment, pagingTraceID, query.SpanPage{Limit: 500, MaxBytes: 12 << 10})
 	if err != nil || len(spans) == 0 || len(spans) >= len(stored) || !more {
 		t.Fatalf("got %d of %d spans, more=%t, %v; the byte budget must cut the page and say more follows", len(spans), len(stored), more, err)
@@ -129,6 +129,20 @@ func TestTracePageByteBudgetIntegration(t *testing.T) {
 	other := "01900000-0000-7000-8000-0000000000ff"
 	if spans, more, err := store.GetTrace(ctx, other, testEnvironment, pagingTraceID, query.SpanPage{Limit: 500}); err != nil || len(spans) != 0 || more {
 		t.Fatalf("another project read %d spans (more=%t, err=%v)", len(spans), more, err)
+	}
+}
+
+func TestTracePageReturnsCursorWhenQueryExceedsWireLimitIntegration(t *testing.T) {
+	store := integrationStore(t)
+	const spans = 500
+	attributes := make(map[string]any, 24)
+	for index := range 24 {
+		attributes[fmt.Sprintf("test.attribute.%02d", index)] = strings.Repeat("x", 3<<10)
+	}
+	stored := seedLargeTrace(t, store, spans, attributes)
+	got, pages := readAllPages(t, store, spans, 8<<20)
+	if len(got) != len(stored) || pages != 5 {
+		t.Fatalf("oversized query returned %d of %d spans in %d pages, want 5", len(got), len(stored), pages)
 	}
 }
 

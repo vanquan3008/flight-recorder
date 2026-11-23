@@ -95,6 +95,25 @@ test("supports error triage, span search and keyboard inspector tabs", async ({ 
   await expect(page.locator(".wf-name")).toHaveText("SELECT orders");
 });
 
+test("opens a linked span off-screen and restores it after filtering its logs", async ({ page }) => {
+  await openTrace(page, "database");
+  const url = new URL(page.url());
+  url.searchParams.set("spanId", "db-50");
+  await page.goto(url.href);
+  const inspector = page.getByRole("complementary", { name: "Selected span inspector" });
+  await expect(inspector).toBeVisible();
+  await expect(page.locator('[data-span-id="db-50"] .wf-main')).toHaveAttribute("aria-pressed", "true");
+  await inspector.getByRole("link", { name: "Logs for this span" }).click();
+  await expect(page.getByRole("heading", { name: "Log explorer" })).toBeVisible();
+  await expect(page).toHaveURL(/spanId=db-50/);
+  const lastHour = page.getByRole("radio", { name: "Last hour" });
+  await lastHour.click();
+  await expect(lastHour).toBeChecked();
+  await page.getByRole("link", { name: "Back to trace" }).click();
+  await expect(inspector).toBeVisible();
+  await expect(page.locator('[data-span-id="db-50"] .wf-main')).toHaveAttribute("aria-pressed", "true");
+});
+
 test("gives long SQL the inspector width and keeps its close control visible while scrolling", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1807, height: 822 });
   await openTrace(page, "database");

@@ -49,5 +49,22 @@ it("never loops forever on a server that keeps offering more", async () => {
   vi.stubGlobal("fetch", fetchMock);
   const trace = await loadTrace(traceID, "key");
   expect(trace.truncated).toBe(true);
-  expect(fetchMock.mock.calls.length).toBeLessThanOrEqual(60);
+  expect(trace.spans).toHaveLength(1);
+  expect(fetchMock.mock.calls.length).toBe(2);
+});
+
+it("requests only the remaining spans after a short page", async () => {
+  const requested: number[] = [];
+  vi.stubGlobal("fetch", vi.fn().mockImplementation((input: string) => {
+    const url = new URL(input, "http://localhost");
+    const limit = Number(url.searchParams.get("limit"));
+    const from = Number(url.searchParams.get("cursor") || 0);
+    const count = from === 0 ? 499 : limit;
+    requested.push(limit);
+    return Promise.resolve(new Response(JSON.stringify({ trace_id: traceID, spans: spans(from, count), next_cursor: String(from + count) })));
+  }));
+  const trace = await loadTrace(traceID, "key");
+  expect(trace.spans).toHaveLength(maxTraceSpans);
+  expect(trace.truncated).toBe(true);
+  expect(requested.at(-1)).toBe(1);
 });
