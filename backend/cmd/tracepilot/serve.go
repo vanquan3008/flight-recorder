@@ -131,7 +131,11 @@ func runServer(arguments []string) int {
 	managementServer := httpapi.New(
 		cfg,
 		logger,
-		buildReadinessCheck(store, ingestionPipeline, metricsPipeline, otlpServer),
+		buildReadinessCheck(store,
+			namedReadyComponent{name: "event pipeline", reporter: ingestionPipeline},
+			namedReadyComponent{name: "metrics pipeline", reporter: metricsPipeline},
+			namedReadyComponent{name: "OTLP listener", reporter: otlpServer},
+		),
 		selfMetrics,
 		store,
 		replayService,
