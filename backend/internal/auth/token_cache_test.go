@@ -14,6 +14,49 @@ type mockTokenSource struct {
 	err    error
 }
 
+type pendingTokenRead struct {
+	started, release chan struct{}
+	reads            int
+}
+
+func (source *pendingTokenRead) GetIngestToken(context.Context, string) (IngestToken, error) {
+	source.reads++
+	if source.reads == 1 {
+		close(source.started)
+		<-source.release
+		return IngestToken{ID: "revoked-token"}, nil
+	}
+	now := time.Now()
+	return IngestToken{ID: "revoked-token", RevokedAt: &now}, nil
+}
+
+func TestInFlightTokenReadCannotRestoreRevokedToken(t *testing.T) {
+	source := &pendingTokenRead{started: make(chan struct{}), release: make(chan struct{})}
+	cache := NewCachedTokenSource(source, time.Hour, 8).WithByteCache(&mockByteCache{data: make(map[string][]byte)})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	result := make(chan IngestToken, 1)
+	go func() {
+		token, _ := cache.GetIngestToken(ctx, "revoked-token")
+		result <- token
+	}()
+	<-source.started
+	cache.Invalidate("revoked-token")
+	close(source.release)
+	select {
+	case token := <-result:
+		if token.RevokedAt == nil {
+			t.Fatal("in-flight lookup returned a stale token")
+		}
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	token, err := cache.GetIngestToken(ctx, "revoked-token")
+	if err != nil || token.RevokedAt == nil {
+		t.Fatalf("cached token has no revocation: %+v, %v", token, err)
+	}
+}
+
 func (m *mockTokenSource) GetIngestToken(_ context.Context, id string) (IngestToken, error) {
 	m.calls.Add(1)
 	if m.err != nil {

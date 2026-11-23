@@ -30,6 +30,8 @@ type CacheObserver interface {
 // and an optional distributed cache (Redis) with automatic local fallback.
 type CachedTokenSource struct {
 	mu        sync.RWMutex
+	writes    sync.Mutex
+	revision  uint64
 	source    IngestTokenSource
 	byteCache ByteCache
 	entries   map[string]cachedTokenEntry
@@ -70,80 +72,77 @@ func (cache *CachedTokenSource) WithObserver(observer CacheObserver) *CachedToke
 
 // GetIngestToken returns the cached IngestToken if fresh; otherwise it queries the underlying source.
 func (cache *CachedTokenSource) GetIngestToken(ctx context.Context, tokenID string) (IngestToken, error) {
-	now := cache.now()
-
-	// 1. Check in-memory map
-	cache.mu.RLock()
-	entry, found := cache.entries[tokenID]
-	cache.mu.RUnlock()
-	if found && now.Sub(entry.loadedAt) < cache.ttl {
-		if cache.observer != nil {
-			cache.observer.ObserveAuthCache("token", "hit")
+	key := "ingest_token:" + tokenID
+	for ctx.Err() == nil {
+		now := cache.now()
+		cache.mu.RLock()
+		entry, found := cache.entries[tokenID]
+		revision := cache.revision
+		cache.mu.RUnlock()
+		if found && now.Sub(entry.loadedAt) < cache.ttl {
+			cache.observe("hit")
+			return entry.token, entry.err
 		}
-		return entry.token, entry.err
-	}
-
-	// 2. Check external / distributed cache (Redis) if configured
-	if cache.byteCache != nil {
-		raw, found, err := cache.byteCache.Get(ctx, "ingest_token:"+tokenID)
-		if err == nil && found && len(raw) > 0 {
-			var tok IngestToken
-			if jsonErr := json.Unmarshal(raw, &tok); jsonErr == nil {
-				if cache.observer != nil {
-					cache.observer.ObserveAuthCache("token", "hit")
+		var token IngestToken
+		if cache.byteCache != nil {
+			raw, found, err := cache.byteCache.Get(ctx, key)
+			if err == nil && found && json.Unmarshal(raw, &token) == nil {
+				if !cache.publish(ctx, tokenID, revision, cachedTokenEntry{token: token, loadedAt: now}, false) {
+					continue
 				}
-				// Populate local memory map for fast sub-millisecond future hits
-				cache.mu.Lock()
-				if len(cache.entries) >= cache.limit {
-					cache.entries = make(map[string]cachedTokenEntry)
-				}
-				cache.entries[tokenID] = cachedTokenEntry{
-					token:    tok,
-					err:      nil,
-					loadedAt: now,
-				}
-				cache.mu.Unlock()
-				return tok, nil
+				cache.observe("hit")
+				return token, nil
 			}
 		}
-	}
-
-	if cache.observer != nil {
-		cache.observer.ObserveAuthCache("token", "miss")
-	}
-
-	// 3. Fall back to database query
-	token, lookupError := cache.source.GetIngestToken(ctx, tokenID)
-	// Cache successful lookups and ErrIngestTokenNotFound. Transient errors are not cached.
-	if lookupError == nil || errors.Is(lookupError, ErrIngestTokenNotFound) {
-		cache.mu.Lock()
-		if len(cache.entries) >= cache.limit {
-			cache.entries = make(map[string]cachedTokenEntry)
+		cache.observe("miss")
+		token, err := cache.source.GetIngestToken(ctx, tokenID)
+		if err != nil && !errors.Is(err, ErrIngestTokenNotFound) {
+			return token, err
 		}
-		cache.entries[tokenID] = cachedTokenEntry{
-			token:    token,
-			err:      lookupError,
-			loadedAt: now,
-		}
-		cache.mu.Unlock()
-
-		// Populate distributed cache on success
-		if lookupError == nil && cache.byteCache != nil {
-			if encoded, err := json.Marshal(token); err == nil {
-				_ = cache.byteCache.Set(ctx, "ingest_token:"+tokenID, encoded, cache.ttl)
-			}
+		if cache.publish(ctx, tokenID, revision, cachedTokenEntry{token: token, err: err, loadedAt: now}, err == nil) {
+			return token, err
 		}
 	}
-	return token, lookupError
+	return IngestToken{}, ctx.Err()
 }
 
-// Invalidate removes a token from both in-memory and external cache so revocation takes immediate effect.
-func (cache *CachedTokenSource) Invalidate(tokenID string) {
-	cache.mu.Lock()
-	delete(cache.entries, tokenID)
-	cache.mu.Unlock()
+func (cache *CachedTokenSource) observe(result string) {
+	if cache.observer != nil {
+		cache.observer.ObserveAuthCache("token", result)
+	}
+}
 
+// Serialize cache writes with invalidation while allowing local hits during Redis I/O.
+func (cache *CachedTokenSource) publish(ctx context.Context, tokenID string, revision uint64, entry cachedTokenEntry, share bool) bool {
+	cache.writes.Lock()
+	defer cache.writes.Unlock()
+	cache.mu.Lock()
+	if cache.revision != revision {
+		cache.mu.Unlock()
+		return false
+	}
+	if len(cache.entries) >= cache.limit {
+		cache.entries = make(map[string]cachedTokenEntry)
+	}
+	cache.entries[tokenID] = entry
+	cache.mu.Unlock()
+	if share && cache.byteCache != nil {
+		if encoded, err := json.Marshal(entry.token); err == nil {
+			_ = cache.byteCache.Set(ctx, "ingest_token:"+tokenID, encoded, cache.ttl)
+		}
+	}
+	return true
+}
+
+// Invalidate removes a token from both caches and expires lookups already in flight.
+func (cache *CachedTokenSource) Invalidate(tokenID string) {
+	cache.writes.Lock()
+	defer cache.writes.Unlock()
 	if cache.byteCache != nil {
 		_ = cache.byteCache.Delete(context.Background(), "ingest_token:"+tokenID)
 	}
+	cache.mu.Lock()
+	cache.revision++
+	delete(cache.entries, tokenID)
+	cache.mu.Unlock()
 }
