@@ -41,7 +41,7 @@ if (-not (Test-Path backend/.env)) {
 }
 ```
 
-Set the following values in `backend/.env`. Variables already set in the shell take precedence over the file. See [the backend template](backend/.env.example) for the full list and defaults.
+Set the following values in `backend/.env`. Variables already set in the shell take precedence over the file. See [the backend template](backend/.env.example) for every setting and its default, and [Configuration](docs/CONFIGURATION.md) for the groups and precedence rules.
 
 | Setting | What to enter |
 | --- | --- |
@@ -352,7 +352,7 @@ The independent flags `TRACEPILOT_DATABASE_AUTO_MIGRATE` and `TRACEPILOT_CLICKHO
 
 The PostgreSQL baseline has no down migration. Inspect rollback SQL for later versions before using it. ClickHouse has no automatic downgrade. Its baseline targets fresh databases; recreate a ClickHouse database created by an earlier development build. Plan a separate data migration when changing an existing partition key.
 
-Stop older backend replicas before enabling project retention. Run `migrate all` to add the PostgreSQL policy column. The ClickHouse runtime account needs `INSERT` and `SELECT` on every TracePilot table, and `ALTER DELETE` and `ALTER DROP PARTITION` on `tracepilot_log_records`, `tracepilot_spans`, `tracepilot_trace_index`, `tracepilot_metric_points`, `tracepilot_span_minutes`, `tracepilot_span_minute_marks`, and `tracepilot_span_minute_done` for retention. Existing projects inherit `TRACEPILOT_RETENTION_MAX_AGE` until their owner sets an override.
+Stop older backend replicas before enabling project retention. Run `migrate all` to add the PostgreSQL policy column. The ClickHouse runtime account needs `INSERT` and `SELECT` on every TracePilot table, and `ALTER DELETE` and `ALTER DROP PARTITION` on `tracepilot_log_records`, `tracepilot_spans`, `tracepilot_trace_index`, `tracepilot_metric_points`, `tracepilot_span_minutes`, `tracepilot_span_minute_marks`, and `tracepilot_span_minute_done` for retention. Existing projects inherit `TRACEPILOT_STORAGE_RETENTION_MAX_AGE` until their owner sets an override.
 
 For SQL changes, add a new versioned migration, update the named queries, regenerate SQLC with `make sqlc-check`, adapt the storage layer, and test on a disposable database. Keep already-applied migration files intact. Update database constraints when changing incident statuses, severity levels, or supported webhook events.
 
@@ -417,3 +417,4 @@ The [development roadmap](docs/ROADMAP.md) defines the sustained workload test, 
 - [Diagrams and searchable source map](docs/diagrams.html) (open in a browser)
 - [Postman API collection](docs/tracepilot.postman_collection.json)
 - [MIT license](LICENSE)
+- [Configuration](docs/CONFIGURATION.md)

@@ -32,7 +32,7 @@ func TestMigrationIgnoresUnrelatedConfiguration(t *testing.T) {
 				t.Setenv("TRACEPILOT_CLICKHOUSE_URL", "invalid")
 				t.Setenv("TRACEPILOT_CLICKHOUSE_REQUEST_TIMEOUT", "invalid")
 				t.Setenv("TRACEPILOT_CLICKHOUSE_AUTO_MIGRATE", "invalid")
-				t.Setenv("TRACEPILOT_RETENTION_MAX_AGE", "invalid")
+				t.Setenv("TRACEPILOT_STORAGE_RETENTION_MAX_AGE", "invalid")
 			} else {
 				t.Setenv("TRACEPILOT_CLICKHOUSE_URL", "http://migration-test:8123")
 				t.Setenv("TRACEPILOT_DATABASE_URL", "invalid")
@@ -75,16 +75,12 @@ func TestMigrationStillRejectsInvalidSelectedConfiguration(t *testing.T) {
 }
 
 func TestMigrationRetainsProductionTLSChecks(t *testing.T) {
-	for _, name := range []string{"TRACEPILOT_PRODUCTION", "TRACEPILOT_APP_PRODUCTION"} {
-		t.Run(name, func(t *testing.T) {
-			setTestEnvironment(t)
-			t.Setenv(name, "true")
-			for _, database := range []string{"postgres", "clickhouse"} {
-				if _, err := LoadMigrations(database); err == nil {
-					t.Errorf("%s migration bypassed production TLS checks with %s", database, name)
-				}
-			}
-		})
+	setTestEnvironment(t)
+	t.Setenv("TRACEPILOT_APP_PRODUCTION", "true")
+	for _, database := range []string{"postgres", "clickhouse"} {
+		if _, err := LoadMigrations(database); err == nil {
+			t.Errorf("%s migration bypassed production TLS checks", database)
+		}
 	}
 }
 

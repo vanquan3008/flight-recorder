@@ -59,7 +59,7 @@ func runSeed(args []string) int {
 		logger.Error("failed to load configuration", "error", err)
 		return 2
 	}
-	if cfg.Production {
+	if cfg.App.Production {
 		logger.Error("seed command is disabled in production")
 		return 1
 	}

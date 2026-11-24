@@ -8,13 +8,15 @@ func LoadMigrations(database string) (Config, error) {
 	if !includePostgres && !includeClickHouse {
 		return Config{}, fmt.Errorf("unsupported migration database %q", database)
 	}
-	scopes := []string{"production", "app.production"}
+
+	scopes := []string{"app.production"}
 	if includePostgres {
 		scopes = append(scopes, "database")
 	}
 	if includeClickHouse {
 		scopes = append(scopes, "clickhouse")
 	}
+
 	return loadConfiguration(func(cfg Config) error {
 		var v validator
 		if includePostgres {
@@ -22,10 +24,10 @@ func LoadMigrations(database string) (Config, error) {
 			cfg.Database.validateConnectionLifecycle(&v)
 			cfg.Database.validateSessionLimits(&v)
 			cfg.Database.validateMigrations(&v)
-			validateDatabaseURL(cfg.Database.URL, cfg.Production, &v)
+			validateDatabaseURL(cfg.Database.URL, cfg.App.Production, &v)
 		}
 		if includeClickHouse {
-			cfg.ClickHouse.validate(&v, cfg.Production)
+			cfg.ClickHouse.validate(&v, cfg.App.Production)
 		}
 		return v.err()
 	}, scopes...)

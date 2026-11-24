@@ -59,7 +59,7 @@ func scopedServer(t *testing.T) (*Server, *captureSubmitter) {
 		}
 		return config.IngestionConfig{}, ErrUnknownEnvironment
 	})
-	return NewServer(config.Config{Ingestion: configuration, HTTP: config.HTTPConfig{MaxHeaderBytes: 1 << 20}, ShutdownTimeout: time.Second}, receiver), submitter
+	return NewServer(config.Config{Ingestion: configuration, HTTP: config.HTTPConfig{MaxHeaderBytes: 1 << 20}, App: config.AppConfig{ShutdownTimeout: time.Second}}, receiver), submitter
 }
 
 func postLog(t *testing.T, server *Server, key, environment string) *httptest.ResponseRecorder {

@@ -65,7 +65,7 @@ try {
     Invoke-Docker run --rm -e TRACEPILOT_API_UPSTREAM=http://127.0.0.1:8080 $consoleImage nginx -t
     Invoke-Docker image save -o "$bundle/images.tar" $serverImage $consoleImage
     $overrides = [ordered]@{
-        TRACEPILOT_PRODUCTION = 'true'
+        TRACEPILOT_APP_PRODUCTION = 'true'
         TRACEPILOT_DATABASE_URL = 'postgres://tracepilot:changeme@postgres.example.internal:5432/tracepilot?sslmode=verify-full&sslrootcert=/etc/tracepilot/postgres-ca.pem'
         TRACEPILOT_CLICKHOUSE_URL = 'https://clickhouse.example.internal:8443'
         TRACEPILOT_CLICKHOUSE_USERNAME = 'tracepilot'
@@ -76,7 +76,6 @@ try {
         TRACEPILOT_HTTP_TRUSTED_PROXIES = '172.30.90.1/32,172.30.90.3/32'
         TRACEPILOT_AUTH_ALLOW_REGISTRATION = 'false'
         TRACEPILOT_HTTP_METRICS_TOKEN = 'changeme-generate-a-separate-metrics-secret'
-        TRACEPILOT_INGESTION_WORKERS = '8'
         TRACEPILOT_QUEUE_WORKERS = '8'
         TRACEPILOT_CACHE_DRIVER = 'memory'
         TRACEPILOT_REPLAY_ENABLED = 'false'

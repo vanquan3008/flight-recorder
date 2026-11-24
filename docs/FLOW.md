@@ -72,6 +72,10 @@ after the initial startup checks.
 
 ### Backend lifecycle
 
+For each setting, the process environment takes precedence over `backend/.env` and built-in defaults.
+`serve` loads and validates all groups. The event and metric pipelines use the same `TRACEPILOT_QUEUE_*`
+settings. See [Configuration](CONFIGURATION.md) for how renamed variables resolve.
+
 Before starting a new version, run `migrate all`. It upgrades PostgreSQL under its own advisory lock,
 upgrades ClickHouse using its own journal, then verifies readiness of both databases. A failed step
 prevents the application from starting. Previously completed steps remain applied because the databases
@@ -104,8 +108,8 @@ transfers are outside the migration CLI.
 
 `migrate all` calls `storage/hybrid.MigrateAll`, which runs the two independent managers in sequence. It uses the runtime client and readiness
 code paths and requires only database credentials. All commands log JSON through `log/slog` with
-`service.name` and `service.version`. `serve` applies `LOG_LEVEL`. The `config` package returns errors
-for the calling command to log once.
+`service.name` and `service.version`. `serve` applies `TRACEPILOT_OBSERVABILITY_LOG_LEVEL`. The `config` package returns errors
+for the calling command to log once. [Configuration](CONFIGURATION.md) describes how settings load.
 
 The ClickHouse baseline targets fresh databases. `000001` creates `tracepilot_log_records`, `000002`
 `tracepilot_spans`, `000003` the `tracepilot_trace_index` table, `000004` the materialized view that
@@ -277,7 +281,7 @@ The router enforces the **scope** declared in the route table.
    decompressed body limits. Normalize records, redact sensitive keys, and scrub secret patterns from
    free text. Count invalid records as `rejected` and continue processing the rest.
 6. Reserve slots and bytes for the whole request before putting events in the pipeline. If space stays
-   unavailable during `ENQUEUE_TIMEOUT`, return 503 with `Retry-After`. Rejecting before any event is
+   unavailable during `TRACEPILOT_QUEUE_ENQUEUE_TIMEOUT`, return 503 with `Retry-After`. Rejecting before any event is
    written lets exporters retry safely. Requests larger than the whole queue are admitted in parts.
    Capacity is `QUEUE_SIZE` + `WORKERS` × `BATCH_SIZE`. Slots remain reserved until events are
    acknowledged.
@@ -410,12 +414,12 @@ PostgreSQL partitions the incident envelopes in `events` by UTC day. Startup cre
 `DATABASE_PARTITION_CHECK_INTERVAL` (one hour by default).
 
 In **Settings → Projects → Data retention**, project owners can enter whole days or inherit
-`TRACEPILOT_RETENTION_MAX_AGE` (seven days by default, or `0s` for indefinite retention). The policy
+`TRACEPILOT_STORAGE_RETENTION_MAX_AGE` (seven days by default, or `0s` for indefinite retention). The policy
 covers logs, traces, and metrics across every environment of the project. `GET` and `PUT`
 `/api/v1/projects/{projectID}/retention` read and update it. Send `retention_days: null` to restore the
 default. The write and its `project.retention_updated` audit event commit together.
 
-The worker reads the policies at startup and every `RETENTION_CHECK_INTERVAL` (one hour by default).
+The worker reads the policies at startup and every `TRACEPILOT_STORAGE_RETENTION_CHECK_INTERVAL` (one hour by default).
 It drops a daily `events` partition only when the entire day has expired for every project. In shared and
 default partitions it deletes a project's expired envelopes in batches, locking the policy during each
 batch.

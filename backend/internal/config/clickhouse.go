@@ -48,7 +48,7 @@ type ClickHouseConfig struct {
 }
 
 func (configuration Config) validateClickHouse(v *validator) {
-	configuration.ClickHouse.validate(v, configuration.Production)
+	configuration.ClickHouse.validate(v, configuration.App.Production)
 }
 
 func (c ClickHouseConfig) Validate() error {

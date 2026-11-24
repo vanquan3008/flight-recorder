@@ -132,10 +132,10 @@ func TestIngestTokensUseDistinctIngestSecretWhenConfigured(t *testing.T) {
 	backend := newIdentityBackend(auth.RoleOwner)
 	distinctSecret := "custom-ingest-secret-000000000000000000"
 	cfg := config.Config{
-		HTTP:            config.HTTPConfig{ManagementMaxBodyBytes: 1024},
-		Auth:            config.AuthConfig{JWTSecret: testJWTSecret, IngestJWTSecret: distinctSecret, AllowRegistration: true},
-		Database:        config.DatabaseConfig{ReadinessTimeout: time.Second},
-		ShutdownTimeout: time.Second,
+		HTTP:     config.HTTPConfig{ManagementMaxBodyBytes: 1024},
+		Auth:     config.AuthConfig{JWTSecret: testJWTSecret, IngestJWTSecret: distinctSecret, AllowRegistration: true},
+		Database: config.DatabaseConfig{ReadinessTimeout: time.Second},
+		App:      config.AppConfig{ShutdownTimeout: time.Second},
 	}
 	server := New(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)), func(context.Context) error { return nil }, metrics.New("test", "test", "test"), backend, nil)
 	router := http.NewServeMux()

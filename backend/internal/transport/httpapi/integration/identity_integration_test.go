@@ -62,7 +62,7 @@ func TestAccountsProjectsAndTokensIntegration(t *testing.T) {
 	})
 	server := httpapi.New(config.Config{
 		HTTP: config.HTTPConfig{ManagementMaxBodyBytes: 4096}, Ingestion: ingestion, Auth: config.AuthConfig{JWTSecret: integrationJWTSecret, AllowRegistration: true},
-		Database: config.DatabaseConfig{ReadinessTimeout: time.Second}, ShutdownTimeout: time.Second,
+		Database: config.DatabaseConfig{ReadinessTimeout: time.Second}, App: config.AppConfig{ShutdownTimeout: time.Second},
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)), func(context.Context) error { return nil }, metrics.New("test", "test", "test"), postgresBackend{database}, nil)
 	router := http.NewServeMux()
 	server.RegisterAPIRoutes(router)

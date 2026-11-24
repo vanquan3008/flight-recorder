@@ -48,11 +48,11 @@ func TestAuthenticatedQueryIntegration(t *testing.T) {
 	}
 
 	configuration := config.Config{
-		HTTP:            config.HTTPConfig{ManagementMaxBodyBytes: 1024},
-		Ingestion:       ingestion,
-		Database:        config.DatabaseConfig{ReadinessTimeout: time.Second},
-		Auth:            config.AuthConfig{JWTSecret: integrationJWTSecret},
-		ShutdownTimeout: time.Second,
+		HTTP:      config.HTTPConfig{ManagementMaxBodyBytes: 1024},
+		Ingestion: ingestion,
+		Database:  config.DatabaseConfig{ReadinessTimeout: time.Second},
+		Auth:      config.AuthConfig{JWTSecret: integrationJWTSecret},
+		App:       config.AppConfig{ShutdownTimeout: time.Second},
 	}
 	targetServer := httptest.NewServer(http.HandlerFunc(func(responseWriter http.ResponseWriter, request *http.Request) {
 		if request.Method != http.MethodGet {
@@ -82,7 +82,7 @@ func TestAuthenticatedQueryIntegration(t *testing.T) {
 		t.Fatalf("trace query status = %d, body = %s", traceResponse.Code, traceResponse.Body.String())
 	}
 	secureConfiguration := configuration
-	secureConfiguration.Production = true
+	secureConfiguration.App.Production = true
 	secureServer := httpapi.New(secureConfiguration, slog.New(slog.NewTextHandler(io.Discard, nil)), func(context.Context) error { return nil }, metrics.New("test", "test", "test"), postgresBackend{database}, replayService)
 	secureMetrics := httptest.NewRecorder()
 	secureServer.ServeHTTP(secureMetrics, httptest.NewRequest(http.MethodGet, "/metrics", nil))

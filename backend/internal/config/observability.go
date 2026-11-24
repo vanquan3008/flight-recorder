@@ -10,27 +10,18 @@ type ObservabilityConfig struct {
 	LogFormat string     `config:"log_format"`
 }
 
-func (config Config) validateObservability(validator *validator) {
-	obs := config.Observability
+func (configuration Config) validateObservability(validator *validator) {
+	observability := configuration.Observability
 
-	switch obs.LogLevel {
-	case slog.LevelDebug,
-		slog.LevelInfo,
-		slog.LevelWarn,
-		slog.LevelError:
+	switch observability.LogLevel {
+	case slog.LevelDebug, slog.LevelInfo, slog.LevelWarn, slog.LevelError:
 	default:
-		validator.add(
-			"observability.log_level",
-			"must be DEBUG, INFO, WARN or ERROR",
-		)
+		validator.add("observability.log_level", "must be DEBUG, INFO, WARN or ERROR")
 	}
 
-	switch strings.ToLower(obs.LogFormat) {
+	switch strings.ToLower(observability.LogFormat) {
 	case "", "json", "text":
 	default:
-		validator.add(
-			"observability.log_format",
-			"must be json or text",
-		)
+		validator.add("observability.log_format", "must be json or text")
 	}
 }

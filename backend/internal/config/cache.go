@@ -10,49 +10,27 @@ const (
 	CacheDriverRedis  = "redis"
 	CacheDriverMemory = "memory"
 	CacheDriverNoop   = "noop"
-
-	// Backward compatibility constants
-	CacheTypeMemory = CacheDriverMemory
-	CacheTypeRedis  = CacheDriverRedis
-	CacheTypeNoop   = CacheDriverNoop
 )
 
-// CacheConfig controls distributed (Redis) and in-memory caching policies.
 type CacheConfig struct {
-	// Driver selects the cache backend: "auto", "redis", "memory", or "noop".
-	// In "auto" mode, Redis is used when a URL or Address is configured, with automatic fallback to in-memory caching.
-	Driver string `config:"driver"`
-
-	// Redis connection settings
-	URL      string `config:"url"`      // e.g. "redis://[:password@]host:port/db"
-	Address  string `config:"address"`  // e.g. "127.0.0.1:6379"
-	Password string `config:"password"` // optional Redis authentication password
-	DB       int    `config:"db"`       // optional Redis logical database index
-
-	// General cache lifecycle policies
-	DefaultTTL   time.Duration `config:"default_ttl"`   // Default expiration for cached items (default: 60s)
-	DefaultLimit int           `config:"default_limit"` // Maximum item capacity for in-memory store (default: 4096)
-
-	// In-memory entity overrides (optional, fallback to DefaultTTL and DefaultLimit if unset)
+	Driver        string        `config:"driver"`
+	URL           string        `config:"url"`
+	Address       string        `config:"address"`
+	Password      string        `config:"password"`
+	DB            int           `config:"db"`
+	DefaultTTL    time.Duration `config:"default_ttl"`
+	DefaultLimit  int           `config:"default_limit"`
 	TokenTTL      time.Duration `config:"token_ttl"`
 	TokenLimit    int           `config:"token_limit"`
 	ScopeTTL      time.Duration `config:"scope_ttl"`
 	ScopeLimit    int           `config:"scope_limit"`
 	IdentityTTL   time.Duration `config:"identity_ttl"`
 	IdentityLimit int           `config:"identity_limit"`
-
-	// Compatibility aliases with previous config
-	Enabled bool          `config:"enabled"`
-	Type    string        `config:"type"`
-	TTL     time.Duration `config:"ttl"`
 }
 
 // EffectiveDriver returns the resolved cache driver.
 func (c CacheConfig) EffectiveDriver() string {
 	d := strings.ToLower(strings.TrimSpace(c.Driver))
-	if d == "" {
-		d = strings.ToLower(strings.TrimSpace(c.Type))
-	}
 	if d == "" || d == CacheDriverAuto {
 		if strings.TrimSpace(c.URL) != "" || strings.TrimSpace(c.Address) != "" {
 			return CacheDriverRedis

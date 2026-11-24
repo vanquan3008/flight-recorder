@@ -35,9 +35,9 @@ func NewServer(configuration config.Config, receiver *Receiver) *Server {
 		receiver:        receiver,
 		maxRequestBytes: configuration.Ingestion.MaxRequestBytes,
 		maxStreams:      configuration.Ingestion.MaxConcurrentRequests,
-		shutdownTimeout: configuration.ShutdownTimeout,
-		certificateFile: configuration.TLS.CertificateFile,
-		privateKeyFile:  configuration.TLS.PrivateKeyFile,
+		shutdownTimeout: configuration.App.ShutdownTimeout,
+		certificateFile: configuration.App.TLS.CertificateFile,
+		privateKeyFile:  configuration.App.TLS.PrivateKeyFile,
 	}
 	server.httpServer = newHTTPServer(configuration, server)
 	return server

@@ -15,7 +15,7 @@ x-backend: &backend
   image: ${TRACEPILOT_BACKEND_IMAGE:?set TRACEPILOT_BACKEND_IMAGE, for example tracepilot:0.1.0}
   env_file: ../backend/.env
   environment:
-    TRACEPILOT_PRODUCTION: "true"
+    TRACEPILOT_APP_PRODUCTION: "true"
     TRACEPILOT_DATABASE_AUTO_MIGRATE: "false"
     TRACEPILOT_CLICKHOUSE_AUTO_MIGRATE: "false"
   volumes:
