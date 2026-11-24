@@ -6,7 +6,7 @@ import (
 
 func TestValidateRejectsResourceExhaustingQueue(t *testing.T) {
 	configuration := validConfig()
-	configuration.Ingestion.QueueSize = maxIngestionQueueSize + 1
+	configuration.Queue.QueueSize = maxQueueSize + 1
 	if err := configuration.Validate(); err == nil {
 		t.Fatal("expected resource-exhausting queue size to fail")
 	}
@@ -31,7 +31,7 @@ func TestValidateRequiresReplayAllowlist(t *testing.T) {
 func TestValidateRequiresCompleteTLSConfiguration(t *testing.T) {
 	configuration := validConfig()
 	configuration.Database.URL = "postgres://tracepilot:tracepilot@localhost/tracepilot"
-	configuration.TLS.CertificateFile = "certificate.pem"
+	configuration.App.TLS.CertificateFile = "certificate.pem"
 	if err := configuration.Validate(); err == nil {
 		t.Fatal("expected incomplete TLS configuration to fail")
 	}
@@ -40,7 +40,7 @@ func TestValidateRequiresCompleteTLSConfiguration(t *testing.T) {
 func TestValidateProductionRequiresAuthButAllowsPlaintextListeners(t *testing.T) {
 	configuration := validConfig()
 	configuration.Database.URL = "postgres://tracepilot:tracepilot@localhost/tracepilot?sslmode=require"
-	configuration.Production = true
+	configuration.App.Production = true
 	if err := configuration.Validate(); err == nil {
 		t.Fatal("expected production authentication to be required")
 	}
@@ -77,12 +77,12 @@ func TestValidateProductionRequiresVerifiedDatabaseTransport(t *testing.T) {
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
 			configuration := validConfig()
-			configuration.Production = true
+			configuration.App.Production = true
 			configuration.Database.URL = testCase.url
 			configuration.Auth.JWTSecret = "production-jwt-secret-000000000000000000000000000000"
 			configuration.Auth.IngestJWTSecret = "production-ingest-secret-0000000000000000000000000000"
-			configuration.TLS.CertificateFile = "certificate.pem"
-			configuration.TLS.PrivateKeyFile = "private-key.pem"
+			configuration.App.TLS.CertificateFile = "certificate.pem"
+			configuration.App.TLS.PrivateKeyFile = "private-key.pem"
 			if err := configuration.Validate(); (err != nil) != testCase.wantErr {
 				t.Fatalf("Validate() error = %v, wantErr %t", err, testCase.wantErr)
 			}
@@ -156,12 +156,12 @@ func TestValidateOTLPAuthFailureLimit(t *testing.T) {
 func TestValidateProductionRejectsSampleSecrets(t *testing.T) {
 	production := func() Config {
 		configuration := validConfig()
-		configuration.Production = true
+		configuration.App.Production = true
 		configuration.Database.URL = "postgres://tracepilot:s3cure-random-pw@db.internal/tracepilot?sslmode=verify-full"
 		configuration.Auth.JWTSecret = "b0f3a1c9e7d24a6f8c15e2d97a40b3c6f1e8d205"
 		configuration.Auth.IngestJWTSecret = "c1a4e2d97a40b3c6f1e8d205b0f3a1c9e7d24a6f"
-		configuration.TLS.CertificateFile = "certificate.pem"
-		configuration.TLS.PrivateKeyFile = "private-key.pem"
+		configuration.App.TLS.CertificateFile = "certificate.pem"
+		configuration.App.TLS.PrivateKeyFile = "private-key.pem"
 		// ClickHouse must use HTTPS in production.
 		configuration.ClickHouse.URL = "https://ch.example.com:8443"
 		return configuration

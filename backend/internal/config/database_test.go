@@ -50,7 +50,7 @@ func TestDatabaseRejectsUnboundedConnectTimeout(t *testing.T) {
 
 func TestDatabaseCapacityAccountsForBothPipelines(t *testing.T) {
 	cfg := validConfig()
-	cfg.Ingestion.Workers = 2
+	cfg.Queue.Workers = 2
 	cfg.Database.MaxConnections = 5
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("pool omitted metric workers from its connection budget")

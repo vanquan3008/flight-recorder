@@ -41,7 +41,7 @@ if (-not (Test-Path backend/.env)) {
 }
 ```
 
-Set the following values in `backend/.env`. Variables already set in the shell take precedence over the file. See [the backend template](backend/.env.example) for the full list and defaults.
+Set the following values in `backend/.env`. Variables already set in the shell take precedence over the file. See [the backend template](backend/.env.example) for every setting and its default, and [Configuration](docs/CONFIGURATION.md) for the groups and precedence rules.
 
 | Setting | What to enter |
 | --- | --- |
@@ -49,7 +49,6 @@ Set the following values in `backend/.env`. Variables already set in the shell t
 | `TRACEPILOT_CLICKHOUSE_URL` | ClickHouse HTTP endpoint, for example `http://localhost:8123`. |
 | `TRACEPILOT_CLICKHOUSE_DATABASE`, `TRACEPILOT_CLICKHOUSE_USERNAME`, `TRACEPILOT_CLICKHOUSE_PASSWORD` | Your ClickHouse database and credentials. |
 | `TRACEPILOT_AUTH_JWT_SECRET` | A persistent random secret of at least 32 characters. Use `openssl rand -hex 32` if OpenSSL is installed, or the PowerShell example below. |
-| `TRACEPILOT_SEED_ADMIN_EMAIL`, `TRACEPILOT_SEED_ADMIN_PASSWORD` | (Optional) Development administrator credentials for `tracepilot seed`. Defaults to `admin@tracepilot.local` and `admin-password-123`. |
 
 <details>
 <summary>Generate a secret with PowerShell</summary>
@@ -88,14 +87,31 @@ if ($LASTEXITCODE -ne 0) { throw 'Frontend dependency installation failed.' }
 npm --prefix frontend run dev
 ```
 
-Open [localhost:5173](http://localhost:5173) and register an account, or sign in with the seeded administrator. Local configuration enables registration by default. Vite proxies `/api` and `/health` to the backend on port `8080`.
+Open [localhost:5173](http://localhost:5173) and register an account, or sign in with a development administrator. Local configuration enables registration by default. Vite proxies `/api` and `/health` to the backend on port `8080`.
 
 <details>
-<summary>Optional development administrator</summary>
+<summary>Development administrator</summary>
 
-Run `go -C backend run ./cmd/tracepilot seed` after migration to seed the administrator account configured in `TRACEPILOT_SEED_ADMIN_EMAIL` and `TRACEPILOT_SEED_ADMIN_PASSWORD` (defaults to `admin@tracepilot.local` in `backend/.env.example`). The command creates only this administrator and preserves existing accounts on rerun. Create your project and environment from the console. Seeding is strictly disabled in production.
+Run `create-admin` after migration to provision a super admin in development or production. The command connects directly to PostgreSQL. Console registration creates regular accounts.
 
-Copying `frontend/.env.example` to `frontend/.env` enables the **Fill Dev Admin credentials** button on the local sign-in page, allowing instant one-click login in development.
+```powershell
+$secret = Read-Host 'Administrator password' -AsSecureString
+[Net.NetworkCredential]::new('', $secret).Password |
+    go -C backend run ./cmd/tracepilot create-admin --email admin@tracepilot.local --name Admin --password-stdin
+Remove-Variable secret
+```
+
+```bash
+read -r -s -p 'Administrator password: ' ADMIN_PASSWORD; printf '\n'
+printf '%s' "$ADMIN_PASSWORD" | go -C backend run ./cmd/tracepilot create-admin --email admin@tracepilot.local --name Admin --password-stdin
+unset ADMIN_PASSWORD
+```
+
+- The password must be 12–256 characters and is read from stdin, so it stays out of the shell history and the process list. Windows PowerShell 5.1 sends piped text as ASCII. Use an ASCII password, or set `$OutputEncoding = [Text.UTF8Encoding]::new($false)` first.
+- Each run creates one administrator. Run it again with another email to add more.
+- An email that already exists makes the command exit with code 1. The existing account is left unchanged.
+
+Sign in, then create your project and environment from the console.
 
 </details>
 
@@ -140,13 +156,13 @@ In Bash, use `export NAME='value'` for the same variables. Generate traffic and 
 <details>
 <summary>Generate sample traces locally</summary>
 
-With the backend running and the optional development administrator seeded, run from the repository root:
+With the backend running, set `TRACEPILOT_LOAD_EMAIL` and `TRACEPILOT_LOAD_PASSWORD` to the credentials for an account that can create projects. Run from the repository root:
 
 ```powershell
 go -C backend run ./cmd/loadgen -spans-per-second 16 -spans-per-request 8 -warmup 0s -duration 5s
 ```
 
-The command creates a project named `Load <timestamp>` and an environment named `load`. Select them in the console and open **Traces**. Operator credentials automatically resolve from `TRACEPILOT_SEED_ADMIN_EMAIL` and `TRACEPILOT_SEED_ADMIN_PASSWORD` (or via `-email` and `-password`).
+The command creates a project named `Load <timestamp>` and an environment named `load`. Select them in the console and open **Traces**.
 
 </details>
 
@@ -352,7 +368,7 @@ The independent flags `TRACEPILOT_DATABASE_AUTO_MIGRATE` and `TRACEPILOT_CLICKHO
 
 The PostgreSQL baseline has no down migration. Inspect rollback SQL for later versions before using it. ClickHouse has no automatic downgrade. Its baseline targets fresh databases; recreate a ClickHouse database created by an earlier development build. Plan a separate data migration when changing an existing partition key.
 
-Stop older backend replicas before enabling project retention. Run `migrate all` to add the PostgreSQL policy column. The ClickHouse runtime account needs `INSERT` and `SELECT` on every TracePilot table, and `ALTER DELETE` and `ALTER DROP PARTITION` on `tracepilot_log_records`, `tracepilot_spans`, `tracepilot_trace_index`, `tracepilot_metric_points`, `tracepilot_span_minutes`, `tracepilot_span_minute_marks`, and `tracepilot_span_minute_done` for retention. Existing projects inherit `TRACEPILOT_RETENTION_MAX_AGE` until their owner sets an override.
+Stop older backend replicas before enabling project retention. Run `migrate all` to add the PostgreSQL policy column. The ClickHouse runtime account needs `INSERT` and `SELECT` on every TracePilot table, and `ALTER DELETE` and `ALTER DROP PARTITION` on `tracepilot_log_records`, `tracepilot_spans`, `tracepilot_trace_index`, `tracepilot_metric_points`, `tracepilot_span_minutes`, `tracepilot_span_minute_marks`, and `tracepilot_span_minute_done` for retention. Existing projects inherit `TRACEPILOT_STORAGE_RETENTION_MAX_AGE` until their owner sets an override.
 
 For SQL changes, add a new versioned migration, update the named queries, regenerate SQLC with `make sqlc-check`, adapt the storage layer, and test on a disposable database. Keep already-applied migration files intact. Update database constraints when changing incident statuses, severity levels, or supported webhook events.
 
@@ -417,3 +433,4 @@ The [development roadmap](docs/ROADMAP.md) defines the sustained workload test, 
 - [Diagrams and searchable source map](docs/diagrams.html) (open in a browser)
 - [Postman API collection](docs/tracepilot.postman_collection.json)
 - [MIT license](LICENSE)
+- [Configuration](docs/CONFIGURATION.md)

@@ -137,7 +137,7 @@ if wants stack || wants e2e || wants load; then
 	if [ "$databases_ok" -ne 0 ]; then
 		skip "stack" "databases did not start"
 	elif run_stage "images: backend and console" build_images; then
-		if run_stage "stack: migrate, seed, serve, console" compose --profile stack up -d --wait tracepilot console; then
+		if run_stage "stack: migrate, serve, console" compose --profile stack up -d --wait tracepilot console; then
 			stack_ok=0
 		fi
 	fi

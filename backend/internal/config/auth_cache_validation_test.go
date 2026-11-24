@@ -100,12 +100,12 @@ func TestValidateAuthCookiePolicies(t *testing.T) {
 func TestValidateProductionSecretsPrivilegeIsolation(t *testing.T) {
 	production := func() Config {
 		c := validConfig()
-		c.Production = true
+		c.App.Production = true
 		c.Database.URL = "postgres://tracepilot:s3cure-random-pw@db.internal/tracepilot?sslmode=verify-full"
 		c.Auth.JWTSecret = "b0f3a1c9e7d24a6f8c15e2d97a40b3c6f1e8d205"
 		c.Auth.IngestJWTSecret = "c1a4e2d97a40b3c6f1e8d205b0f3a1c9e7d24a6f"
-		c.TLS.CertificateFile = "certificate.pem"
-		c.TLS.PrivateKeyFile = "private-key.pem"
+		c.App.TLS.CertificateFile = "certificate.pem"
+		c.App.TLS.PrivateKeyFile = "private-key.pem"
 		c.ClickHouse.URL = "https://ch.internal:8443"
 		return c
 	}

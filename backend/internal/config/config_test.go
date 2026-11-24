@@ -125,13 +125,13 @@ func TestLoadReadsBackendEnvironmentFile(t *testing.T) {
 
 func TestLoadAllowsDisabledRetention(t *testing.T) {
 	setTestEnvironment(t)
-	t.Setenv("TRACEPILOT_RETENTION_MAX_AGE", "0s")
+	t.Setenv("TRACEPILOT_STORAGE_RETENTION_MAX_AGE", "0s")
 	configuration, loadError := Load()
 	if loadError != nil {
 		t.Fatal(loadError)
 	}
-	if configuration.Retention.MaxAge != 0 {
-		t.Fatalf("retention max age = %s", configuration.Retention.MaxAge)
+	if configuration.Storage.Retention.MaxAge != 0 {
+		t.Fatalf("retention max age = %s", configuration.Storage.Retention.MaxAge)
 	}
 }
 
@@ -142,7 +142,7 @@ func TestRetentionDefaultsKeepTelemetryShorterThanHistory(t *testing.T) {
 		t.Fatal(loadError)
 	}
 	day := 24 * time.Hour
-	got := configuration.Retention
+	got := configuration.Storage.Retention
 	if got.MaxAge != 7*day || got.IncidentMaxAge != 90*day || got.AuditMaxAge != 180*day || got.DeliveryMaxAge != 30*day {
 		t.Fatalf("retention defaults = %+v", got)
 	}
@@ -151,7 +151,7 @@ func TestRetentionDefaultsKeepTelemetryShorterThanHistory(t *testing.T) {
 func TestRetentionRejectsNegativeAges(t *testing.T) {
 	for _, name := range []string{"MAX_AGE", "INCIDENT_MAX_AGE", "AUDIT_MAX_AGE", "DELIVERY_MAX_AGE"} {
 		setTestEnvironment(t)
-		t.Setenv("TRACEPILOT_RETENTION_"+name, "-1h")
+		t.Setenv("TRACEPILOT_STORAGE_RETENTION_"+name, "-1h")
 		if _, loadError := Load(); loadError == nil {
 			t.Fatalf("negative %s was accepted", name)
 		}

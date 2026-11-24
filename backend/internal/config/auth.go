@@ -81,10 +81,10 @@ func hasSampleSecretMarker(value string) bool {
 }
 
 func (configuration Config) validateAuth(validator *validator) {
-	if configuration.Production && configuration.Auth.JWTSecret == "" {
+	if configuration.App.Production && configuration.Auth.JWTSecret == "" {
 		validator.add("auth.jwt_secret", "required in production")
 	}
-	if configuration.Production && configuration.Auth.IngestJWTSecret == "" {
+	if configuration.App.Production && configuration.Auth.IngestJWTSecret == "" {
 		validator.add("auth.ingest_jwt_secret", "required in production")
 	}
 	if configuration.Auth.JWTSecret != "" && len(configuration.Auth.JWTSecret) < 32 {
@@ -125,7 +125,7 @@ func (configuration Config) validateAuth(validator *validator) {
 		}
 	}
 
-	if configuration.Production {
+	if configuration.App.Production {
 		validateProductionSecrets(configuration, validator)
 	}
 }

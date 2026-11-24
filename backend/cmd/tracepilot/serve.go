@@ -42,7 +42,7 @@ func runServer(arguments []string) int {
 	}
 
 	logger := logging.NewLogger(os.Stdout, &logging.Options{
-		Level:          cfg.LogLevel,
+		Level:          cfg.Observability.LogLevel,
 		ServiceName:    "tracepilot",
 		ServiceVersion: version,
 	})
@@ -168,13 +168,13 @@ func runServer(arguments []string) int {
 	}
 
 	policy := retention.Policy{
-		Telemetry:  cfg.Retention.MaxAge,
-		Incidents:  cfg.Retention.IncidentMaxAge,
-		Audit:      cfg.Retention.AuditMaxAge,
-		Deliveries: cfg.Retention.DeliveryMaxAge,
+		Telemetry:  cfg.Storage.Retention.MaxAge,
+		Incidents:  cfg.Storage.Retention.IncidentMaxAge,
+		Audit:      cfg.Storage.Retention.AuditMaxAge,
+		Deliveries: cfg.Storage.Retention.DeliveryMaxAge,
 	}
 	components = append(components, component{"retention", false, func(ctx context.Context) error {
-		return retention.Run(ctx, logger, store, selfMetrics, policy, cfg.Retention.CheckInterval, cfg.Retention.BatchSize)
+		return retention.Run(ctx, logger, store, selfMetrics, policy, cfg.Storage.Retention.CheckInterval, cfg.Storage.Retention.BatchSize)
 	}})
 
 	// ---------------------------------------------------------
@@ -206,10 +206,10 @@ func runServer(arguments []string) int {
 		logger.Error("runtime component failed", "error", serveError)
 	}
 
-	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
+	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), cfg.App.ShutdownTimeout)
 	defer cancelShutdown()
 
-	logger.Info("shutting down processing pipelines", "timeout", cfg.ShutdownTimeout)
+	logger.Info("shutting down processing pipelines", "timeout", cfg.App.ShutdownTimeout)
 	shutdownError := drainPipelines(shutdownCtx, logger, ingestionPipeline, metricsPipeline)
 
 	// Expected cancellation caused by an OS signal is not a failure; real component errors are kept.

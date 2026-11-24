@@ -108,23 +108,12 @@ services:
     healthcheck:
       disable: true
 
-  seed:
-    <<: *backend-image
-    profiles: [stack]
-    command: ["seed"]
-    restart: "no"
-    depends_on:
-      migrate:
-        condition: service_completed_successfully
-    healthcheck:
-      disable: true
-
   tracepilot:
     <<: *backend-image
     profiles: [stack]
     command: ["serve"]
     depends_on:
-      seed:
+      migrate:
         condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "/tracepilot", "healthcheck"]

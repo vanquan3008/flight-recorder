@@ -38,10 +38,10 @@ func (backend *slowServicesBackend) ListServices(ctx context.Context, _, _ strin
 
 func gatedServer(backend *slowServicesBackend, concurrent int, timeout time.Duration) http.Handler {
 	configuration := config.Config{
-		HTTP:            config.HTTPConfig{ManagementMaxBodyBytes: 1024, MaxConcurrentQueries: concurrent, RequestTimeout: timeout},
-		Auth:            config.AuthConfig{JWTSecret: testJWTSecret},
-		Database:        config.DatabaseConfig{ReadinessTimeout: time.Second},
-		ShutdownTimeout: time.Second,
+		HTTP:     config.HTTPConfig{ManagementMaxBodyBytes: 1024, MaxConcurrentQueries: concurrent, RequestTimeout: timeout},
+		Auth:     config.AuthConfig{JWTSecret: testJWTSecret},
+		Database: config.DatabaseConfig{ReadinessTimeout: time.Second},
+		App:      config.AppConfig{ShutdownTimeout: time.Second},
 	}
 	server := New(configuration, slog.New(slog.NewTextHandler(io.Discard, nil)), func(context.Context) error { return nil }, metrics.New("test", "test", "test"), backend, nil)
 	return server.httpServer.Handler
@@ -93,10 +93,10 @@ func (slowServicesFastLogsBackend) ListLogs(context.Context, string, query.LogFi
 func TestLogReadsDoNotQueueBehindSlowQueries(t *testing.T) {
 	slow := &slowServicesBackend{release: make(chan struct{}), started: make(chan struct{}, 8), cancelled: make(chan struct{}, 8)}
 	configuration := config.Config{
-		HTTP:            config.HTTPConfig{ManagementMaxBodyBytes: 1024, MaxConcurrentQueries: 1, MaxConcurrentLogQueries: 1, RequestTimeout: time.Minute},
-		Auth:            config.AuthConfig{JWTSecret: testJWTSecret},
-		Database:        config.DatabaseConfig{ReadinessTimeout: time.Second},
-		ShutdownTimeout: time.Second,
+		HTTP:     config.HTTPConfig{ManagementMaxBodyBytes: 1024, MaxConcurrentQueries: 1, MaxConcurrentLogQueries: 1, RequestTimeout: time.Minute},
+		Auth:     config.AuthConfig{JWTSecret: testJWTSecret},
+		Database: config.DatabaseConfig{ReadinessTimeout: time.Second},
+		App:      config.AppConfig{ShutdownTimeout: time.Second},
 	}
 	server := New(configuration, slog.New(slog.NewTextHandler(io.Discard, nil)), func(context.Context) error { return nil }, metrics.New("test", "test", "test"), slowServicesFastLogsBackend{slow}, nil)
 	handler := server.httpServer.Handler

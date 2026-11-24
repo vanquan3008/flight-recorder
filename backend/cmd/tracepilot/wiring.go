@@ -27,10 +27,10 @@ func buildMetricsPipeline(
 ) *pipeline.MetricsPipeline {
 	return pipeline.NewMetricsPipeline(
 		pipeline.MetricsPipelineConfig{
-			QueueSize:     cfg.Ingestion.QueueSize,
-			QueueMaxBytes: cfg.Ingestion.QueueMaxBytes,
-			BatchSize:     cfg.Ingestion.BatchSize,
-			Workers:       cfg.Ingestion.Workers,
+			QueueSize:     cfg.Queue.QueueSize,
+			QueueMaxBytes: cfg.Queue.QueueMaxBytes,
+			BatchSize:     cfg.Queue.BatchSize,
+			Workers:       cfg.Queue.Workers,
 			Metrics:       selfMetrics,
 		},
 		storeMetricsByScope(catalog, storeMetrics),
@@ -47,13 +47,13 @@ func buildIngestionPipeline(
 ) *pipeline.Pipeline {
 	return pipeline.New(
 		pipeline.Config{
-			QueueSize:      cfg.Ingestion.QueueSize,
-			QueueMaxBytes:  cfg.Ingestion.QueueMaxBytes,
-			BatchSize:      cfg.Ingestion.BatchSize,
-			Workers:        cfg.Ingestion.Workers,
-			EnqueueTimeout: cfg.Ingestion.EnqueueTimeout,
-			BatchTimeout:   cfg.Ingestion.BatchTimeout,
-			FlushInterval:  cfg.Ingestion.FlushInterval,
+			QueueSize:      cfg.Queue.QueueSize,
+			QueueMaxBytes:  cfg.Queue.QueueMaxBytes,
+			BatchSize:      cfg.Queue.BatchSize,
+			Workers:        cfg.Queue.Workers,
+			EnqueueTimeout: cfg.Queue.EnqueueTimeout,
+			BatchTimeout:   cfg.Queue.BatchTimeout,
+			FlushInterval:  cfg.Queue.FlushInterval,
 		},
 		storeEventsByScope(catalog, writer.StoreEvents),
 		selfMetrics,
@@ -169,11 +169,11 @@ func logStartup(logger *slog.Logger, cfg config.Config, version string) {
 		"replay_enabled", cfg.Replay.Enabled,
 	)
 
-	if cfg.TLS.CertificateFile == "" {
+	if cfg.App.TLS.CertificateFile == "" {
 		logger.Warn("OTLP listeners are plaintext; use TLS or terminate TLS before TracePilot")
 	}
 
 	if !cfg.Auth.AllowRegistration {
-		logger.Info("registration is closed; only the first account and accounts made by a super administrator exist")
+		logger.Info("registration is closed; create administrators with create-admin")
 	}
 }

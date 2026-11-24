@@ -14,7 +14,7 @@ func ensureJWTSecret(cfg *config.Config, logger *slog.Logger) error {
 	log := logger.With("component", "authentication")
 
 	if cfg.Auth.JWTSecret == "" {
-		if cfg.Production {
+		if cfg.App.Production {
 			err := errors.New("TRACEPILOT_AUTH_JWT_SECRET is required in production")
 			log.Error("JWT configuration invalid",
 				"error", err,
@@ -51,7 +51,7 @@ func ensureJWTSecret(cfg *config.Config, logger *slog.Logger) error {
 	}
 
 	log.Info("JWT configuration initialized",
-		"production", cfg.Production,
+		"production", cfg.App.Production,
 		"separate_ingest_secret", cfg.Auth.IngestJWTSecret != cfg.Auth.JWTSecret,
 	)
 

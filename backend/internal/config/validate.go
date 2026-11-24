@@ -20,7 +20,6 @@ func (validator *validator) err() error {
 	return errors.New(strings.Join(validator.errs, "; "))
 }
 
-// Validate checks the configuration for semantic errors, invalid ranges and production prerequisites.
 func (configuration Config) Validate() error {
 	var validator validator
 
@@ -32,7 +31,10 @@ func (configuration Config) Validate() error {
 	configuration.validateCache(&validator)
 	configuration.validateStorage(&validator)
 	configuration.validateQueue(&validator)
+	configuration.validateIngestion(&validator)
 	configuration.validateObservability(&validator)
+	configuration.validateReplay(&validator)
+	configuration.validateNotifications(&validator)
 
 	return validator.err()
 }

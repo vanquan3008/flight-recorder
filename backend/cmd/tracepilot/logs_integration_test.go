@@ -31,7 +31,7 @@ func TestHybridLogsPreserveIncidentsAndRetry(t *testing.T) {
 	scope := config.IngestionConfig{ProjectID: project, ProjectSlug: "hybrid-" + project[24:], ProjectName: "Hybrid test",
 		EnvironmentID: telemetry.DeterministicID(at, project, "env"), EnvironmentName: "test"}
 	cfg := config.Config{Ingestion: scope,
-		Retention: config.RetentionConfig{MaxAge: 7 * 24 * time.Hour},
+		Storage: config.StorageConfig{Retention: config.RetentionConfig{MaxAge: 7 * 24 * time.Hour}},
 		Database: config.DatabaseConfig{URL: os.Getenv("TRACEPILOT_DATABASE_URL"), MaxConnections: 4,
 			MaxConnectionLifetime: time.Minute, MaxConnectionIdleTime: time.Minute, HealthCheckPeriod: time.Minute},
 		ClickHouse: config.ClickHouseConfig{URL: os.Getenv("TRACEPILOT_CLICKHOUSE_TEST_URL"),
@@ -175,7 +175,7 @@ func TestHybridLogsPreserveIncidentsAndRetry(t *testing.T) {
 		setDays(30)
 		visible(true)
 		setDays(1)
-		if err := store.PruneProjectLogs(ctx, project, at, cfg.Retention.MaxAge); err != nil {
+		if err := store.PruneProjectLogs(ctx, project, at, cfg.Storage.Retention.MaxAge); err != nil {
 			t.Fatal(err)
 		}
 		setDays(30)

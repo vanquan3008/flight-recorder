@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { ArrowRight, Eye, EyeOff, Gauge, LoaderCircle, Lock, Mail, ShieldCheck, Sparkles, User, Zap } from "lucide-react";
+import { ArrowRight, Eye, EyeOff, Gauge, LoaderCircle, Lock, Mail, ShieldCheck, User, Zap } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { api, setAccessToken } from "../shared/api";
 import type { SessionView } from "../shared/session";
@@ -68,17 +68,6 @@ export function Welcome() {
       register.mutate({ email: formEmail, display_name: formName, password: formPassword });
     } else {
       signInRequest.mutate({ email: formEmail, password: formPassword });
-    }
-  };
-
-  const devAdminEmail = import.meta.env.VITE_DEV_ADMIN_EMAIL || "";
-  const devAdminPassword = import.meta.env.VITE_DEV_ADMIN_PASSWORD || "";
-  const devLoginEnabled = !import.meta.env.PROD && Boolean(devAdminEmail && devAdminPassword);
-
-  const fillDevCredentials = () => {
-    if (devAdminEmail && devAdminPassword) {
-      setEmail(devAdminEmail);
-      setPassword(devAdminPassword);
     }
   };
 
@@ -229,29 +218,6 @@ export function Welcome() {
             )}
           </button>
         </form>
-
-        {/* Quick Dev Login Helper */}
-        {!registering && devLoginEnabled && (
-          <div className="mt-5 border-t border-line-soft pt-4">
-            <div className="flex flex-col items-center gap-2">
-              <div className="flex items-center gap-1.5 text-[11px] font-medium text-faint">
-                <Sparkles className="size-3 text-amber-400" aria-hidden="true" />
-                <span>Quick fill for local development</span>
-              </div>
-              <button
-                type="button"
-                onClick={fillDevCredentials}
-                className="group inline-flex items-center gap-2 rounded-xl border border-glass-field-edge bg-glass-field px-3 py-1.5 text-xs text-muted transition-all duration-150 hover:border-accent/40 hover:bg-glass-field-focus hover:text-text active:scale-[0.98]"
-                title="Autofill default admin credentials"
-              >
-                <span className="font-mono text-[11.5px] text-accent">{devAdminEmail}</span>
-                <span className="rounded-md bg-accent/15 px-1.5 py-0.5 text-[10px] font-semibold tracking-wider text-accent uppercase transition-colors group-hover:bg-accent/25">
-                  Autofill
-                </span>
-              </button>
-            </div>
-          </div>
-        )}
 
         {/* Trust & Architecture Micro-Badges */}
         <div className="mt-5 flex items-center justify-center gap-4 border-t border-line-soft/60 pt-4 text-[11px] text-faint">

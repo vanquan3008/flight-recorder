@@ -60,8 +60,18 @@ func runCreateAdmin(arguments []string, input io.Reader) int {
 		return 1
 	}
 	defer database.Close()
-	user, err := database.CreateUser(ctx, params, auth.Actor{})
-	if err != nil {
+	return createAdministrator(ctx, database.CreateUser, params)
+}
+
+type userCreator func(context.Context, auth.CreateUserParams, auth.Actor) (auth.User, error)
+
+func createAdministrator(ctx context.Context, create userCreator, params auth.CreateUserParams) int {
+	user, err := create(ctx, params, auth.Actor{})
+	switch {
+	case errors.Is(err, auth.ErrEmailExists):
+		slog.Error("administrator not created: the email is already registered", "email", params.Email)
+		return 1
+	case err != nil:
 		slog.Error("create administrator failed", "error", err)
 		return 1
 	}

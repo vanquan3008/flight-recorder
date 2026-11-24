@@ -38,7 +38,7 @@ func (configuration Config) validateDatabase(validator *validator) {
 	database := configuration.Database
 
 	database.validateConnectionPool(validator)
-	if int32(2*configuration.Ingestion.Workers+2) > database.MaxConnections {
+	if int32(2*configuration.Queue.Workers+2) > database.MaxConnections {
 		validator.add("database.max_connections", "must reserve one connection per event and metric worker plus two")
 	}
 	database.validateConnectionLifecycle(validator)
@@ -48,7 +48,7 @@ func (configuration Config) validateDatabase(validator *validator) {
 	if database.StatementTimeout > 0 && configuration.HTTP.RequestTimeout > 0 && database.StatementTimeout < configuration.HTTP.RequestTimeout {
 		validator.add("database.statement_timeout", "must not be below http.request_timeout, or queries are cut off before the API can answer")
 	}
-	validateDatabaseURL(database.URL, configuration.Production, validator)
+	validateDatabaseURL(database.URL, configuration.App.Production, validator)
 }
 
 // validateConnectionPool validates connection pool limits.

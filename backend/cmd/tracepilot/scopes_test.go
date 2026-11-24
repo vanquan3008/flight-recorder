@@ -50,7 +50,7 @@ func (source *fakeScopeSource) ListScopes(context.Context) ([]auth.Scope, error)
 }
 
 func newTestCatalog() (*scopeCatalog, *fakeScopeSource, config.IngestionConfig) {
-	base := config.IngestionConfig{ProjectID: "default", ProjectSlug: "default", ProjectName: "Default", EnvironmentID: "env-default", EnvironmentName: "development", BatchSize: 7}
+	base := config.IngestionConfig{ProjectID: "default", ProjectSlug: "default", ProjectName: "Default", EnvironmentID: "env-default", EnvironmentName: "development", MaxRecordsPerRequest: 7}
 	source := &fakeScopeSource{
 		projects: map[string]auth.Project{"alpha": {ID: "alpha", Slug: "alpha", Name: "Alpha"}, "default": {ID: "default", Slug: "default", Name: "Default"}},
 		environments: map[string][]auth.Environment{
@@ -81,8 +81,8 @@ func TestOtherProjectsResolveByNameIDOrDefault(t *testing.T) {
 		if err != nil || scope.EnvironmentID != want || scope.ProjectID != "alpha" || scope.ProjectSlug != "alpha" {
 			t.Fatalf("environment %q: scope %+v, error %v", environment, scope, err)
 		}
-		if scope.BatchSize != base.BatchSize {
-			t.Fatalf("a resolved scope must keep the configured limits, got batch size %d", scope.BatchSize)
+		if scope.MaxRecordsPerRequest != base.MaxRecordsPerRequest {
+			t.Fatalf("a resolved scope must keep the configured limits, got max records %d", scope.MaxRecordsPerRequest)
 		}
 	}
 	lookups := source.lookups

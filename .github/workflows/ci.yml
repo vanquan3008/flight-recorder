@@ -120,15 +120,12 @@ jobs:
       - name: Browser smoke test
         env:
           TRACEPILOT_AUTH_JWT_SECRET: ci-only-jwt-secret-0123456789abcdef0123456789
-          TRACEPILOT_SEED_ADMIN_EMAIL: admin@tracepilot.local
-          TRACEPILOT_SEED_ADMIN_PASSWORD: admin-password-123
           # Browser tests share one IP and repeatedly open sessions and pages.
           TRACEPILOT_HTTP_RATE_LIMIT_AUTH_REQUESTS: "200"
           TRACEPILOT_HTTP_RATE_LIMIT_REQUESTS: "1000"
         run: |
           npm --prefix frontend ci
           npm --prefix frontend exec playwright -- install --with-deps chromium
-          go -C backend run ./cmd/tracepilot seed
           go -C backend run ./cmd/tracepilot serve > tracepilot-e2e.log 2>&1 &
           server_pid=$!
           npm --prefix frontend run build

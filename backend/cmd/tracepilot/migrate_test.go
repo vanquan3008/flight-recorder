@@ -11,7 +11,7 @@ import (
 
 func TestMigrationRejectsInvalidArgumentsBeforeLoadingConfiguration(t *testing.T) {
 	t.Chdir(t.TempDir())
-	t.Setenv("TRACEPILOT_PRODUCTION", "invalid")
+	t.Setenv("TRACEPILOT_APP_PRODUCTION", "invalid")
 	var output bytes.Buffer
 	logger, writer, flags := slog.Default(), log.Writer(), log.Flags()
 	slog.SetDefault(slog.New(slog.NewJSONHandler(&output, nil)))

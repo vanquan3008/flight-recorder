@@ -1,8 +1,14 @@
 package main
 
 import (
+	"bytes"
+	"context"
+	"errors"
+	"log/slog"
 	"strings"
 	"testing"
+
+	"github.com/vanquan3008/tracepilot/internal/auth"
 )
 
 func TestParseCreateAdmin(t *testing.T) {
@@ -37,6 +43,41 @@ func TestParseCreateAdmin(t *testing.T) {
 			want := strings.TrimSuffix(strings.TrimSuffix(test.password, "\n"), "\r")
 			if params.Email != "admin@tracepilot.test" || params.DisplayName != "Operator" || params.Password != want || !params.PlatformAdmin || params.MustChangePassword {
 				t.Fatal("administrator fields or password were not preserved")
+			}
+		})
+	}
+}
+
+func TestCreateAdministratorReportsEachOutcome(t *testing.T) {
+	params := auth.CreateUserParams{Email: "ops@tracepilot.test", DisplayName: "Ops", Password: "operator-password-123", PlatformAdmin: true}
+	tests := []struct {
+		name    string
+		err     error
+		code    int
+		message string
+	}{
+		{"created", nil, 0, "administrator created"},
+		{"duplicate email", auth.ErrEmailExists, 1, "the email is already registered"},
+		{"storage failure", errors.New("connection refused"), 1, "create administrator failed"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var logs bytes.Buffer
+			previous := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+			t.Cleanup(func() { slog.SetDefault(previous) })
+
+			create := func(_ context.Context, got auth.CreateUserParams, actor auth.Actor) (auth.User, error) {
+				if got != params || !actor.IsZero() {
+					t.Fatalf("create received %+v as %+v", got, actor)
+				}
+				return auth.User{ID: "user-1", Email: got.Email}, test.err
+			}
+			if code := createAdministrator(context.Background(), create, params); code != test.code {
+				t.Fatalf("exit code = %d, want %d", code, test.code)
+			}
+			if !strings.Contains(logs.String(), test.message) || strings.Contains(logs.String(), params.Password) {
+				t.Fatalf("log %q must contain %q and never the password", logs.String(), test.message)
 			}
 		})
 	}

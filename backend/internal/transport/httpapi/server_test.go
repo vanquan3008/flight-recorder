@@ -95,10 +95,9 @@ func TestMetricsAreExposed(t *testing.T) {
 
 func TestProductionMetricsRequireDatabaseAuthentication(t *testing.T) {
 	configuration := config.Config{
-		Production:      true,
-		HTTP:            config.HTTPConfig{ManagementMaxBodyBytes: 1024},
-		Database:        config.DatabaseConfig{ReadinessTimeout: time.Second},
-		ShutdownTimeout: time.Second,
+		App:      config.AppConfig{Production: true, ShutdownTimeout: time.Second},
+		HTTP:     config.HTTPConfig{ManagementMaxBodyBytes: 1024},
+		Database: config.DatabaseConfig{ReadinessTimeout: time.Second},
 	}
 	server := New(configuration, slog.New(slog.NewTextHandler(io.Discard, nil)), func(context.Context) error { return nil }, metrics.New("test", "test", "test"), nil, nil)
 	responseRecorder := httptest.NewRecorder()
@@ -132,10 +131,12 @@ func TestNewUsesConfiguredCachePolicies(t *testing.T) {
 
 func TestManagementTLSConfigurationUsesModernMinimum(t *testing.T) {
 	server := New(config.Config{
-		HTTP:            config.HTTPConfig{ManagementMaxBodyBytes: 1024},
-		Database:        config.DatabaseConfig{ReadinessTimeout: time.Second},
-		TLS:             config.TLSConfig{CertificateFile: "server.crt", PrivateKeyFile: "server.key"},
-		ShutdownTimeout: time.Second,
+		HTTP:     config.HTTPConfig{ManagementMaxBodyBytes: 1024},
+		Database: config.DatabaseConfig{ReadinessTimeout: time.Second},
+		App: config.AppConfig{
+			ShutdownTimeout: time.Second,
+			TLS:             config.TLSConfig{CertificateFile: "server.crt", PrivateKeyFile: "server.key"},
+		},
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)), func(context.Context) error { return nil }, metrics.New("test", "test", "test"), nil, nil)
 
 	if server.httpServer.TLSConfig == nil || server.httpServer.TLSConfig.MinVersion != tls.VersionTLS12 {
@@ -155,9 +156,9 @@ func TestBackendServesNoConsole(t *testing.T) {
 
 func TestRateLimitReturnsStandardErrorAndRetryAfter(t *testing.T) {
 	configuration := config.Config{
-		HTTP:            config.HTTPConfig{ManagementMaxBodyBytes: 1024, RateLimitRequests: 1, RateLimitWindow: time.Minute},
-		Database:        config.DatabaseConfig{ReadinessTimeout: time.Second},
-		ShutdownTimeout: time.Second,
+		HTTP:     config.HTTPConfig{ManagementMaxBodyBytes: 1024, RateLimitRequests: 1, RateLimitWindow: time.Minute},
+		Database: config.DatabaseConfig{ReadinessTimeout: time.Second},
+		App:      config.AppConfig{ShutdownTimeout: time.Second},
 	}
 	server := New(configuration, slog.New(slog.NewTextHandler(io.Discard, nil)), func(context.Context) error { return nil }, metrics.New("test", "test", "test"), nil, nil)
 	for attempt := 0; attempt < 2; attempt++ {
@@ -240,10 +241,10 @@ func TestMetricMethodBoundsCardinality(t *testing.T) {
 
 func newTestServer(readinessCheck func(context.Context) error) *Server {
 	configuration := config.Config{
-		HTTP:            config.HTTPConfig{ManagementMaxBodyBytes: 1024},
-		Auth:            config.AuthConfig{JWTSecret: testJWTSecret, AllowRegistration: true},
-		Database:        config.DatabaseConfig{ReadinessTimeout: time.Second},
-		ShutdownTimeout: time.Second,
+		HTTP:     config.HTTPConfig{ManagementMaxBodyBytes: 1024},
+		Auth:     config.AuthConfig{JWTSecret: testJWTSecret, AllowRegistration: true},
+		Database: config.DatabaseConfig{ReadinessTimeout: time.Second},
+		App:      config.AppConfig{ShutdownTimeout: time.Second},
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	return New(configuration, logger, readinessCheck, metrics.New("test", "test", "test"), nil, nil)

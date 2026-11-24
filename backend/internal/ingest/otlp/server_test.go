@@ -42,9 +42,9 @@ func TestOTLPHTTPLogsPersistBeforeSuccess(t *testing.T) {
 	ingestionConfiguration.MaxRequestBytes = 1 << 20
 	receiver := NewReceiver(ingestionConfiguration, ingestionPipeline, nil, metricRegistry, nil)
 	server := NewServer(config.Config{
-		Ingestion:       ingestionConfiguration,
-		HTTP:            config.HTTPConfig{MaxHeaderBytes: 1 << 20},
-		ShutdownTimeout: time.Second,
+		Ingestion: ingestionConfiguration,
+		HTTP:      config.HTTPConfig{MaxHeaderBytes: 1 << 20},
+		App:       config.AppConfig{ShutdownTimeout: time.Second},
 	}, receiver)
 
 	requestMessage := &collectorlogspb.ExportLogsServiceRequest{ResourceLogs: []*logspb.ResourceLogs{{
@@ -238,7 +238,7 @@ func TestServerReadinessTracksBothListeners(t *testing.T) {
 			HTTPAddress:     "127.0.0.1:0",
 			MaxRequestBytes: 1024,
 		},
-		ShutdownTimeout: time.Second,
+		App: config.AppConfig{ShutdownTimeout: time.Second},
 	}, nil)
 	runtimeContext, cancelRuntime := context.WithCancel(context.Background())
 	result := make(chan error, 1)
