@@ -1,6 +1,6 @@
 SQLC_IMAGE := sqlc/sqlc:1.31.1
 
-.PHONY: build test test-race bench-pipeline bench-postgres vet staticcheck vulncheck fmt-check size-check sqlc-generate sqlc-vet sqlc-check web-install web-check web-test web-build web-dev web-ci ci run dev start migrate migrate-postgres migrate-clickhouse migrate-all migrate-status migrate-version seed clean test-docker load-docker
+.PHONY: build test test-race bench-pipeline bench-postgres vet staticcheck vulncheck fmt-check size-check sqlc-generate sqlc-vet sqlc-check web-install web-check web-test web-build web-dev web-ci ci run dev start migrate migrate-postgres migrate-clickhouse migrate-all migrate-status migrate-version clean test-docker load-docker
 
 FRONTEND_NPM := npm --prefix frontend
 
@@ -97,9 +97,6 @@ migrate-status:
 
 migrate-version:
 	go -C backend run ./cmd/tracepilot migrate version
-
-seed:
-	go -C backend run ./cmd/tracepilot seed
 
 clean:
 	go -C backend clean

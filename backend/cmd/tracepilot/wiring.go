@@ -174,6 +174,6 @@ func logStartup(logger *slog.Logger, cfg config.Config, version string) {
 	}
 
 	if !cfg.Auth.AllowRegistration {
-		logger.Info("registration is closed; only the first account and accounts made by a super administrator exist")
+		logger.Info("registration is closed; create administrators with create-admin")
 	}
 }

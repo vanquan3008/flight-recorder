@@ -14,7 +14,6 @@ type Config struct {
 	Ingestion     IngestionConfig     `config:"ingestion"`
 	Observability ObservabilityConfig `config:"observability"`
 	Replay        ReplayConfig        `config:"replay"`
-	Seed          SeedConfig          `config:"seed"`
 	Notifications NotificationsConfig `config:"notifications"`
 }
 

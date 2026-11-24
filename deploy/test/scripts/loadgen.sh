@@ -6,6 +6,11 @@ step "Copy the backend sources"
 copy_tree /src/backend /work
 cd /work
 
+step "Create the load administrator"
+printf '%s\n' "$TRACEPILOT_LOAD_PASSWORD" |
+	go run ./cmd/tracepilot create-admin --email "$TRACEPILOT_LOAD_EMAIL" --name Load --password-stdin ||
+	echo "create-admin failed; the account may already exist from an earlier run"
+
 step "loadgen: ${LOAD_SPANS_PER_SECOND} spans/s + ${LOAD_LOGS_PER_SECOND} logs/s + ${LOAD_METRIC_POINTS_PER_SECOND} points/s, ${LOAD_READS_PER_SECOND} reads/s across ${LOAD_PROJECTS} projects for ${LOAD_DURATION}"
 status=0
 go run ./cmd/loadgen \

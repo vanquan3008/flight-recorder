@@ -10,6 +10,7 @@ afterEach(() => {
   localStorage.clear();
   window.location.hash = "";
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
 });
 
 describe("App", () => {
@@ -21,6 +22,13 @@ describe("App", () => {
     expect(screen.queryByLabelText(/API key/i)).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Register" }));
     expect(screen.getByLabelText("Display name")).toBeTruthy();
+  });
+
+  it("ignores legacy development administrator credentials on the sign-in screen", () => {
+    vi.stubEnv("VITE_DEV_ADMIN_EMAIL", "admin@example.test");
+    vi.stubEnv("VITE_DEV_ADMIN_PASSWORD", "test-only-password");
+    render(<App />);
+    expect(screen.queryByTitle("Autofill default admin credentials")).toBeNull();
   });
 
   it("guides a connected operator from an empty console to the first trace", async () => {

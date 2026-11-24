@@ -207,7 +207,7 @@
     },
     {
       "name": "2. Account, project and ingest token",
-      "description": "Registers (or signs in) and makes a project for this run. Everything after this folder works in that project, so a run never touches other people's data.\n\nThe development-only `tracepilot seed` creates only a super administrator; it does not create projects, environments, memberships, or demo telemetry. Server startup does not create a default project. On an installation, set accountEmail/accountPassword to yours or use the seeded admin, or leave them: a new account is registered when registration is open.",
+      "description": "Registers (or signs in) and makes a project for this run. Everything after this folder works in that project, so a run never touches other people's data.\n\nTo provision an administrator after migration, use `tracepilot create-admin`. Set accountEmail and accountPassword to an existing account, or leave the variables at their defaults to register a test account when registration is open.",
       "item": [
         {
           "name": "Auth status",

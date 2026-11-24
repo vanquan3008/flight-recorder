@@ -113,7 +113,6 @@ func defaultConfig() Config {
 			MaxResponseBytes: 64 << 10,
 			MaxConcurrent:    2,
 		},
-		Seed: SeedConfig{AdminName: "Admin"},
 		Notifications: NotificationsConfig{
 			PollInterval:   5 * time.Second,
 			Workers:        4,

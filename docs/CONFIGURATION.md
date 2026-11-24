@@ -66,7 +66,6 @@ not the value, so secrets do not end up in logs.
 | `observability` | `TRACEPILOT_OBSERVABILITY_` | Log level and log format |
 | `replay` | `TRACEPILOT_REPLAY_` | Request replay switch, allowed hosts, and limits |
 | `notifications` | `TRACEPILOT_NOTIFICATIONS_` | Webhook delivery switch, encryption key, polling, workers, and request timeout |
-| `seed` | `TRACEPILOT_SEED_` | Development administrator for `tracepilot seed` |
 
 [`backend/.env.example`](../backend/.env.example) lists every setting with its default, grouped as
 above. Defaults are defined once, in `backend/internal/config/defaults.go`, and a test fails when the

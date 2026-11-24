@@ -70,8 +70,8 @@ func parseOptions(arguments []string) (options, error) {
 	flags := flag.NewFlagSet("loadgen", flag.ContinueOnError)
 	flags.StringVar(&settings.apiURL, "api-url", "http://127.0.0.1:8080", "management API base URL")
 	flags.StringVar(&settings.ingestURL, "ingest-url", "http://127.0.0.1:4318", "OTLP HTTP base URL")
-	flags.StringVar(&settings.email, "email", envOr("TRACEPILOT_LOAD_EMAIL", os.Getenv("TRACEPILOT_SEED_ADMIN_EMAIL")), "account that may create projects")
-	flags.StringVar(&settings.password, "password", envOr("TRACEPILOT_LOAD_PASSWORD", os.Getenv("TRACEPILOT_SEED_ADMIN_PASSWORD")), "password for -email")
+	flags.StringVar(&settings.email, "email", os.Getenv("TRACEPILOT_LOAD_EMAIL"), "account that may create projects")
+	flags.StringVar(&settings.password, "password", os.Getenv("TRACEPILOT_LOAD_PASSWORD"), "password for -email")
 	flags.StringVar(&settings.metricsToken, "metrics-token", os.Getenv("TRACEPILOT_HTTP_METRICS_TOKEN"), "scrape token when /metrics requires authentication")
 	flags.IntVar(&settings.spansPerSecond, "spans-per-second", 0, "span ingest rate; 0 disables traces")
 	flags.IntVar(&settings.spansPerRequest, "spans-per-request", 64, "spans in each OTLP trace export")
@@ -111,13 +111,6 @@ func parseOptions(arguments []string) (options, error) {
 		return settings, fmt.Errorf("-prefill requires a trace, log, or metric point rate")
 	}
 	return settings, nil
-}
-
-func envOr(name, fallback string) string {
-	if value := os.Getenv(name); value != "" {
-		return value
-	}
-	return fallback
 }
 
 func main() {

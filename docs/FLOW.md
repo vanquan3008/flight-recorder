@@ -194,18 +194,20 @@ grace period of at least 35 seconds. Exporters retry unacknowledged data.
 
 ## 3. Registration, sign-in, and refresh [3]
 
-- For a fresh production installation, run `create-admin --email ... --name ... --password-stdin` after
-  migration. The command connects only to PostgreSQL, checks production TLS and schema readiness,
-  applies the same password rules as the API, and creates the account and audit entry in one
-  transaction. It reads a single password line from stdin and excludes it from arguments and logs. An
-  existing email causes the command to fail and leaves that account intact.
-- **Registration.** The development command `tracepilot seed` creates only the super admin account
-  configured in `TRACEPILOT_SEED_ADMIN_EMAIL` and `TRACEPILOT_SEED_ADMIN_PASSWORD`. It uses the same account creation path
-  as `create-admin`, so it requires a migrated schema and records an audit entry. Reruns leave an
-  existing account with that email unchanged. Create the project and environment in the console after signing in. When
-  `ALLOW_REGISTRATION=true`, the form and API create regular accounts. A super admin can grant
+- **Administrators.** After migration, run `create-admin --email ... --name ... --password-stdin`
+  to provision a super admin in development or production.
+  - The command connects only to PostgreSQL and checks production TLS and schema readiness.
+  - It reads a single password line from stdin, applies the API's password rules, and keeps the
+    password out of arguments and logs.
+  - It hashes the password with PBKDF2-SHA256 and writes the account and its `user.created` audit
+    entry in one transaction.
+  - Each run creates one administrator. An existing email exits with code 1 and leaves that account
+    intact.
+- **Registration.** When `TRACEPILOT_AUTH_ALLOW_REGISTRATION=true`, the form and API create regular
+  accounts. The first registered account gets no extra rights. A super admin can grant
   `platform_admin` in **Settings → Accounts** or add an account to a project in **Settings → Members**.
-  Passwords must be 12–256 characters. Setting `ALLOW_REGISTRATION=false` closes public registration.
+  Passwords must be 12–256 characters. Setting `TRACEPILOT_AUTH_ALLOW_REGISTRATION=false` closes public
+  registration, and `create-admin` still works.
 - **Sign-in.** Limits apply per IP and allow ten attempts per email during the configured window.
   Unknown emails and wrong passwords get the same message and take the same time to check. On success,
   the server creates a refresh session, sets the `tp_refresh` cookie (`HttpOnly`, `SameSite=Strict`,
