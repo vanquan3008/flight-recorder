@@ -8,7 +8,7 @@
 
 TracePilot is a self-hosted observability platform for OpenTelemetry traces, logs, and metrics. Use its React console to follow a failed trace to the logs, see which services are affected, and investigate the incident.
 
-[Quick start](#quick-start) · [Send telemetry](#send-telemetry) · [Deployment](#production-deployment) · [Development](#development) · [Reference](#reference)
+[Architecture](#architecture) · [Quick start](#quick-start) · [Send telemetry](#send-telemetry) · [Deployment](#production-deployment) · [Development](#development) · [Reference](#reference)
 
 ## Features
 
@@ -16,6 +16,14 @@ TracePilot is a self-hosted observability platform for OpenTelemetry traces, log
 - View service topology and performance trends, investigate incidents, and review root-cause evidence.
 - Manage projects, environments, member roles, ingest tokens, and audit history.
 - Send signed webhooks and replay HTTP requests when those features are enabled.
+
+## Architecture
+
+One Go process runs the OTLP receiver, the REST API, and the background workers. ClickHouse stores every log, span, and metric point. PostgreSQL stores accounts, projects, tokens, incidents, webhooks, and replays. The exporter receives its acknowledgment only after ClickHouse stores the batch and the PostgreSQL transaction for its failures commits. Redis is optional and backs only the shared ingest-token cache.
+
+![TracePilot architecture: producers send OTLP through the receiver, normalizer, and pipelines; logs.Persist writes telemetry to ClickHouse and failures to PostgreSQL; the console reads through the scope router and REST handlers, and Live Tail flows through live.Hub to SSE](docs/images/architecture-overview.svg)
+
+See the [application flow](docs/FLOW.md) for each path in detail.
 
 ## Requirements
 
@@ -87,12 +95,12 @@ if ($LASTEXITCODE -ne 0) { throw 'Frontend dependency installation failed.' }
 npm --prefix frontend run dev
 ```
 
-Open [localhost:5173](http://localhost:5173) and register an account, or sign in with a development administrator. Local configuration enables registration by default. Vite proxies `/api` and `/health` to the backend on port `8080`.
+Open [localhost:5173](http://localhost:5173) and sign in with the super administrator, or with an account it created for you. Vite proxies `/api` and `/health` to the backend on port `8080`.
 
 <details>
 <summary>Development administrator</summary>
 
-Run `create-admin` after migration to provision a super admin in development or production. The command connects directly to PostgreSQL. Console registration creates regular accounts.
+TracePilot has exactly one super administrator, and nobody can sign up on their own. After migration, run `create-admin` once to create it. It is the same command used in production. The command needs only PostgreSQL, so the backend does not have to be running.
 
 ```powershell
 $secret = Read-Host 'Administrator password' -AsSecureString
@@ -108,8 +116,8 @@ unset ADMIN_PASSWORD
 ```
 
 - The password must be 12–256 characters and is read from stdin, so it stays out of the shell history and the process list. Windows PowerShell 5.1 sends piped text as ASCII. Use an ASCII password, or set `$OutputEncoding = [Text.UTF8Encoding]::new($false)` first.
-- Each run creates one administrator. Run it again with another email to add more.
-- An email that already exists makes the command exit with code 1. The existing account is left unchanged.
+- The command succeeds only once. Any later run, with any email, exits with code 1 because the super administrator already exists. The database refuses a second one as well.
+- The super administrator creates every other account in **Settings → Accounts**. Each person signs in with a temporary password and must replace it before using the console. Project owners and admins then grant access in **Settings → Members**.
 
 Sign in, then create your project and environment from the console.
 
@@ -156,13 +164,13 @@ In Bash, use `export NAME='value'` for the same variables. Generate traffic and 
 <details>
 <summary>Generate sample traces locally</summary>
 
-With the backend running, set `TRACEPILOT_LOAD_EMAIL` and `TRACEPILOT_LOAD_PASSWORD` to the credentials for an account that can create projects. Run from the repository root:
+With the backend running and a development administrator created, run from the repository root:
 
 ```powershell
-go -C backend run ./cmd/loadgen -spans-per-second 16 -spans-per-request 8 -warmup 0s -duration 5s
+go -C backend run ./cmd/loadgen -email admin@tracepilot.local -password admin-password-123 -spans-per-second 16 -spans-per-request 8 -warmup 0s -duration 5s
 ```
 
-The command creates a project named `Load <timestamp>` and an environment named `load`. Select them in the console and open **Traces**.
+The command creates a project named `Load <timestamp>` and an environment named `load`. Select them in the console and open **Traces**. Pass the account with `-email` and `-password`, or set `TRACEPILOT_LOAD_EMAIL` and `TRACEPILOT_LOAD_PASSWORD`.
 
 </details>
 
@@ -175,6 +183,77 @@ The command creates a project named `Load <timestamp>` and an environment named 
 | Health | [`/health/live`](http://localhost:8080/health/live) checks the process. [`/health/ready`](http://localhost:8080/health/ready) checks both databases. |
 
 If readiness returns `503`, check both database connections and the migration status. If the exporter gets `401`, check that the authorization header contains an active **ingest token**. If an export succeeds and the console is empty, check the selected project, environment, and time range.
+
+### Try the refund policy AI tracing demo
+
+The pilot reads a refund policy from PostgreSQL and returns a trace ID with its answer. It sends spans and correlated logs directly to TracePilot. The Go log sender uses the standard library. [Current pilot diagram](docs/FLOW.md#refund-policy-demo) · [Service adoption checklist](docs/TRACEPILOT_TRACES_AND_LOGS_PLAN.md)
+
+Start TracePilot, select a project and environment, and create an ingest token as described above. Start a disposable PostgreSQL database for the demo.
+
+```powershell
+docker run -d --rm --name tracepilot-ai-demo-db -p 127.0.0.1:15432:5432 -e POSTGRES_USER=aidemo -e POSTGRES_PASSWORD=aidemo-only -e POSTGRES_DB=aidemo postgres:17.12-alpine
+docker exec tracepilot-ai-demo-db pg_isready -h 127.0.0.1 -U aidemo -d aidemo
+```
+
+After PostgreSQL accepts connections, add these settings to `backend/.env`. Replace the ingest token and use the selected environment's name.
+
+```dotenv
+TRACEPILOT_AI_DEMO_DATABASE_URL=postgres://aidemo:aidemo-only@127.0.0.1:15432/aidemo?sslmode=disable
+OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://127.0.0.1:4318/v1/traces
+OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=http://127.0.0.1:4318/v1/logs
+OTEL_EXPORTER_OTLP_HEADERS='authorization=Bearer%20<ingest-token>,x-environment=development'
+```
+
+From the repository root, start the demo with `go -C backend run ./cmd/aidemo`. In a second terminal, send both requests.
+
+```powershell
+Invoke-RestMethod -Method Post http://127.0.0.1:8090/ask -ContentType application/json -Body '{"policy_version":1}'
+Invoke-RestMethod -Method Post http://127.0.0.1:8090/ask -ContentType application/json -Body '{}'
+```
+
+With the default model stub, version `1` returns a 14-day refund window. The default policy selection is version `2`, which returns 30 days. Both responses return HTTP `200` and include a `trace_id`. In **Traces**, select the same project and environment, search by that ID, and open `policy.retrieve` to see `demo.policy.version`. Its `SELECT refund_policies` child shows the database call. The `chat refund-demo` span shows the prompt version and model identifiers. **Correlated logs** shows `policy.retrieved`, `generation.completed`, and `request.completed` as their batches arrive. Use **Logs for this span** to isolate one step. Direct export contains metadata. The service also writes its structured logs to stderr.
+
+Set `OTEL_EXPORTER_OTLP_LOGS_HEADERS` to override the shared headers for logs only. Clear any stale `OTEL_EXPORTER_OTLP_TRACES_HEADERS` that could override the shared trace credentials. Leave `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` unset to keep only the local log sink. Use HTTPS for production receiver URLs.
+
+Stop the demo with Ctrl+C, then run `docker stop tracepilot-ai-demo-db` to discard its database. [Demo flow](docs/FLOW.md#refund-policy-demo)
+
+From Log explorer, **Open trace** selects the producing span when its ID is available. Use **Back to trace** to restore that selection after filtering the logs. [Console investigation flow](docs/FLOW.md#11-live-telemetry-and-trace-waterfall)
+
+### Send the demo trace to both TracePilot and Langfuse
+
+Use a sandbox Langfuse project and the demo fixture above. In `backend/.env`, replace the demo's direct trace endpoint by setting `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://127.0.0.1:14318/v1/traces`. Remove `OTEL_EXPORTER_OTLP_TRACES_HEADERS` and any `OTEL_EXPORTER_OTLP_HEADERS` used to authenticate direct trace exports. Supply the trace credentials on the Collector. When keeping direct log delivery, set `OTEL_EXPORTER_OTLP_LOGS_HEADERS` with the TracePilot ingest token and environment.
+
+```dotenv
+TRACEPILOT_AI_COLLECTOR_INGEST_TOKEN=<TracePilot ingest token>
+TRACEPILOT_AI_COLLECTOR_ENVIRONMENT=development
+TRACEPILOT_AI_COLLECTOR_LANGFUSE_ENDPOINT=https://cloud.langfuse.com/api/public/otel/v1/traces
+TRACEPILOT_AI_COLLECTOR_LANGFUSE_AUTH=<base64 of public key:secret key>
+TRACEPILOT_AI_DEMO_CAPTURE_CONTENT=false
+```
+
+Use the Langfuse host for your project and base64-encode the two keys joined with a colon. Set `TRACEPILOT_AI_COLLECTOR_TRACEPILOT_ENDPOINT` if the Collector needs a different URL to reach TracePilot. The default is `http://host.docker.internal:4318/v1/traces`. [Langfuse OTLP endpoint and authentication](https://langfuse.com/integrations/native/opentelemetry)
+
+```powershell
+docker compose --env-file backend/.env -f deploy/aidemo/compose.yaml up -d
+go -C backend run ./cmd/aidemo
+```
+
+Send the stale-policy request and look up the response's `trace_id` in both systems. The five spans retain the same IDs and parent relationships. To see the synthetic model input and output in Langfuse, change `TRACEPILOT_AI_DEMO_CAPTURE_CONTENT` to `true`, restart `aidemo`, and send a new request. The `chat refund-demo` observation shows the stub input and output. `response.assemble` shows the separate final answer. TracePilot receives operational attributes in either capture mode. The Collector configuration is scoped to the demo's synthetic data and accepts OTLP/HTTP traces on the host's loopback interface.
+
+If Langfuse is unavailable, check the Collector logs for exporter retries. A full destination queue can return an OTLP `503` even when TracePilot accepts its copy. Trace export runs asynchronously from the demo request. Stop the Collector with `docker compose --env-file backend/.env -f deploy/aidemo/compose.yaml down`. [Collector flow](docs/FLOW.md#ai-demo-collector)
+
+### Run the demo with an OpenAI sandbox model
+
+Add a model available to your OpenAI sandbox project and its API key to `backend/.env`, then restart `aidemo`. Leave the model unset to use the deterministic stub.
+
+```dotenv
+TRACEPILOT_AI_DEMO_OPENAI_MODEL=<model-id-for-your-project>
+TRACEPILOT_AI_DEMO_OPENAI_API_KEY=<sandbox-api-key>
+```
+
+The demo sends its fixed instruction and the selected fixture policy to the Responses API. It sets `store=false` and limits output to 256 tokens. `POST /ask` returns `504` when the model call times out and `502` for other provider failures, including refusals or incomplete responses. These responses include the trace ID and selected policy version. [OpenAI Responses API](https://developers.openai.com/api/reference/resources/responses/methods/create)
+
+Run the stale and current policy requests again. In TracePilot, open `chat openai` to see the requested model, the model reported by the provider when available, and the generation status. Through the Collector, the same observation in Langfuse also receives the reported input and output token counts. With content capture enabled, compare the fixture input and generation output against the answer on `response.assemble`. [Langfuse attribute mapping](https://langfuse.com/integrations/native/opentelemetry)
 
 ## Production deployment
 
@@ -209,7 +288,7 @@ chmod 755 certs
 | --- | --- |
 | `backend/.env` | Set database endpoints reachable from the containers. Use PostgreSQL with `sslmode=verify-full` and ClickHouse over HTTPS. |
 | `backend/.env` | Generate three separate persistent secrets with `openssl rand -hex 32` for `TRACEPILOT_AUTH_JWT_SECRET`, `TRACEPILOT_AUTH_INGEST_JWT_SECRET`, and `TRACEPILOT_HTTP_METRICS_TOKEN`. |
-| `backend/.env` | Set `TRACEPILOT_HTTP_ALLOWED_ORIGINS` to the HTTPS console origin, `TRACEPILOT_HTTP_TRUSTED_PROXIES` to `172.30.90.1/32,172.30.90.3/32` for the supplied network, and `TRACEPILOT_AUTH_ALLOW_REGISTRATION=false`. |
+| `backend/.env` | Set `TRACEPILOT_HTTP_ALLOWED_ORIGINS` to the HTTPS console origin, `TRACEPILOT_HTTP_TRUSTED_PROXIES` to `172.30.90.1/32,172.30.90.3/32` for the supplied network. |
 | `frontend/.env` | Set `TRACEPILOT_API_UPSTREAM=http://tracepilot:8080`. |
 | `certs/` | Store public CA certificates here. Compose mounts the directory at `/etc/tracepilot`. Use mode `644` for public CA files so the backend can read them. Keep TLS private keys with the host proxy. |
 
@@ -232,7 +311,7 @@ docker compose -f deploy/compose.yaml ps -a
 
 Verify that `migrate` exited with code 0 and that both application containers are healthy. If startup fails, inspect `docker compose -f deploy/compose.yaml logs migrate tracepilot`.
 
-For a fresh database, create the first operator interactively. This command records an audit event and rejects an existing email.
+For a fresh database, create the super administrator interactively. The command records an audit event and succeeds only once. Every other account is created by the super administrator in the console.
 
 ```bash
 read -r -s -p 'Administrator password: ' ADMIN_PASSWORD
@@ -368,6 +447,8 @@ The independent flags `TRACEPILOT_DATABASE_AUTO_MIGRATE` and `TRACEPILOT_CLICKHO
 
 The PostgreSQL baseline has no down migration. Inspect rollback SQL for later versions before using it. ClickHouse has no automatic downgrade. Its baseline targets fresh databases; recreate a ClickHouse database created by an earlier development build. Plan a separate data migration when changing an existing partition key.
 
+PostgreSQL `000005` allows at most one super administrator. Before upgrading a database that has several, keep one and remove `platform_admin` from the others, or the migration fails.
+
 Stop older backend replicas before enabling project retention. Run `migrate all` to add the PostgreSQL policy column. The ClickHouse runtime account needs `INSERT` and `SELECT` on every TracePilot table, and `ALTER DELETE` and `ALTER DROP PARTITION` on `tracepilot_log_records`, `tracepilot_spans`, `tracepilot_trace_index`, `tracepilot_metric_points`, `tracepilot_span_minutes`, `tracepilot_span_minute_marks`, and `tracepilot_span_minute_done` for retention. Existing projects inherit `TRACEPILOT_STORAGE_RETENTION_MAX_AGE` until their owner sets an override.
 
 For SQL changes, add a new versioned migration, update the named queries, regenerate SQLC with `make sqlc-check`, adapt the storage layer, and test on a disposable database. Keep already-applied migration files intact. Update database constraints when changing incident statuses, severity levels, or supported webhook events.
@@ -427,10 +508,13 @@ To run a mixed workload, add `-projects 3 -metric-points-per-second 100`. The of
 
 The [development roadmap](docs/ROADMAP.md) defines the sustained workload test, two-replica pilot, capacity work, and enterprise controls.
 
+See the [AI traces and logs plan](docs/TRACEPILOT_TRACES_AND_LOGS_PLAN.md) for the Go standard-library log sender and the [product roadmap](docs/PRODUCT_ROADMAP.md) for source boundaries, priorities, and release checks.
+
 ## Reference
 
 - [Application flow](docs/FLOW.md)
+- [Configuration](docs/CONFIGURATION.md)
+- [HTTP API architecture](docs/architecture/httpapi.md)
 - [Diagrams and searchable source map](docs/diagrams.html) (open in a browser)
 - [Postman API collection](docs/tracepilot.postman_collection.json)
 - [MIT license](LICENSE)
-- [Configuration](docs/CONFIGURATION.md)
