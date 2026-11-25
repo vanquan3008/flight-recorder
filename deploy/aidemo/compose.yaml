@@ -1,0 +1,18 @@
+name: tracepilot-aidemo
+
+services:
+  collector:
+    image: otel/opentelemetry-collector-contrib:0.165.0
+    command: ["--config=/etc/otelcol/aidemo.yaml"]
+    ports:
+      - "127.0.0.1:14318:4318"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      TRACEPILOT_AI_COLLECTOR_TRACEPILOT_ENDPOINT: ${TRACEPILOT_AI_COLLECTOR_TRACEPILOT_ENDPOINT:-http://host.docker.internal:4318/v1/traces}
+      TRACEPILOT_AI_COLLECTOR_INGEST_TOKEN: ${TRACEPILOT_AI_COLLECTOR_INGEST_TOKEN:?Set a TracePilot ingest token}
+      TRACEPILOT_AI_COLLECTOR_ENVIRONMENT: ${TRACEPILOT_AI_COLLECTOR_ENVIRONMENT:-development}
+      TRACEPILOT_AI_COLLECTOR_LANGFUSE_ENDPOINT: ${TRACEPILOT_AI_COLLECTOR_LANGFUSE_ENDPOINT:?Set the Langfuse OTLP traces endpoint}
+      TRACEPILOT_AI_COLLECTOR_LANGFUSE_AUTH: ${TRACEPILOT_AI_COLLECTOR_LANGFUSE_AUTH:?Set the Langfuse base64 credentials}
+    volumes:
+      - ./collector.yaml:/etc/otelcol/aidemo.yaml:ro

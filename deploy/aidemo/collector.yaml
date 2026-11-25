@@ -1,0 +1,108 @@
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+        max_request_body_size: 1048576
+
+processors:
+  filter/demo:
+    error_mode: propagate
+    trace_conditions:
+      - 'resource.attributes["service.name"] != "tracepilot-ai-demo"'
+      - 'not IsMatch(span.name, "^(POST /ask|policy[.]retrieve|SELECT refund_policies|chat (refund-demo|openai)|response[.]assemble)$")'
+
+  transform/common:
+    error_mode: propagate
+    trace_statements:
+      - 'keep_keys(resource.attributes, ["service.name"])'
+      - 'set(resource.schema_url, "")'
+      - 'keep_keys(scope.attributes, [])'
+      - 'set(scope.name, "tracepilot-ai-demo")'
+      - 'set(scope.version, "")'
+      - 'set(scope.schema_url, "")'
+      - 'set(span.trace_state, "")'
+      - 'set(span.status.message, "")'
+      - 'set(span.events, nil)'
+      - 'set(span.links, nil)'
+      - >-
+        keep_keys(span.attributes, ["http.request.method", "http.route", "http.response.status_code",
+        "db.system", "db.system.name", "db.operation.name", "demo.policy.id", "demo.policy.version",
+        "demo.prompt.version", "gen_ai.operation.name", "gen_ai.provider.name", "gen_ai.request.model",
+        "gen_ai.response.model", "gen_ai.usage.input_tokens", "gen_ai.usage.output_tokens", "error.type",
+        "demo.content.captured", "demo.content.input", "demo.content.output"])
+      - 'truncate_all(span.attributes, 1024, true, " [truncated]")'
+
+  transform/tracepilot:
+    error_mode: propagate
+    trace_statements:
+      - 'delete_key(span.attributes, "demo.content.input")'
+      - 'delete_key(span.attributes, "demo.content.output")'
+      - 'delete_key(span.attributes, "gen_ai.usage.input_tokens")'
+      - 'delete_key(span.attributes, "gen_ai.usage.output_tokens")'
+
+  transform/langfuse:
+    error_mode: propagate
+    trace_statements:
+      - 'set(span.attributes["langfuse.observation.type"], "generation") where span.attributes["gen_ai.operation.name"] == "chat"'
+      - 'set(span.attributes["langfuse.observation.type"], "retriever") where span.name == "policy.retrieve"'
+      - 'set(span.attributes["langfuse.observation.model.name"], span.attributes["gen_ai.response.model"]) where span.attributes["gen_ai.response.model"] != nil'
+      - 'set(span.attributes["langfuse.observation.metadata.prompt_version"], span.attributes["demo.prompt.version"]) where span.attributes["demo.prompt.version"] != nil'
+      - 'set(span.attributes["langfuse.observation.metadata.policy_version"], String(span.attributes["demo.policy.version"])) where span.attributes["demo.policy.version"] != nil'
+      - >-
+        set(span.attributes["langfuse.observation.input"], String(span.attributes["demo.content.input"]))
+        where span.attributes["gen_ai.operation.name"] == "chat" and span.attributes["demo.content.captured"] == true
+        and IsList(span.attributes["demo.content.input"]) and Len(String(span.attributes["demo.content.input"])) <= 1024
+      - >-
+        set(span.attributes["langfuse.observation.output"], span.attributes["demo.content.output"])
+        where (span.attributes["gen_ai.operation.name"] == "chat" or span.name == "response.assemble")
+        and span.attributes["demo.content.captured"] == true and IsString(span.attributes["demo.content.output"])
+      - >-
+        set(span.attributes["demo.content.captured"], false)
+        where span.attributes["demo.content.captured"] == true and span.attributes["langfuse.observation.input"] == nil
+        and span.attributes["langfuse.observation.output"] == nil
+      - 'delete_key(span.attributes, "demo.content.input")'
+      - 'delete_key(span.attributes, "demo.content.output")'
+
+  attributes/langfuse:
+    actions:
+      - key: langfuse.environment
+        value: ${env:TRACEPILOT_AI_COLLECTOR_ENVIRONMENT}
+        action: upsert
+
+exporters:
+  otlp_http/tracepilot:
+    traces_endpoint: ${env:TRACEPILOT_AI_COLLECTOR_TRACEPILOT_ENDPOINT}
+    headers:
+      Authorization: "Bearer ${env:TRACEPILOT_AI_COLLECTOR_INGEST_TOKEN}"
+      X-Environment: ${env:TRACEPILOT_AI_COLLECTOR_ENVIRONMENT}
+    timeout: 3s
+    sending_queue: &pilot_queue
+      enabled: true
+      queue_size: 16
+      num_consumers: 1
+      block_on_overflow: false
+    retry_on_failure: &pilot_retry
+      initial_interval: 1s
+      max_interval: 4s
+      max_elapsed_time: 20s
+
+  otlp_http/langfuse:
+    traces_endpoint: ${env:TRACEPILOT_AI_COLLECTOR_LANGFUSE_ENDPOINT}
+    headers:
+      Authorization: "Basic ${env:TRACEPILOT_AI_COLLECTOR_LANGFUSE_AUTH}"
+      x-langfuse-ingestion-version: "4"
+    timeout: 3s
+    sending_queue: *pilot_queue
+    retry_on_failure: *pilot_retry
+
+service:
+  pipelines:
+    traces/tracepilot:
+      receivers: [otlp]
+      processors: [filter/demo, transform/common, transform/tracepilot]
+      exporters: [otlp_http/tracepilot]
+    traces/langfuse:
+      receivers: [otlp]
+      processors: [filter/demo, transform/common, transform/langfuse, attributes/langfuse]
+      exporters: [otlp_http/langfuse]
