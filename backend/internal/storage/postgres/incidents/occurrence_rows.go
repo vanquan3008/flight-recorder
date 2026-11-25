@@ -3,6 +3,7 @@ package incidents
 import (
 	"cmp"
 	"context"
+	"github.com/vanquan3008/tracepilot/internal/domain/analysis"
 
 	"github.com/vanquan3008/tracepilot/internal/config"
 	"github.com/vanquan3008/tracepilot/internal/domain/incident"
@@ -79,7 +80,7 @@ func queueEventEvidence(ctx context.Context, writes *sqlcstore.Queries, ingestio
 	writes.InsertEventEvidence(ctx, sqlcstore.InsertEventEvidenceParams{
 		ID:        telemetry.DeterministicID(event.Timestamp, "incident-event-evidence", incidentID, event.ID),
 		ProjectID: ingestion.ProjectID, EnvironmentID: ingestion.EnvironmentID, IncidentID: incidentID,
-		EntityID: pgvalue.EntityID("service", event.ServiceName), OccurredAt: event.Timestamp,
+		EntityID: analysis.EntityID("service", event.ServiceName), OccurredAt: event.Timestamp,
 		TraceIDs: traceIDs, Summary: cmp.Or(event.ErrorMessage, incident.Title(event)),
 	})
 }

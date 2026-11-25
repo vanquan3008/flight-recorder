@@ -31,18 +31,7 @@ export const formatTimeIso = (value?: string): string => {
   return `${y}-${m}-${d} ${h}:${min}:${s}.${ms}`;
 };
 
-/** Formats timestamp to time-only: HH:mm:ss.SSS */
-export const formatTimeOnly = (value?: string): string => {
-  const date = value ? new Date(value) : undefined;
-  if (!date || !Number.isFinite(date.getTime())) return "—";
-  const h = pad(date.getHours());
-  const min = pad(date.getMinutes());
-  const s = pad(date.getSeconds());
-  const ms = pad(date.getMilliseconds(), 3);
-  return `${h}:${min}:${s}.${ms}`;
-};
-
-export interface TimeParts {
+interface TimeParts {
   time: string;
   date: string;
   full: string;

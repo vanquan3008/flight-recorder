@@ -30,18 +30,6 @@ func (q *Queries) CountOtherActiveOwners(ctx context.Context, arg CountOtherActi
 	return count, err
 }
 
-const countOtherActivePlatformAdmins = `-- name: CountOtherActivePlatformAdmins :one
-SELECT count(*) FROM users
-WHERE platform_admin AND disabled_at IS NULL AND id <> $1
-`
-
-func (q *Queries) CountOtherActivePlatformAdmins(ctx context.Context, id string) (int64, error) {
-	row := q.db.QueryRow(ctx, countOtherActivePlatformAdmins, id)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
-}
-
 const countOwnedProjects = `-- name: CountOwnedProjects :one
 SELECT count(*) FROM project_members WHERE user_id = $1 AND role = 'owner'
 `
@@ -848,6 +836,17 @@ func (q *Queries) LockUser(ctx context.Context, id string) (User, error) {
 	return i, err
 }
 
+const platformAdminExists = `-- name: PlatformAdminExists :one
+SELECT EXISTS (SELECT 1 FROM users WHERE platform_admin)
+`
+
+func (q *Queries) PlatformAdminExists(ctx context.Context) (bool, error) {
+	row := q.db.QueryRow(ctx, platformAdminExists)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const recordUserLogin = `-- name: RecordUserLogin :exec
 UPDATE users SET last_login_at = now() WHERE id = $1
 `
@@ -991,32 +990,29 @@ func (q *Queries) UpdateProjectRetention(ctx context.Context, arg UpdateProjectR
 const updateUser = `-- name: UpdateUser :one
 UPDATE users SET
     display_name   = COALESCE($1, display_name),
-    platform_admin = COALESCE($2::boolean, platform_admin),
     disabled_at    = CASE
-        WHEN $3::boolean IS NULL THEN disabled_at
-        WHEN $3::boolean THEN COALESCE(disabled_at, now())
+        WHEN $2::boolean IS NULL THEN disabled_at
+        WHEN $2::boolean THEN COALESCE(disabled_at, now())
         ELSE NULL END,
-    tokens_valid_after = CASE WHEN $3::boolean
-        THEN greatest(tokens_valid_after + interval '1 microsecond', $4::timestamptz)
+    tokens_valid_after = CASE WHEN $2::boolean
+        THEN greatest(tokens_valid_after + interval '1 microsecond', $3::timestamptz)
         ELSE tokens_valid_after END,
     updated_at     = now()
-WHERE id = $5
+WHERE id = $4
 RETURNING id, email, display_name, password_hash, platform_admin, must_change_password, disabled_at, tokens_valid_after, created_at, updated_at, last_login_at
 `
 
 type UpdateUserParams struct {
-	DisplayName   *string
-	PlatformAdmin *bool
-	Disabled      *bool
-	ValidAfter    time.Time
-	ID            string
+	DisplayName *string
+	Disabled    *bool
+	ValidAfter  time.Time
+	ID          string
 }
 
 // Revocation markers advance even for concurrent changes or a clock moving backwards.
 func (q *Queries) UpdateUser(ctx context.Context, arg UpdateUserParams) (User, error) {
 	row := q.db.QueryRow(ctx, updateUser,
 		arg.DisplayName,
-		arg.PlatformAdmin,
 		arg.Disabled,
 		arg.ValidAfter,
 		arg.ID,
@@ -1036,15 +1032,4 @@ func (q *Queries) UpdateUser(ctx context.Context, arg UpdateUserParams) (User, e
 		&i.LastLoginAt,
 	)
 	return i, err
-}
-
-const usersExist = `-- name: UsersExist :one
-SELECT EXISTS (SELECT 1 FROM users)
-`
-
-func (q *Queries) UsersExist(ctx context.Context) (bool, error) {
-	row := q.db.QueryRow(ctx, usersExist)
-	var exists bool
-	err := row.Scan(&exists)
-	return exists, err
 }

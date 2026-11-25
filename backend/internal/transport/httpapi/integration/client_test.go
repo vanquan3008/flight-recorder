@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/vanquan3008/tracepilot/internal/transport/httpapi"
+	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/api"
 )
 
 const (
@@ -30,7 +30,7 @@ func (c *client) do(method, path, body, project string) (int, map[string]any) {
 		request.Header.Set("Authorization", "Bearer "+c.access)
 	}
 	if project != "" {
-		request.Header.Set(httpapi.HeaderProjectID, project)
+		request.Header.Set(api.HeaderProjectID, project)
 	}
 	if strings.HasPrefix(path, refreshPath) {
 		request.Header.Set(refreshHeader, "1")
@@ -63,9 +63,26 @@ func (c *client) signIn(email, password string) int {
 	return status
 }
 
-func (c *client) register(email, name, password string) (int, map[string]any) {
-	c.t.Helper()
-	return c.do(http.MethodPost, "/api/v1/auth/register", `{"email":"`+email+`","display_name":"`+name+`","password":"`+password+`"}`, "")
+// createAccount has the super administrator make an account, then signs the person in with the
+// temporary password and replaces it, as the console requires on first sign-in.
+func (admin *client) createAccount(email, name, password string) (*client, string) {
+	admin.t.Helper()
+	status, body := admin.do(http.MethodPost, "/api/v1/users", `{"email":"`+email+`","display_name":"`+name+`","password":"a-temporary-passphrase"}`, "")
+	userID, _ := nested(body, "user", "id").(string)
+	if status != http.StatusCreated || userID == "" {
+		admin.t.Fatalf("create %s: %d %v", email, status, body)
+	}
+	person := &client{t: admin.t, handler: admin.handler}
+	if code := person.signIn(email, "a-temporary-passphrase"); code != http.StatusOK {
+		admin.t.Fatalf("%s signs in with the temporary password: %d", email, code)
+	}
+	if status, _ = person.do(http.MethodGet, "/api/v1/projects", "", ""); status != http.StatusForbidden {
+		admin.t.Fatalf("%s on a temporary password listed projects: status %d, want 403", email, status)
+	}
+	if status, body = person.do(http.MethodPost, "/api/v1/auth/password", `{"current_password":"a-temporary-passphrase","new_password":"`+password+`"}`, ""); status != http.StatusOK {
+		admin.t.Fatalf("%s replaces the temporary password: %d %v", email, status, body)
+	}
+	return person, userID
 }
 
 func nested(body map[string]any, keys ...string) any {

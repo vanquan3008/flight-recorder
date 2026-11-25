@@ -4,7 +4,8 @@ import (
 	"context"
 	"errors"
 	"net/netip"
-	"time"
+
+	"github.com/vanquan3008/tracepilot/internal/ingest/otlp/normalize"
 
 	"github.com/vanquan3008/tracepilot/internal/auth"
 	"github.com/vanquan3008/tracepilot/internal/config"
@@ -13,8 +14,6 @@ import (
 	collectorlogspb "go.opentelemetry.io/proto/otlp/collector/logs/v1"
 	collectormetricspb "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
 	collectortracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 // Submitter stores trace and log events. It returns the committed count, the
@@ -30,7 +29,8 @@ type MetricsSubmitter interface {
 }
 
 type Receiver struct {
-	normalizer      *normalizer
+	normalizer      *normalize.Normalizer
+	projectID       string
 	scopes          ScopeResolver
 	pipeline        Submitter
 	metricsPipeline MetricsSubmitter
@@ -58,7 +58,8 @@ func NewReceiver(
 	}
 	return &Receiver{
 		slots:           slots,
-		normalizer:      newNormalizer(configuration),
+		normalizer:      normalize.New(configuration),
+		projectID:       configuration.ProjectID,
 		pipeline:        ingestionPipeline,
 		metricsPipeline: metricsPipeline,
 		metrics:         metricRegistry,
@@ -95,13 +96,10 @@ func (receiver *Receiver) admit() (release func(), admitted bool) {
 }
 
 func (receiver *Receiver) exportTraces(ctx context.Context, request *collectortracepb.ExportTraceServiceRequest) (*collectortracepb.ExportTraceServiceResponse, error) {
-	events, rejected := receiver.normalizerFor(ctx).traces(request.GetResourceSpans())
+	events, rejected := receiver.normalizerFor(ctx).Traces(request.GetResourceSpans())
 	persisted, invalid, submitError := receiver.pipeline.Submit(ctx, events)
-	receiver.observeOutcome("traces", persisted, rejected, invalid)
-	if submitError != nil {
-		// Partial success tells an OTLP client not to retry. Storage and admission
-		// failures are temporary, so fail the whole request and rely on stable IDs.
-		return nil, errors.New("trace ingestion unavailable")
+	if settleError := receiver.settle("traces", persisted, rejected, invalid, submitError); settleError != nil {
+		return nil, settleError
 	}
 	response := &collectortracepb.ExportTraceServiceResponse{}
 	if rejected+invalid > 0 {
@@ -114,12 +112,10 @@ func (receiver *Receiver) exportTraces(ctx context.Context, request *collectortr
 }
 
 func (receiver *Receiver) exportLogs(ctx context.Context, request *collectorlogspb.ExportLogsServiceRequest) (*collectorlogspb.ExportLogsServiceResponse, error) {
-	events, rejected := receiver.normalizerFor(ctx).logs(request.GetResourceLogs())
+	events, rejected := receiver.normalizerFor(ctx).Logs(request.GetResourceLogs())
 	persisted, invalid, submitError := receiver.pipeline.Submit(ctx, events)
-	receiver.observeOutcome("logs", persisted, rejected, invalid)
-	if submitError != nil {
-		// See trace export: temporary failures must remain retryable.
-		return nil, errors.New("log ingestion unavailable")
+	if settleError := receiver.settle("logs", persisted, rejected, invalid, submitError); settleError != nil {
+		return nil, settleError
 	}
 	response := &collectorlogspb.ExportLogsServiceResponse{}
 	if rejected+invalid > 0 {
@@ -131,9 +127,11 @@ func (receiver *Receiver) exportLogs(ctx context.Context, request *collectorlogs
 	return response, nil
 }
 
-// observeOutcome records committed events, records rejected by validation
-// before queueing, and records storage rejected as invalid after queueing.
-func (receiver *Receiver) observeOutcome(signal string, persisted, rejected, invalid int) {
+// settle records committed events, records rejected by validation before queueing, and records
+// storage rejected as invalid after queueing. Partial success tells an OTLP client not to retry, and
+// storage and admission failures are temporary, so a submit error fails the whole request and relies
+// on stable IDs for the retry.
+func (receiver *Receiver) settle(signal string, persisted, rejected, invalid int, submitError error) error {
 	receiver.metrics.ObserveIngested(signal, persisted)
 	if rejected > 0 {
 		receiver.metrics.ObserveRejected(signal, "validation", rejected)
@@ -141,6 +139,10 @@ func (receiver *Receiver) observeOutcome(signal string, persisted, rejected, inv
 	if invalid > 0 {
 		receiver.metrics.ObserveRejected(signal, "invalid", invalid)
 	}
+	if submitError != nil {
+		return errors.New(signal + " ingestion unavailable")
+	}
+	return nil
 }
 
 func rejectionMessage(records string, invalid int) string {
@@ -155,31 +157,10 @@ type traceService struct {
 	receiver *Receiver
 }
 
-func (service *traceService) Export(ctx context.Context, request *collectortracepb.ExportTraceServiceRequest) (response *collectortracepb.ExportTraceServiceResponse, returnError error) {
-	startedAt := time.Now()
-	defer func() {
-		outcome := "ok"
-		if returnError != nil {
-			outcome = status.Code(returnError).String()
-		} else if response.GetPartialSuccess() != nil {
-			outcome = "partial"
-		}
-		service.receiver.metrics.ObserveOTLPRequest("grpc", "traces", outcome, time.Since(startedAt))
-	}()
-	ctx, authError := service.receiver.authorizeGRPC(ctx)
-	if authError != nil {
-		return nil, authError
-	}
-	release, admitError := service.receiver.admitGRPC()
-	if admitError != nil {
-		return nil, admitError
-	}
-	defer release()
-	response, exportError := service.receiver.exportTraces(ctx, request)
-	if exportError != nil {
-		return nil, status.Error(codes.Unavailable, exportError.Error())
-	}
-	return response, nil
+func (service *traceService) Export(ctx context.Context, request *collectortracepb.ExportTraceServiceRequest) (*collectortracepb.ExportTraceServiceResponse, error) {
+	return handleGRPC(ctx, service.receiver, "traces", func(ctx context.Context) (*collectortracepb.ExportTraceServiceResponse, error) {
+		return service.receiver.exportTraces(ctx, request)
+	})
 }
 
 type logsService struct {
@@ -187,31 +168,10 @@ type logsService struct {
 	receiver *Receiver
 }
 
-func (service *logsService) Export(ctx context.Context, request *collectorlogspb.ExportLogsServiceRequest) (response *collectorlogspb.ExportLogsServiceResponse, returnError error) {
-	startedAt := time.Now()
-	defer func() {
-		outcome := "ok"
-		if returnError != nil {
-			outcome = status.Code(returnError).String()
-		} else if response.GetPartialSuccess() != nil {
-			outcome = "partial"
-		}
-		service.receiver.metrics.ObserveOTLPRequest("grpc", "logs", outcome, time.Since(startedAt))
-	}()
-	ctx, authError := service.receiver.authorizeGRPC(ctx)
-	if authError != nil {
-		return nil, authError
-	}
-	release, admitError := service.receiver.admitGRPC()
-	if admitError != nil {
-		return nil, admitError
-	}
-	defer release()
-	response, exportError := service.receiver.exportLogs(ctx, request)
-	if exportError != nil {
-		return nil, status.Error(codes.Unavailable, exportError.Error())
-	}
-	return response, nil
+func (service *logsService) Export(ctx context.Context, request *collectorlogspb.ExportLogsServiceRequest) (*collectorlogspb.ExportLogsServiceResponse, error) {
+	return handleGRPC(ctx, service.receiver, "logs", func(ctx context.Context) (*collectorlogspb.ExportLogsServiceResponse, error) {
+		return service.receiver.exportLogs(ctx, request)
+	})
 }
 
 func (receiver *Receiver) exportMetrics(ctx context.Context, request *collectormetricspb.ExportMetricsServiceRequest) (*collectormetricspb.ExportMetricsServiceResponse, error) {
@@ -220,11 +180,10 @@ func (receiver *Receiver) exportMetrics(ctx context.Context, request *collectorm
 		// senders that include metrics alongside traces/logs.
 		return &collectormetricspb.ExportMetricsServiceResponse{}, nil
 	}
-	points, rejected := receiver.normalizerFor(ctx).metrics(request.GetResourceMetrics())
+	points, rejected := receiver.normalizerFor(ctx).Metrics(request.GetResourceMetrics())
 	persisted, invalid, submitError := receiver.metricsPipeline.SubmitMetrics(ctx, points)
-	receiver.observeOutcome("metrics", persisted, rejected, invalid)
-	if submitError != nil {
-		return nil, errors.New("metrics ingestion unavailable")
+	if settleError := receiver.settle("metrics", persisted, rejected, invalid, submitError); settleError != nil {
+		return nil, settleError
 	}
 	response := &collectormetricspb.ExportMetricsServiceResponse{}
 	if rejected+invalid > 0 {
@@ -241,29 +200,8 @@ type metricsService struct {
 	receiver *Receiver
 }
 
-func (service *metricsService) Export(ctx context.Context, request *collectormetricspb.ExportMetricsServiceRequest) (response *collectormetricspb.ExportMetricsServiceResponse, returnError error) {
-	startedAt := time.Now()
-	defer func() {
-		outcome := "ok"
-		if returnError != nil {
-			outcome = status.Code(returnError).String()
-		} else if response.GetPartialSuccess() != nil {
-			outcome = "partial"
-		}
-		service.receiver.metrics.ObserveOTLPRequest("grpc", "metrics", outcome, time.Since(startedAt))
-	}()
-	ctx, authError := service.receiver.authorizeGRPC(ctx)
-	if authError != nil {
-		return nil, authError
-	}
-	release, admitError := service.receiver.admitGRPC()
-	if admitError != nil {
-		return nil, admitError
-	}
-	defer release()
-	response, exportError := service.receiver.exportMetrics(ctx, request)
-	if exportError != nil {
-		return nil, status.Error(codes.Unavailable, exportError.Error())
-	}
-	return response, nil
+func (service *metricsService) Export(ctx context.Context, request *collectormetricspb.ExportMetricsServiceRequest) (*collectormetricspb.ExportMetricsServiceResponse, error) {
+	return handleGRPC(ctx, service.receiver, "metrics", func(ctx context.Context) (*collectormetricspb.ExportMetricsServiceResponse, error) {
+		return service.receiver.exportMetrics(ctx, request)
+	})
 }

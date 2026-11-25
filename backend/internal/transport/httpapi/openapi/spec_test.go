@@ -108,19 +108,19 @@ func TestRouteSummary(t *testing.T) {
 	}
 }
 
-func TestCompatibilityHelpers(t *testing.T) {
-	parameters := OpenAPIParameters("/api/v1/traces/{traceID}/spans/{spanID}", "getTrace")
+func TestRouteParametersAndResponses(t *testing.T) {
+	parameters := RouteParameters(Route{Path: "/api/v1/traces/{traceID}/spans/{spanID}", OperationID: "getTrace"})
 	if len(parameters) != 2 || parameters[0]["name"] != "traceID" || parameters[0]["schema"].(map[string]any)["format"] != nil {
 		t.Fatalf("path parameters = %v", parameters)
 	}
 	if parameters[1]["schema"].(map[string]any)["format"] != "uuid" {
 		t.Fatalf("IDs other than trace IDs are UUIDs: %v", parameters[1])
 	}
-	responses := OpenAPIResponses(http.MethodPost, 0)
+	responses := routeResponses(Route{Method: http.MethodPost, Path: "/api/v1/projects"}, newSchemas())
 	if responses["201"] == nil || !reflect.DeepEqual(responses["401"], map[string]any{"$ref": "#/components/responses/Unauthorized"}) {
 		t.Fatalf("responses = %v", responses)
 	}
-	if responses := OpenAPIResponses(http.MethodPost, http.StatusOK); responses["200"] == nil || responses["201"] != nil {
+	if responses := routeResponses(Route{Method: http.MethodPost, Path: "/api/v1/projects", SuccessStatus: http.StatusOK}, newSchemas()); responses["200"] == nil || responses["201"] != nil {
 		t.Fatalf("configured status must win: %v", responses)
 	}
 	if got := OpenAPISecurity(Route{Public: true}); len(got) != 0 {

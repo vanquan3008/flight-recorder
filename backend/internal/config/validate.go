@@ -28,7 +28,7 @@ func (configuration Config) Validate() error {
 	configuration.validateDatabase(&validator)
 	configuration.validateClickHouse(&validator)
 	configuration.validateAuth(&validator)
-	configuration.validateCache(&validator)
+	configuration.Cache.validate(&validator)
 	configuration.validateStorage(&validator)
 	configuration.validateQueue(&validator)
 	configuration.validateIngestion(&validator)
@@ -37,23 +37,4 @@ func (configuration Config) Validate() error {
 	configuration.validateNotifications(&validator)
 
 	return validator.err()
-}
-
-func validUUID(value string) bool {
-	if len(value) != 36 || value[8] != '-' || value[13] != '-' || value[18] != '-' || value[23] != '-' {
-		return false
-	}
-	nonZero := false
-	for index, character := range value {
-		if index == 8 || index == 13 || index == 18 || index == 23 {
-			continue
-		}
-		if !strings.ContainsRune("0123456789abcdefABCDEF", character) {
-			return false
-		}
-		if character != '0' {
-			nonZero = true
-		}
-	}
-	return nonZero
 }

@@ -6,6 +6,10 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/vanquan3008/tracepilot/internal/application/replay"
+	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/api"
+	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/features/traces"
 )
 
 func TestServerExposesOpenAPIContract(t *testing.T) {
@@ -31,7 +35,7 @@ func TestOpenAPIOmitsDisabledReplayRoutes(t *testing.T) {
 }
 
 func TestOpenAPIUsesHandlerSuccessStatusCodes(t *testing.T) {
-	spec := openAPISpec()
+	spec := testSpec()
 	paths := spec["paths"].(map[string]any)
 	assertStatus := func(path, method, want string) {
 		t.Helper()
@@ -50,8 +54,8 @@ func TestOpenAPIUsesHandlerSuccessStatusCodes(t *testing.T) {
 	for _, parameter := range parameters {
 		if parameter["in"] == "query" {
 			advertised[parameter["name"].(string)] = true
-			if parameter["name"] == "limit" && parameter["schema"].(map[string]any)["maximum"] != maxTraceSpansPerPage {
-				t.Fatalf("getTrace limit maximum = %v, want %d", parameter["schema"].(map[string]any)["maximum"], maxTraceSpansPerPage)
+			if parameter["name"] == "limit" && parameter["schema"].(map[string]any)["maximum"] != traces.MaxSpansPerPage {
+				t.Fatalf("getTrace limit maximum = %v, want %d", parameter["schema"].(map[string]any)["maximum"], traces.MaxSpansPerPage)
 			}
 		}
 	}
@@ -61,7 +65,7 @@ func TestOpenAPIUsesHandlerSuccessStatusCodes(t *testing.T) {
 }
 
 func TestOpenAPIQueryParametersMatchHandlerFilters(t *testing.T) {
-	spec := openAPISpec()
+	spec := testSpec()
 	assertParameters := func(path, method string, want ...string) {
 		t.Helper()
 		parameters := operationParameters(spec, path, method)
@@ -91,32 +95,30 @@ func TestOpenAPIQueryParametersMatchHandlerFilters(t *testing.T) {
 }
 
 func TestOpenAPIRoutesComeFromRouterManifest(t *testing.T) {
-	paths := openAPISpec()["paths"].(map[string]any)
+	paths := testSpec()["paths"].(map[string]any)
 	if len(paths) == 0 {
 		t.Fatal("OpenAPI has no API paths")
 	}
-	seen := make(map[string]struct{}, len(apiRouteDefinitions))
-	for _, route := range apiRouteDefinitions {
-		key := route.method + " " + route.path
+	routes := allRoutes()
+	seen := make(map[string]struct{}, len(routes))
+	for _, route := range routes {
+		key := route.Method + " " + route.Path
 		if _, exists := seen[key]; exists {
 			t.Fatalf("duplicate API route %s", key)
 		}
 		seen[key] = struct{}{}
-		operations, ok := paths[route.path].(map[string]any)
+		operations, ok := paths[route.Path].(map[string]any)
 		if !ok {
-			t.Fatalf("OpenAPI is missing path %s", route.path)
+			t.Fatalf("OpenAPI is missing path %s", route.Path)
 		}
-		if _, ok := operations[strings.ToLower(route.method)]; !ok {
+		if _, ok := operations[strings.ToLower(route.Method)]; !ok {
 			t.Fatalf("OpenAPI is missing operation %s", key)
 		}
 	}
-	router := http.NewServeMux()
-	server := &Server{}
-	server.registerAPIRoutes(router)
-	for _, route := range apiRouteDefinitions {
-		if route.requiresReplay {
-			continue
-		}
+	dependencies := testDependencies()
+	dependencies.Replay = replayRunner{}
+	router := apiRouter(New(testConfig(), dependencies))
+	for _, route := range routes {
 		path := strings.NewReplacer(
 			"{traceID}", "0123456789abcdef0123456789abcdef",
 			"{eventID}", "01900000-0000-7000-8000-000000000001",
@@ -126,11 +128,11 @@ func TestOpenAPIRoutesComeFromRouterManifest(t *testing.T) {
 			"{keyID}", "01900000-0000-7000-8000-000000000005",
 			"{webhookID}", "01900000-0000-7000-8000-000000000006",
 			"{service}", "checkout",
-		).Replace(route.path)
-		request := httptest.NewRequest(route.method, path, nil)
+		).Replace(route.Path)
+		request := httptest.NewRequest(route.Method, path, nil)
 		_, pattern := router.Handler(request)
-		if pattern != route.method+" "+route.path {
-			t.Fatalf("router pattern for %s = %q", route.method+" "+route.path, pattern)
+		if pattern != route.Method+" "+route.Path {
+			t.Fatalf("router pattern for %s = %q", route.Method+" "+route.Path, pattern)
 		}
 	}
 	if len(seen) != countOpenAPIOperations(paths) {
@@ -150,8 +152,22 @@ func countOpenAPIOperations(paths map[string]any) int {
 	return count
 }
 
-func openAPISpec() map[string]any {
-	return openAPISpecForRoutes(apiRouteDefinitions)
+// replayRunner makes the server mount the replay route, so the tests see every route.
+type replayRunner struct{}
+
+func (replayRunner) Run(context.Context, replay.Command) (replay.Outcome, error) {
+	return replay.Outcome{}, nil
+}
+
+// allRoutes are the routes of a server with every optional dependency.
+func allRoutes() []api.Route {
+	dependencies := testDependencies()
+	dependencies.Replay = replayRunner{}
+	return New(testConfig(), dependencies).routes
+}
+
+func testSpec() map[string]any {
+	return openAPISpec(allRoutes())
 }
 
 // operationParameters returns an operation's parameters with references to

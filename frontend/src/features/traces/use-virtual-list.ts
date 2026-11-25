@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useState, type RefObject } from "react";
 
-export type VirtualItem = {
+type VirtualItem = {
   index: number;
   top: number;
   height: number;

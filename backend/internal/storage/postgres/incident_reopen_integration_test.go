@@ -78,6 +78,29 @@ func TestResolvedIncidentReopensWhenTheFailureReturns(t *testing.T) {
 	}
 }
 
+// Two resolves by the same operator carry identical webhook payloads; each one
+// is a separate transition and must queue its own delivery.
+func TestRepeatedTransitionsEachNotify(t *testing.T) {
+	database, scope := newFlowTestDatabase(t)
+	ctx := context.Background()
+	if _, err := database.CreateWebhook(ctx, scope.ProjectID, "", notificationdomain.CreateWebhookParams{Name: "pager", URL: "https://example.com/hook", Events: []string{"incident.resolved"}}); err != nil {
+		t.Fatal(err)
+	}
+	incidentID, actor := resolvedIncident(t, database, scope, time.Now().UTC().Truncate(time.Second).Add(-10*time.Minute))
+	for _, status := range []string{"OPEN", "RESOLVED"} {
+		if _, err := database.UpdateIncidentStatus(ctx, scope.ProjectID, scope.EnvironmentID, incidentID, status, auth.Actor{UserID: actor}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var resolved int
+	if err := database.pool.QueryRow(ctx, "SELECT count(*) FROM webhook_deliveries WHERE project_id = $1 AND event_type = 'incident.resolved'", scope.ProjectID).Scan(&resolved); err != nil {
+		t.Fatal(err)
+	}
+	if resolved != 2 {
+		t.Fatalf("incident.resolved deliveries = %d, want 2: the second resolve was absorbed as a duplicate", resolved)
+	}
+}
+
 func TestLateEventsFromBeforeTheResolveDoNotReopen(t *testing.T) {
 	database, scope := newFlowTestDatabase(t)
 	failedAt := time.Now().UTC().Truncate(time.Second).Add(-10 * time.Minute)

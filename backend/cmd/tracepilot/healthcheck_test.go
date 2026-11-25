@@ -115,20 +115,11 @@ func newHealthcheckCertificate(t *testing.T) (tls.Certificate, []byte) {
 
 func TestResolveHealthcheckURLFollowsListenerTLS(t *testing.T) {
 	t.Setenv("TRACEPILOT_HEALTHCHECK_URL", "")
-	t.Setenv("TRACEPILOT_APP_TLS_CERTIFICATE_FILE", "")
-	t.Setenv("TRACEPILOT_TLS_CERTIFICATE_FILE", "tls.crt")
-	if got := resolveHealthcheckURL(); got != defaultHealthcheckURL {
-		t.Fatalf("healthcheck URL = %q, want %q", got, defaultHealthcheckURL)
-	}
-	if err := os.Unsetenv("TRACEPILOT_APP_TLS_CERTIFICATE_FILE"); err != nil {
+	if err := os.Unsetenv("TRACEPILOT_HEALTHCHECK_URL"); err != nil {
 		t.Fatal(err)
 	}
-	const httpsURL = "https://127.0.0.1:8080/health/ready"
-	if got := resolveHealthcheckURL(); got != httpsURL {
-		t.Fatalf("healthcheck URL = %q, want %q", got, httpsURL)
-	}
 	t.Setenv("TRACEPILOT_APP_TLS_CERTIFICATE_FILE", "tls.crt")
-	if got := resolveHealthcheckURL(); got != httpsURL {
-		t.Fatalf("healthcheck URL = %q, want %q", got, httpsURL)
+	if got, want := resolveHealthcheckURL(), "https://127.0.0.1:8080/health/ready"; got != want {
+		t.Fatalf("healthcheck URL = %q, want %q", got, want)
 	}
 }

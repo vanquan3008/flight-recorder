@@ -108,12 +108,29 @@ services:
     healthcheck:
       disable: true
 
+  admin:
+    profiles: [stack]
+    image: docker.io/library/golang:1.26.11-bookworm
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    env_file: ./backend.env
+    environment:
+      GOTOOLCHAIN: local
+    volumes:
+      - *repo
+      - *harness
+      - go-mod:/go/pkg/mod
+      - go-build:/root/.cache/go-build
+    command: ["bash", "/harness/admin.sh"]
+    restart: "no"
+
   tracepilot:
     <<: *backend-image
     profiles: [stack]
     command: ["serve"]
     depends_on:
-      migrate:
+      admin:
         condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "/tracepilot", "healthcheck"]
@@ -149,6 +166,7 @@ services:
       console:
         condition: service_healthy
     shm_size: 1gb
+    env_file: ./backend.env
     environment:
       CI: "1"
       TRACEPILOT_E2E_BASE_URL: http://console:8080

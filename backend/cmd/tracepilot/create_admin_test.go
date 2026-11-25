@@ -58,6 +58,7 @@ func TestCreateAdministratorReportsEachOutcome(t *testing.T) {
 	}{
 		{"created", nil, 0, "administrator created"},
 		{"duplicate email", auth.ErrEmailExists, 1, "the email is already registered"},
+		{"super administrator exists", auth.ErrPlatformAdminExists, 1, "a super administrator already exists"},
 		{"storage failure", errors.New("connection refused"), 1, "create administrator failed"},
 	}
 	for _, test := range tests {

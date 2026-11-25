@@ -106,10 +106,6 @@ func (c CacheConfig) EffectiveIdentityLimit() int {
 	return 4096
 }
 
-func (configuration Config) validateCache(validator *validator) {
-	configuration.Cache.validate(validator)
-}
-
 func (c CacheConfig) validate(validator *validator) {
 	if c.DefaultTTL < 0 {
 		validator.add("cache.default_ttl", "must not be negative")

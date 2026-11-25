@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import type { Span } from "../../shared/types";
 import { CopyButton } from "../../shared/ui";
 
-export interface ExceptionInfo {
+interface ExceptionInfo {
   type: string;
   message: string;
   stacktrace?: string;

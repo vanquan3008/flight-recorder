@@ -8,11 +8,10 @@ import (
 
 // AuthConfig controls console token authentication, token lifecycles, and session cookie policies.
 type AuthConfig struct {
-	JWTSecret         string        `config:"jwt_secret"`
-	IngestJWTSecret   string        `config:"ingest_jwt_secret"`
-	AllowRegistration bool          `config:"allow_registration"`
-	AccessTokenTTL    time.Duration `config:"access_token_ttl"`
-	RefreshTokenTTL   time.Duration `config:"refresh_token_ttl"`
+	JWTSecret       string        `config:"jwt_secret"`
+	IngestJWTSecret string        `config:"ingest_jwt_secret"`
+	AccessTokenTTL  time.Duration `config:"access_token_ttl"`
+	RefreshTokenTTL time.Duration `config:"refresh_token_ttl"`
 
 	CookieDomain   string `config:"cookie_domain"`
 	CookieSameSite string `config:"cookie_same_site"`

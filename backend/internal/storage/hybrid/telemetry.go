@@ -2,6 +2,7 @@ package hybrid
 
 import (
 	"context"
+	"github.com/vanquan3008/tracepilot/internal/storage/clickhouse/client"
 	"time"
 
 	"github.com/vanquan3008/tracepilot/internal/config"
@@ -38,7 +39,7 @@ func (store *Store) ListServices(ctx context.Context, project, environment strin
 	if err != nil {
 		return nil, err
 	}
-	return store.ch.ListServices(ctx, project, environment, maxTime(from, cutoff), to)
+	return store.ch.ListServices(ctx, project, environment, client.MaxTime(from, cutoff), to)
 }
 
 func (store *Store) ListServiceDependencies(ctx context.Context, project, environment, service string) ([]query.ServiceDependency, error) {
@@ -63,7 +64,7 @@ func (store *Store) ListMetricPoints(ctx context.Context, project string, filter
 	if err != nil {
 		return nil, err
 	}
-	filter.From = maxTime(filter.From, cutoff)
+	filter.From = client.MaxTime(filter.From, cutoff)
 	return store.ch.ListMetricPoints(ctx, project, filter)
 }
 
@@ -77,7 +78,7 @@ func (store *Store) TelemetryQuality(ctx context.Context, project string, filter
 	if quality.Spans, quality.OrphanSpans, quality.MetricPoints, err = store.ch.SignalQuality(ctx, project, filter); err != nil {
 		return quality, err
 	}
-	quality.Logs, quality.UncorrelatedLogs, err = store.ch.LogQuality(ctx, project, filter.EnvironmentID, filter.Service, maxTime(filter.From, cutoff), filter.To)
+	quality.Logs, quality.UncorrelatedLogs, err = store.ch.LogQuality(ctx, project, filter.EnvironmentID, filter.Service, client.MaxTime(filter.From, cutoff), filter.To)
 	return quality, err
 }
 
@@ -125,11 +126,4 @@ func (store *Store) DetectMetricEvidence(ctx context.Context, scope config.Inges
 // RefreshSpanRollups recomputes ClickHouse minute rollups that new or late spans made stale.
 func (store *Store) RefreshSpanRollups(ctx context.Context) (int, error) {
 	return store.ch.RefreshSpanRollups(ctx)
-}
-
-func maxTime(first, second time.Time) time.Time {
-	if second.After(first) {
-		return second
-	}
-	return first
 }

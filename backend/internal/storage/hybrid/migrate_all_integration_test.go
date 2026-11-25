@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/vanquan3008/tracepilot/internal/storage/clickhouse/clienttest"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/vanquan3008/tracepilot/internal/config"
 	"github.com/vanquan3008/tracepilot/internal/storage/postgres/migrations"
@@ -80,7 +82,7 @@ func TestMigrateAllDoesNotRequireApplicationSecretsIntegration(t *testing.T) {
 			Database: fmt.Sprintf("tracepilot_migration_secrets_%d", time.Now().UnixNano()),
 			Username: "default", RequestTimeout: 5 * time.Second, MaxConnections: 2},
 	}
-	defer dropClickHouseTestDatabase(t, cfg.ClickHouse)
+	defer clienttest.DropDatabase(t, cfg.ClickHouse)
 	// Migration readiness only needs database access, never application credentials.
 	cfg.Notifications.EncryptionKey = "not-a-webhook-key"
 	if err := MigrateAll(ctx, cfg); err != nil {

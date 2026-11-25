@@ -38,11 +38,6 @@ func WriteInvalidQuery(w http.ResponseWriter, cause error) {
 	WriteAPIError(w, http.StatusBadRequest, "INVALID_QUERY", cause.Error())
 }
 
-// WriteInternalError logs the underlying cause and answers with a generic 500 or 504.
-func WriteInternalError(w http.ResponseWriter, logger *slog.Logger, operation string, cause error) {
-	WriteInternalErrorContext(context.Background(), w, logger, operation, cause)
-}
-
 // WriteInternalErrorContext logs the underlying cause with context and answers with a generic 500 or 504.
 func WriteInternalErrorContext(ctx context.Context, w http.ResponseWriter, logger *slog.Logger, operation string, cause error) {
 	if logger != nil {

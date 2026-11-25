@@ -14,20 +14,22 @@ import (
 
 	"github.com/vanquan3008/tracepilot/internal/config"
 	"github.com/vanquan3008/tracepilot/internal/observability/metrics"
+	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/middleware"
+	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/render"
 )
 
 func TestLivenessReturnsRequestID(t *testing.T) {
 	httpServer := newTestServer(func(context.Context) error { return nil })
 	responseRecorder := httptest.NewRecorder()
 	httpRequest := httptest.NewRequest(http.MethodGet, "/health/live", nil)
-	httpRequest.Header.Set(requestIDHeader, "test-request-1")
+	httpRequest.Header.Set(render.RequestIDHeader, "test-request-1")
 
 	httpServer.httpServer.Handler.ServeHTTP(responseRecorder, httpRequest)
 
 	if responseRecorder.Code != http.StatusOK {
 		t.Fatalf("status = %d", responseRecorder.Code)
 	}
-	if responseRequestID := responseRecorder.Header().Get(requestIDHeader); responseRequestID != "test-request-1" {
+	if responseRequestID := responseRecorder.Header().Get(render.RequestIDHeader); responseRequestID != "test-request-1" {
 		t.Fatalf("request ID = %q", responseRequestID)
 	}
 	for header, want := range map[string]string{
@@ -95,11 +97,12 @@ func TestMetricsAreExposed(t *testing.T) {
 
 func TestProductionMetricsRequireDatabaseAuthentication(t *testing.T) {
 	configuration := config.Config{
-		App:      config.AppConfig{Production: true, ShutdownTimeout: time.Second},
-		HTTP:     config.HTTPConfig{ManagementMaxBodyBytes: 1024},
+		App: config.AppConfig{Production: true, ShutdownTimeout: time.Second},
+		HTTP: config.HTTPConfig{ManagementMaxBodyBytes: 1024, MaxConcurrentQueries: 4, MaxConcurrentLogQueries: 8, RequestTimeout: 20 * time.Second,
+			RateLimitRequests: 120, RateLimitAuthRequests: 20, RateLimitReplayRequests: 10, RateLimitWindow: time.Minute},
 		Database: config.DatabaseConfig{ReadinessTimeout: time.Second},
 	}
-	server := New(configuration, slog.New(slog.NewTextHandler(io.Discard, nil)), func(context.Context) error { return nil }, metrics.New("test", "test", "test"), nil, nil)
+	server := New(configuration, testDependencies())
 	responseRecorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/metrics", nil)
 
@@ -110,34 +113,16 @@ func TestProductionMetricsRequireDatabaseAuthentication(t *testing.T) {
 	}
 }
 
-func TestNewUsesConfiguredCachePolicies(t *testing.T) {
-	configuration := config.Config{
-		Cache: config.CacheConfig{
-			ScopeTTL:      2 * time.Minute,
-			ScopeLimit:    12,
-			IdentityTTL:   3 * time.Minute,
-			IdentityLimit: 24,
-		},
-	}
-	server := New(configuration, slog.New(slog.NewTextHandler(io.Discard, nil)), func(context.Context) error { return nil }, metrics.New("test", "test", "test"), nil, nil)
-
-	if server.environments.ttl != configuration.Cache.ScopeTTL || server.environments.limit != configuration.Cache.ScopeLimit {
-		t.Fatalf("scope cache policy = (%s, %d), want (%s, %d)", server.environments.ttl, server.environments.limit, configuration.Cache.ScopeTTL, configuration.Cache.ScopeLimit)
-	}
-	if server.identity.ttl != configuration.Cache.IdentityTTL || server.identity.limit != configuration.Cache.IdentityLimit {
-		t.Fatalf("identity cache policy = (%s, %d), want (%s, %d)", server.identity.ttl, server.identity.limit, configuration.Cache.IdentityTTL, configuration.Cache.IdentityLimit)
-	}
-}
-
 func TestManagementTLSConfigurationUsesModernMinimum(t *testing.T) {
 	server := New(config.Config{
-		HTTP:     config.HTTPConfig{ManagementMaxBodyBytes: 1024},
+		HTTP: config.HTTPConfig{ManagementMaxBodyBytes: 1024, MaxConcurrentQueries: 4, MaxConcurrentLogQueries: 8, RequestTimeout: 20 * time.Second,
+			RateLimitRequests: 120, RateLimitAuthRequests: 20, RateLimitReplayRequests: 10, RateLimitWindow: time.Minute},
 		Database: config.DatabaseConfig{ReadinessTimeout: time.Second},
 		App: config.AppConfig{
 			ShutdownTimeout: time.Second,
 			TLS:             config.TLSConfig{CertificateFile: "server.crt", PrivateKeyFile: "server.key"},
 		},
-	}, slog.New(slog.NewTextHandler(io.Discard, nil)), func(context.Context) error { return nil }, metrics.New("test", "test", "test"), nil, nil)
+	}, testDependencies())
 
 	if server.httpServer.TLSConfig == nil || server.httpServer.TLSConfig.MinVersion != tls.VersionTLS12 {
 		t.Fatalf("management TLS config = %#v", server.httpServer.TLSConfig)
@@ -160,7 +145,7 @@ func TestRateLimitReturnsStandardErrorAndRetryAfter(t *testing.T) {
 		Database: config.DatabaseConfig{ReadinessTimeout: time.Second},
 		App:      config.AppConfig{ShutdownTimeout: time.Second},
 	}
-	server := New(configuration, slog.New(slog.NewTextHandler(io.Discard, nil)), func(context.Context) error { return nil }, metrics.New("test", "test", "test"), nil, nil)
+	server := New(configuration, testDependencies())
 	for attempt := 0; attempt < 2; attempt++ {
 		responseRecorder := httptest.NewRecorder()
 		request := httptest.NewRequest(http.MethodGet, "/api/v1/logs", nil)
@@ -173,7 +158,7 @@ func TestRateLimitReturnsStandardErrorAndRetryAfter(t *testing.T) {
 			if responseRecorder.Code != http.StatusTooManyRequests || responseRecorder.Header().Get("Retry-After") == "" {
 				t.Fatalf("status=%d retry-after=%q", responseRecorder.Code, responseRecorder.Header().Get("Retry-After"))
 			}
-			if !strings.Contains(responseRecorder.Body.String(), `"RATE_LIMITED"`) || responseRecorder.Header().Get(requestIDHeader) == "" {
+			if !strings.Contains(responseRecorder.Body.String(), `"RATE_LIMITED"`) || responseRecorder.Header().Get(render.RequestIDHeader) == "" {
 				t.Fatalf("unexpected rate limit response: %s", responseRecorder.Body.String())
 			}
 		}
@@ -181,14 +166,14 @@ func TestRateLimitReturnsStandardErrorAndRetryAfter(t *testing.T) {
 }
 
 func TestCORSPreflightAllowsConfiguredOrigin(t *testing.T) {
-	for _, route := range apiRouteDefinitions {
-		t.Run(route.method+" "+route.path, func(t *testing.T) {
+	for _, route := range allRoutes() {
+		t.Run(route.Method+" "+route.Path, func(t *testing.T) {
 			httpServer := newTestServer(func(context.Context) error { return nil })
 			httpServer.allowedOrigins["http://operator.example.test"] = struct{}{}
 			responseRecorder := httptest.NewRecorder()
-			httpRequest := httptest.NewRequest(http.MethodOptions, route.path, nil)
+			httpRequest := httptest.NewRequest(http.MethodOptions, route.Path, nil)
 			httpRequest.Header.Set("Origin", "http://operator.example.test")
-			httpRequest.Header.Set("Access-Control-Request-Method", route.method)
+			httpRequest.Header.Set("Access-Control-Request-Method", route.Method)
 
 			httpServer.httpServer.Handler.ServeHTTP(responseRecorder, httpRequest)
 
@@ -198,8 +183,8 @@ func TestCORSPreflightAllowsConfiguredOrigin(t *testing.T) {
 			if allowedOrigin := responseRecorder.Header().Get("Access-Control-Allow-Origin"); allowedOrigin != "http://operator.example.test" {
 				t.Fatalf("allowed origin = %q", allowedOrigin)
 			}
-			if !allowsCORSMethod(responseRecorder.Header().Get("Access-Control-Allow-Methods"), route.method) {
-				t.Fatalf("allowed methods do not contain %q", route.method)
+			if !middleware.AllowsCORSMethod(responseRecorder.Header().Get("Access-Control-Allow-Methods"), route.Method) {
+				t.Fatalf("allowed methods do not contain %q", route.Method)
 			}
 		})
 	}
@@ -234,18 +219,43 @@ func TestCORSPreflightRejectsUnsupportedMethod(t *testing.T) {
 }
 
 func TestMetricMethodBoundsCardinality(t *testing.T) {
-	if normalizedMethod := metricMethod("ATTACKER-CONTROLLED"); normalizedMethod != "OTHER" {
+	if normalizedMethod := middleware.MetricMethod("ATTACKER-CONTROLLED"); normalizedMethod != "OTHER" {
 		t.Fatalf("method = %q", normalizedMethod)
 	}
 }
 
 func newTestServer(readinessCheck func(context.Context) error) *Server {
-	configuration := config.Config{
-		HTTP:     config.HTTPConfig{ManagementMaxBodyBytes: 1024},
-		Auth:     config.AuthConfig{JWTSecret: testJWTSecret, AllowRegistration: true},
+	dependencies := testDependencies()
+	dependencies.Readiness = readinessCheck
+	return New(testConfig(), dependencies)
+}
+
+const testJWTSecret = "0123456789abcdef0123456789abcdef"
+
+// testConfig is the configuration the tests start from.
+func testConfig() config.Config {
+	return config.Config{
+		HTTP: config.HTTPConfig{ManagementMaxBodyBytes: 1024, MaxConcurrentQueries: 4, MaxConcurrentLogQueries: 8, RequestTimeout: 20 * time.Second,
+			RateLimitRequests: 120, RateLimitAuthRequests: 20, RateLimitReplayRequests: 10, RateLimitWindow: time.Minute},
+		Auth:     config.AuthConfig{JWTSecret: testJWTSecret},
 		Database: config.DatabaseConfig{ReadinessTimeout: time.Second},
 		App:      config.AppConfig{ShutdownTimeout: time.Second},
 	}
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	return New(configuration, logger, readinessCheck, metrics.New("test", "test", "test"), nil, nil)
+}
+
+// testDependencies discard logs, pass the readiness check, and use a fresh metrics registry. Without
+// a store the server builds every route but mounts none of them.
+func testDependencies() Dependencies {
+	return Dependencies{
+		Logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Metrics:   metrics.New("test", "test", "test"),
+		Readiness: func(context.Context) error { return nil },
+	}
+}
+
+// apiRouter mounts only the API routes, without the shared middleware.
+func apiRouter(server *Server) *http.ServeMux {
+	router := http.NewServeMux()
+	server.RegisterAPIRoutes(router)
+	return router
 }

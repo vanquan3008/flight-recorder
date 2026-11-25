@@ -1,4 +1,4 @@
-export interface ParsedHeader {
+interface ParsedHeader {
   name: string;
   value: string;
 }

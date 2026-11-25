@@ -19,16 +19,10 @@ type MemoryCache struct {
 	limit      int
 	defaultTTL time.Duration
 	now        func() time.Time
-	metrics    Metrics
 }
 
 // NewMemoryCache creates an in-memory cache with default TTL and capacity limits.
 func NewMemoryCache(defaultTTL time.Duration, limit int) *MemoryCache {
-	return NewMemoryCacheWithMetrics(defaultTTL, limit, nil)
-}
-
-// NewMemoryCacheWithMetrics creates an in-memory cache with an optional metrics collector.
-func NewMemoryCacheWithMetrics(defaultTTL time.Duration, limit int, metrics Metrics) *MemoryCache {
 	if defaultTTL <= 0 {
 		defaultTTL = 60 * time.Second
 	}
@@ -40,7 +34,6 @@ func NewMemoryCacheWithMetrics(defaultTTL time.Duration, limit int, metrics Metr
 		limit:      limit,
 		defaultTTL: defaultTTL,
 		now:        time.Now,
-		metrics:    metrics,
 	}
 }
 
@@ -61,9 +54,6 @@ func (m *MemoryCache) Get(_ context.Context, key string) ([]byte, bool, error) {
 	m.mu.RUnlock()
 
 	if !found {
-		if m.metrics != nil {
-			m.metrics.RecordMiss("memory")
-		}
 		return nil, false, nil
 	}
 
@@ -73,20 +63,10 @@ func (m *MemoryCache) Get(_ context.Context, key string) ([]byte, bool, error) {
 		// Double check after acquiring write lock
 		if e, ok := m.entries[key]; ok && !e.expiresAt.IsZero() && now.After(e.expiresAt) {
 			delete(m.entries, key)
-			if m.metrics != nil {
-				m.metrics.RecordEviction("memory", "expired")
-			}
 		}
 		m.mu.Unlock()
 
-		if m.metrics != nil {
-			m.metrics.RecordMiss("memory")
-		}
 		return nil, false, nil
-	}
-
-	if m.metrics != nil {
-		m.metrics.RecordHit("memory")
 	}
 
 	result := make([]byte, len(entry.value))
@@ -119,9 +99,6 @@ func (m *MemoryCache) Set(_ context.Context, key string, value []byte, ttl time.
 		for k, e := range m.entries {
 			if !e.expiresAt.IsZero() && now.After(e.expiresAt) {
 				delete(m.entries, k)
-				if m.metrics != nil {
-					m.metrics.RecordEviction("memory", "expired")
-				}
 			}
 		}
 
@@ -141,9 +118,6 @@ func (m *MemoryCache) Set(_ context.Context, key string, value []byte, ttl time.
 
 			if oldestKey != "" {
 				delete(m.entries, oldestKey)
-				if m.metrics != nil {
-					m.metrics.RecordEviction("memory", "capacity")
-				}
 			}
 		}
 	}
@@ -154,22 +128,15 @@ func (m *MemoryCache) Set(_ context.Context, key string, value []byte, ttl time.
 		insertedAt: now,
 	}
 
-	if m.metrics != nil {
-		m.metrics.RecordSet("memory")
-	}
 	return nil
 }
 
 // Delete removes the specified key.
 func (m *MemoryCache) Delete(_ context.Context, key string) error {
 	m.mu.Lock()
-	_, found := m.entries[key]
 	delete(m.entries, key)
 	m.mu.Unlock()
 
-	if found && m.metrics != nil {
-		m.metrics.RecordDelete("memory")
-	}
 	return nil
 }
 

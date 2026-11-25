@@ -18,7 +18,7 @@ export default defineConfig({
     environment: "jsdom",
     pool: "vmThreads",
     exclude: ["e2e/**", "node_modules/**"],
-    setupFiles: ["./src/test-setup.ts"],
+    setupFiles: ["./src/testing/setup.ts"],
     // The first render of App loads lazy routes; on a loaded machine that can pass vitest's default 5s.
     testTimeout: 25_000,
   },

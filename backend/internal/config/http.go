@@ -31,6 +31,30 @@ type HTTPConfig struct {
 	RateLimitReplayRequests int           `config:"rate_limit_replay_requests"`
 }
 
+// WithRequestDefaults fills request limits when the HTTP server is constructed with a partial config.
+func (http HTTPConfig) WithRequestDefaults() HTTPConfig {
+	defaults := defaultConfig().HTTP
+	if http.MaxConcurrentQueries <= 0 {
+		http.MaxConcurrentQueries = defaults.MaxConcurrentQueries
+	}
+	if http.MaxConcurrentLogQueries <= 0 {
+		http.MaxConcurrentLogQueries = defaults.MaxConcurrentLogQueries
+	}
+	if http.RequestTimeout <= 0 {
+		http.RequestTimeout = defaults.RequestTimeout
+	}
+	if http.RateLimitRequests <= 0 {
+		http.RateLimitRequests = defaults.RateLimitRequests
+	}
+	if http.RateLimitAuthRequests <= 0 {
+		http.RateLimitAuthRequests = defaults.RateLimitAuthRequests
+	}
+	if http.RateLimitReplayRequests <= 0 {
+		http.RateLimitReplayRequests = defaults.RateLimitReplayRequests
+	}
+	return http
+}
+
 func (configuration Config) validateHTTP(v *validator) {
 	http := configuration.HTTP
 	http.validateServer(v)

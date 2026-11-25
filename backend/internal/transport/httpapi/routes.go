@@ -1,274 +1,149 @@
 package httpapi
 
 import (
-	"context"
-	"errors"
 	"net/http"
-	"reflect"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/vanquan3008/tracepilot/internal/auth"
+	"github.com/vanquan3008/tracepilot/internal/config"
+	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/access"
+	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/api"
+	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/features/analysis"
+	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/features/incidents"
+	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/features/ingesttokens"
+	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/features/logs"
+	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/features/members"
+	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/features/projects"
+	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/features/session"
+	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/features/stream"
+	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/features/traces"
+	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/features/users"
+	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/features/webhooks"
 	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/openapi"
+	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/render"
 )
 
-// apiHandler serves one API route for a caller the router has already
-// authenticated with the route's scope.
-type apiHandler func(http.ResponseWriter, *http.Request, auth.Principal)
-
-type apiRouteDefinition struct {
-	path           string
-	method         string
-	scope          string
-	tags           []string
-	operationID    string
-	successStatus  int
-	requestBody    bool
-	handler        func(*Server, http.ResponseWriter, *http.Request, auth.Principal)
-	requiresReplay bool
-	// public routes need no credentials; they authenticate the request themselves.
-	public    bool
-	streaming bool
-	// logQuery routes read logs from ClickHouse and take slots from their own gate.
-	logQuery bool
-	// OpenAPI metadata: reusable query and header parameter names, the request body type and the success body.
-	query    []string
-	headers  []string
-	request  reflect.Type
-	response openapi.Body
+// Backend is everything the features and the admission guard read from storage. Each feature declares
+// only the methods it calls, so this interface is their union. Webhooks, analysis insights, request
+// performance, and incident analysis are optional: when the store does not implement them, their
+// routes answer 501.
+type Backend interface {
+	access.Store
+	session.Backend
+	users.Backend
+	projects.Backend
+	members.Backend
+	ingesttokens.Backend
+	traces.Backend
+	logs.Backend
+	analysis.Backend
+	incidents.Backend
 }
 
-var streamRoutes = []apiRouteDefinition{
-	{
-		path:          "/api/v1/live/stream",
-		method:        http.MethodGet,
-		scope:         auth.ScopeRead,
-		tags:          []string{"Telemetric Streaming"},
-		operationID:   "streamLiveTelemetry",
-		successStatus: http.StatusOK,
-		handler:       (*Server).streamLiveTelemetry,
-		streaming:     true,
-	},
-}
-
-// Each feature file declares its own routes. The router, OpenAPI document and CORS method list all
-// read this combined list, so no surface can miss an endpoint.
-var apiRouteDefinitions = slices.Concat(
-	traceRoutes, analysisRoutes, incidentRoutes, authRoutes, projectRoutes, userRoutes, webhookRoutes, streamRoutes,
-)
-
-func (server *Server) registerAPIRoutes(router *http.ServeMux) {
-	for _, route := range server.availableAPIRoutes() {
-		handle := func(responseWriter http.ResponseWriter, request *http.Request, principal auth.Principal) {
-			route.handler(server, responseWriter, request, principal)
-		}
-		if route.public {
-			router.HandleFunc(route.method+" "+route.path, server.publicRoute(handle))
-			continue
-		}
-		if route.streaming {
-			router.HandleFunc(route.method+" "+route.path, server.requireScopeStreaming(route.scope, handle))
-			continue
-		}
-		gate := queryGate{name: "query", slots: server.queryGate}
-		if route.logQuery {
-			gate = queryGate{name: "logs", slots: server.logQueryGate}
-		}
-		router.HandleFunc(route.method+" "+route.path, server.requireScope(route.scope, gate, handle))
+// featureRoutes builds every feature and returns their combined routes. The router, the OpenAPI
+// document, and the CORS method list all read this list, so no surface can miss an endpoint.
+func (server *Server) featureRoutes(configuration config.Config, dependencies Dependencies) []api.Route {
+	store, logger := dependencies.Store, dependencies.Logger
+	insights, _ := store.(analysis.InsightsBackend)
+	performance, _ := store.(analysis.PerformanceBackend)
+	incidentAnalysis, _ := store.(incidents.AnalysisBackend)
+	webhookStore, _ := store.(webhooks.Backend)
+	if !configuration.Notifications.Enabled {
+		webhookStore = nil
 	}
-}
-
-// queryGate is a bounded pool of slots. Log reads have their own, so they never
-// wait behind slow PostgreSQL queries.
-type queryGate struct {
-	name  string
-	slots chan struct{}
-}
-
-// requireScope authenticates every API request against the scope its route
-// declares, so handlers cannot forget the check or drift from OpenAPI. An
-// authenticated request then takes one of a bounded number of slots from the
-// route's gate and runs under a deadline, so API load can neither take every
-// database connection from ingestion nor hold one indefinitely.
-func (server *Server) requireScope(scope string, gate queryGate, handle apiHandler) http.HandlerFunc {
-	return func(responseWriter http.ResponseWriter, request *http.Request) {
-		// The deadline starts before authentication: the user and environment
-		// lookups also wait for a pooled connection, and without it a request
-		// could wait there past every proxy timeout when the pool is busy.
-		queryContext, cancel := context.WithTimeout(request.Context(), server.requestTimeout)
-		defer cancel()
-		request = request.WithContext(queryContext)
-		principal, ok := server.authenticateScope(responseWriter, request, scope)
-		if !ok {
-			return
-		}
-		if principal.ProjectID != "" {
-			environmentID, environmentError := server.resolveEnvironment(request.Context(), principal.ProjectID, strings.TrimSpace(request.Header.Get(environmentHeader)))
-			if errors.Is(environmentError, errEnvironmentNotFound) {
-				writeAPIError(responseWriter, http.StatusBadRequest, "INVALID_ENVIRONMENT", "unknown environment for this project")
-				return
-			}
-			if environmentError != nil {
-				server.writeInternalError(responseWriter, "resolve environment", environmentError)
-				return
-			}
-			principal.EnvironmentID = environmentID
-		}
-		release, admitted := server.admitQuery(request.Context(), gate)
-		if !admitted {
-			responseWriter.Header().Set("Retry-After", "1")
-			writeAPIError(responseWriter, http.StatusServiceUnavailable, "OVERLOADED", "too many requests are running; retry shortly")
-			return
-		}
-		defer release()
-		handle(responseWriter, request, principal)
+	features := []interface{ Routes() []api.Route }{
+		traces.New(store, logger),
+		logs.New(store, logger),
+		analysis.New(store, insights, performance, logger),
+		incidents.New(store, incidentAnalysis, dependencies.Replay, configuration.Replay.MaxRequestBytes, logger),
+		session.New(session.Config{
+			TokenSecret:     []byte(configuration.Auth.JWTSecret),
+			TokenIssuer:     configuration.Auth.EffectiveIssuer(),
+			TokenAudience:   configuration.Auth.EffectiveAudience(),
+			AccessTokenTTL:  configuration.Auth.AccessTokenTTL,
+			RefreshTokenTTL: configuration.Auth.RefreshTokenTTL,
+			CookieDomain:    configuration.Auth.CookieDomain,
+			CookieSameSite:  configuration.Auth.CookieSameSiteMode(),
+			Production:      configuration.App.Production,
+			TLS:             server.tlsCertificate != "",
+			TrustedProxies:  server.trustedProxies,
+		}, store, server.rateLimiter, logger),
+		projects.New(store, server.guard, configuration.Storage.Retention.MaxAge, logger),
+		members.New(store, server.guard, logger),
+		ingesttokens.New(store, []byte(configuration.Auth.EffectiveIngestJWTSecret()), dependencies.TokenInvalidator, logger),
+		users.New(store, logger),
+		webhooks.New(webhookStore, logger),
+		stream.New(dependencies.StreamHub),
 	}
-}
-
-// requireScopeStreaming authenticates a long-lived streaming connection against the route's scope
-// without holding bounded query concurrency slots or timing out after the standard request deadline.
-func (server *Server) requireScopeStreaming(scope string, handle apiHandler) http.HandlerFunc {
-	return func(responseWriter http.ResponseWriter, request *http.Request) {
-		principal, ok := server.authenticateScope(responseWriter, request, scope)
-		if !ok {
-			return
-		}
-		claims, err := auth.VerifyJWTWithIssuerAudience(server.jwtSecret, bearerToken(request), auth.TokenAccess, server.issuer, server.audience, time.Now())
-		if err != nil || !time.Now().Before(claims.ExpiresAt) {
-			writeAPIError(responseWriter, http.StatusUnauthorized, "TOKEN_EXPIRED", "authentication required")
-			return
-		}
-		if principal.ProjectID != "" {
-			environmentID, environmentError := server.resolveEnvironment(request.Context(), principal.ProjectID, strings.TrimSpace(request.Header.Get(environmentHeader)))
-			if errors.Is(environmentError, errEnvironmentNotFound) {
-				writeAPIError(responseWriter, http.StatusBadRequest, "INVALID_ENVIRONMENT", "unknown environment for this project")
-				return
-			}
-			if environmentError != nil {
-				server.writeInternalError(responseWriter, "resolve environment", environmentError)
-				return
-			}
-			principal.EnvironmentID = environmentID
-		}
-		ctx, cancel := server.watchStreamAccess(request.Context(), principal, claims)
-		defer cancel()
-		handle(responseWriter, request.WithContext(ctx), principal)
-	}
-}
-
-// publicRoute serves a route that needs no credentials under its own bounded slot budget
-// so sign-ins cannot exhaust the pool and are never starved by telemetry queries.
-func (server *Server) publicRoute(handle apiHandler) http.HandlerFunc {
-	return func(responseWriter http.ResponseWriter, request *http.Request) {
-		release, admitted := server.admitAuth(request.Context())
-		if !admitted {
-			responseWriter.Header().Set("Retry-After", "1")
-			writeAPIError(responseWriter, http.StatusServiceUnavailable, "OVERLOADED", "too many requests are running; retry shortly")
-			return
-		}
-		defer release()
-		queryContext, cancel := context.WithTimeout(request.Context(), server.requestTimeout)
-		defer cancel()
-		handle(responseWriter, request.WithContext(queryContext), auth.Principal{})
-	}
-}
-
-const (
-	defaultConcurrentQueries     = 4
-	defaultConcurrentLogQueries  = 8
-	defaultAuthConcurrentQueries = 16
-	defaultRequestTimeout        = 20 * time.Second
-	// queryWait is how long a request waits for a free slot before it is refused.
-	// It absorbs a burst without letting a backlog grow.
-	queryWait = 500 * time.Millisecond
-	authWait  = 500 * time.Millisecond
-)
-
-func positiveOr(value, fallback int) int {
-	if value > 0 {
-		return value
-	}
-	return fallback
-}
-
-// admitQuery takes a slot from gate, waiting briefly for one. The returned func
-// frees the slot.
-func (server *Server) admitQuery(ctx context.Context, gate queryGate) (func(), bool) {
-	start := time.Now()
-	timer := time.NewTimer(queryWait)
-	defer timer.Stop()
-	select {
-	case gate.slots <- struct{}{}:
-		server.metrics.ObserveGateWait(gate.name, time.Since(start))
-		server.metrics.IncGateActive(gate.name)
-		return func() {
-			<-gate.slots
-			server.metrics.DecGateActive(gate.name)
-		}, true
-	case <-timer.C:
-		server.metrics.ObserveGateWait(gate.name, time.Since(start))
-		return nil, false
-	case <-ctx.Done():
-		server.metrics.ObserveGateWait(gate.name, time.Since(start))
-		return nil, false
-	}
-}
-
-// admitAuth takes an authentication slot, waiting briefly for one.
-func (server *Server) admitAuth(ctx context.Context) (func(), bool) {
-	start := time.Now()
-	timer := time.NewTimer(authWait)
-	defer timer.Stop()
-	select {
-	case server.authGate <- struct{}{}:
-		server.metrics.ObserveGateWait("auth", time.Since(start))
-		server.metrics.IncGateActive("auth")
-		return func() {
-			<-server.authGate
-			server.metrics.DecGateActive("auth")
-		}, true
-	case <-timer.C:
-		server.metrics.ObserveGateWait("auth", time.Since(start))
-		return nil, false
-	case <-ctx.Done():
-		server.metrics.ObserveGateWait("auth", time.Since(start))
-		return nil, false
-	}
-}
-
-func (server *Server) availableAPIRoutes() []apiRouteDefinition {
-	routes := make([]apiRouteDefinition, 0, len(apiRouteDefinitions))
-	for _, route := range apiRouteDefinitions {
-		if route.requiresReplay && server.replay == nil {
-			continue
-		}
-		routes = append(routes, route)
+	var routes []api.Route
+	for _, feature := range features {
+		routes = append(routes, feature.Routes()...)
 	}
 	return routes
 }
 
-// corsMethods derives the browser-facing method list from the API manifest so a
-// newly added mutation route cannot silently be blocked by CORS preflight.
-func corsMethods(routes []apiRouteDefinition) string {
-	allowed := map[string]bool{
-		http.MethodGet:     true,
-		http.MethodHead:    true,
-		http.MethodOptions: true,
+// RegisterAPIRoutes mounts the API routes through their admission, without the shared middleware, so
+// integration tests can drive handlers against a real database without tripping rate limits.
+func (server *Server) RegisterAPIRoutes(router *http.ServeMux) {
+	for _, route := range server.routes {
+		router.HandleFunc(route.Method+" "+route.Path, server.guard.Admit(route))
 	}
-	for _, route := range routes {
-		allowed[route.method] = true
-	}
+}
 
-	ordered := []string{
-		http.MethodGet,
-		http.MethodHead,
-		http.MethodPost,
-		http.MethodPut,
-		http.MethodPatch,
-		http.MethodDelete,
-		http.MethodOptions,
+func (server *Server) openAPI(responseWriter http.ResponseWriter, _ *http.Request) {
+	render.WriteJSON(responseWriter, http.StatusOK, openAPISpec(server.routes))
+}
+
+// projectScopes are the scopes the router resolves within one project and environment.
+var projectScopes = []string{auth.ScopeRead, auth.ScopeWrite, auth.ScopeReplay, auth.ScopeAdmin}
+
+func openAPISpec(routes []api.Route) map[string]any {
+	converted := make([]openapi.Route, len(routes))
+	for index, route := range routes {
+		converted[index] = openAPIRoute(route)
 	}
+	return openapi.SpecForRoutes(converted)
+}
+
+// openAPIRoute adds what the router itself requires: the project and environment headers of project
+// routes and the stream body of SSE routes.
+func openAPIRoute(route api.Route) openapi.Route {
+	headers := slices.Clone(route.Headers)
+	if slices.Contains(projectScopes, route.Scope) {
+		if !strings.Contains(route.Path, "{projectID}") {
+			headers = append(headers, "ProjectHeader")
+		}
+		headers = append(headers, "EnvironmentHeader")
+	}
+	response := route.Response
+	if route.Streaming {
+		response = openapi.EventStream()
+	}
+	return openapi.Route{
+		Path:          route.Path,
+		Method:        route.Method,
+		Scope:         route.Scope,
+		Tags:          route.Tags,
+		OperationID:   route.OperationID,
+		SuccessStatus: route.SuccessStatus,
+		RequestBody:   route.RequestBody,
+		Public:        route.Public,
+		Query:         route.Query,
+		Headers:       headers,
+		Request:       route.Request,
+		Response:      response,
+	}
+}
+
+// corsMethods derives the browser-facing method list from the routes so a newly added mutation route
+// cannot silently be blocked by CORS preflight.
+func corsMethods(routes []api.Route) string {
+	allowed := map[string]bool{http.MethodGet: true, http.MethodHead: true, http.MethodOptions: true}
+	for _, route := range routes {
+		allowed[route.Method] = true
+	}
+	ordered := []string{http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete, http.MethodOptions}
 	methods := make([]string, 0, len(ordered))
 	for _, method := range ordered {
 		if allowed[method] {

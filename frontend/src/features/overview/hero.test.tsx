@@ -1,7 +1,7 @@
 import { afterEach, expect, it } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { emptyPerformance } from "../performance/test-data";
+import { emptyPerformance } from "../../testing/performance";
 import type { Incident } from "../../shared/types";
 import { StatusHero, overviewStatus, trafficSummary } from "./hero";
 

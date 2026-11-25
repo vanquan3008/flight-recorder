@@ -2,12 +2,12 @@ import { useSearchParams } from "react-router-dom";
 import { useAuth } from "../../shared/session";
 import { canManageRole } from "../../shared/session";
 import { PageHeader } from "../../shared/ui";
-import { AccountsSection } from "./accounts";
-import { AuditSection } from "./audit";
-import { IngestTokensSection } from "./ingest-tokens";
-import { MembersSection } from "./members";
-import { ProjectsSection } from "./projects";
-import { WebhooksSection } from "./webhooks";
+import { AccountsSection } from "./access/accounts";
+import { AuditSection } from "./access/audit";
+import { IngestTokensSection } from "./integrations/ingest-tokens";
+import { MembersSection } from "./access/members";
+import { ProjectsSection } from "./projects/projects";
+import { WebhooksSection } from "./integrations/webhooks";
 
 const sections = {
   projects: ["Projects", ProjectsSection],

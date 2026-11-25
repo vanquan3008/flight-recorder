@@ -5,6 +5,7 @@ package hybrid
 import (
 	"context"
 	"fmt"
+	"github.com/vanquan3008/tracepilot/internal/storage/clickhouse/client"
 	"time"
 
 	"github.com/vanquan3008/tracepilot/internal/auth"
@@ -77,7 +78,7 @@ func (store *Store) ListLogs(ctx context.Context, project string, filter query.L
 	if err != nil {
 		return nil, err
 	}
-	filter.From = maxTime(filter.From, cutoff)
+	filter.From = client.MaxTime(filter.From, cutoff)
 	return store.ch.ListLogs(ctx, project, filter)
 }
 

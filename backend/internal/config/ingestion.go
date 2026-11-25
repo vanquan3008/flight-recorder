@@ -1,6 +1,7 @@
 package config
 
 import (
+	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
 	"regexp"
 	"strings"
 	"time"
@@ -64,10 +65,10 @@ func (configuration Config) validateIngestionAddresses(validator *validator) {
 }
 
 func (ingestion IngestionConfig) validateScope(validator *validator) {
-	if !validUUID(ingestion.ProjectID) {
+	if !validID(ingestion.ProjectID) {
 		validator.add("ingestion.project_id", "must be a valid UUID")
 	}
-	if !validUUID(ingestion.EnvironmentID) {
+	if !validID(ingestion.EnvironmentID) {
 		validator.add("ingestion.environment_id", "must be a valid UUID")
 	}
 	if !projectSlugPattern.MatchString(ingestion.ProjectSlug) {
@@ -106,4 +107,9 @@ func (ingestion IngestionConfig) validateLimits(validator *validator) {
 	if ingestion.AuthFailureLimit > 0 && ingestion.AuthFailureWindow <= 0 {
 		validator.add("ingestion.auth_failure_window", "must be positive when auth_failure_limit is set")
 	}
+}
+
+// validID accepts a UUID that is not the all-zero one, which stands for "unset".
+func validID(value string) bool {
+	return telemetry.ValidUUID(value) && strings.Trim(value, "0-") != ""
 }

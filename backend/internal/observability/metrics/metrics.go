@@ -30,6 +30,8 @@ type Registry struct {
 	retentionDuration  prometheus.Histogram
 	detectionRuns      *prometheus.CounterVec
 	detectionDuration  prometheus.Histogram
+	rollupRuns         *prometheus.CounterVec
+	rollupMinutes      prometheus.Counter
 	webhookAttempts    *prometheus.CounterVec
 	authCacheRequests  *prometheus.CounterVec
 	gateWaitDuration   *prometheus.HistogramVec
@@ -148,6 +150,12 @@ func New(version, commit, buildTime string) *Registry {
 	detectionDuration := prometheus.NewHistogram(prometheus.HistogramOpts{
 		Namespace: "tracepilot", Name: "incident_detection_duration_seconds", Help: "Observability incident detection duration.", Buckets: prometheus.DefBuckets,
 	})
+	rollupRuns := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "tracepilot", Name: "span_rollup_runs_total", Help: "Span minute rollup refresh passes by outcome.",
+	}, []string{"outcome"})
+	rollupMinutes := prometheus.NewCounter(prometheus.CounterOpts{
+		Namespace: "tracepilot", Name: "span_rollup_minutes_total", Help: "Span minute rollups recomputed after new or late spans.",
+	})
 	webhookAttempts := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "tracepilot", Name: "webhook_delivery_attempts_total", Help: "Outbound webhook delivery attempts by bounded outcome.",
 	}, []string{"outcome"})
@@ -167,7 +175,7 @@ func New(version, commit, buildTime string) *Registry {
 		Help:      "TracePilot build and runtime information.",
 	}, []string{"version", "commit", "build_time", "go_version"})
 
-	prometheusRegistry.MustRegister(httpRequests, httpDuration, databaseReady, ingestedRecords, rejectedRecords, ingestionQueue, ingestionBytes, ingestionInflight, ingestionShutdowns, batchDuration, storageErrors, ingestionRetries, admissionTimeouts, otlpRequests, otlpDuration, retentionDeleted, retentionByGroup, retentionBacklog, retentionErrors, retentionDuration, detectionRuns, detectionDuration, webhookAttempts, authCacheRequests, gateWaitDuration, gateActiveSlots, buildInfo)
+	prometheusRegistry.MustRegister(httpRequests, httpDuration, databaseReady, ingestedRecords, rejectedRecords, ingestionQueue, ingestionBytes, ingestionInflight, ingestionShutdowns, batchDuration, storageErrors, ingestionRetries, admissionTimeouts, otlpRequests, otlpDuration, retentionDeleted, retentionByGroup, retentionBacklog, retentionErrors, retentionDuration, detectionRuns, detectionDuration, rollupRuns, rollupMinutes, webhookAttempts, authCacheRequests, gateWaitDuration, gateActiveSlots, buildInfo)
 	buildInfo.WithLabelValues(version, commit, buildTime, runtime.Version()).Set(1)
 
 	return &Registry{
@@ -194,6 +202,8 @@ func New(version, commit, buildTime string) *Registry {
 		retentionDuration:  retentionDuration,
 		detectionRuns:      detectionRuns,
 		detectionDuration:  detectionDuration,
+		rollupRuns:         rollupRuns,
+		rollupMinutes:      rollupMinutes,
 		webhookAttempts:    webhookAttempts,
 		authCacheRequests:  authCacheRequests,
 		gateWaitDuration:   gateWaitDuration,

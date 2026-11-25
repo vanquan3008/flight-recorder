@@ -22,11 +22,6 @@ type Cache interface {
 
 // New creates a cache using the configured driver.
 func New(cfg config.CacheConfig, logger *slog.Logger) (Cache, error) {
-	return NewWithMetrics(cfg, logger, nil)
-}
-
-// NewWithMetrics creates a cache with optional metrics instrumentation.
-func NewWithMetrics(cfg config.CacheConfig, logger *slog.Logger, metrics Metrics) (Cache, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -38,10 +33,10 @@ func NewWithMetrics(cfg config.CacheConfig, logger *slog.Logger, metrics Metrics
 
 	case config.CacheDriverMemory:
 		logger.Info("cache initialized", "driver", "memory")
-		return newMemoryCache(cfg, metrics), nil
+		return newMemoryCache(cfg), nil
 
 	case config.CacheDriverRedis, config.CacheDriverAuto:
-		return newResilientRedisCache(cfg, logger, metrics)
+		return newResilientRedisCache(cfg, logger)
 
 	default:
 		return nil, fmt.Errorf("unsupported cache driver: %q", driver)
@@ -49,16 +44,16 @@ func NewWithMetrics(cfg config.CacheConfig, logger *slog.Logger, metrics Metrics
 }
 
 // newMemoryCache constructs a bounded in-memory cache.
-func newMemoryCache(cfg config.CacheConfig, metrics Metrics) Cache {
-	return NewMemoryCacheWithMetrics(cfg.DefaultTTL, cfg.DefaultLimit, metrics)
+func newMemoryCache(cfg config.CacheConfig) Cache {
+	return NewMemoryCache(cfg.DefaultTTL, cfg.DefaultLimit)
 }
 
 // newResilientRedisCache initializes Redis with an in-memory fallback.
-func newResilientRedisCache(cfg config.CacheConfig, logger *slog.Logger, metrics Metrics) (Cache, error) {
+func newResilientRedisCache(cfg config.CacheConfig, logger *slog.Logger) (Cache, error) {
 	redisCache, err := NewRedisCache(cfg)
 	if err != nil {
 		logger.Warn("redis initialization failed; using memory fallback", "error", sanitizeRedisError(err))
-		return newMemoryCache(cfg, metrics), nil
+		return newMemoryCache(cfg), nil
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), redisStartupTimeout)
@@ -71,8 +66,8 @@ func newResilientRedisCache(cfg config.CacheConfig, logger *slog.Logger, metrics
 		logger.Info("redis cache connected")
 	}
 
-	memory := NewMemoryCacheWithMetrics(cfg.DefaultTTL, cfg.DefaultLimit, metrics)
-	return NewResilientCache(redisCache, memory, logger, metrics, available), nil
+	memory := NewMemoryCache(cfg.DefaultTTL, cfg.DefaultLimit)
+	return NewResilientCache(redisCache, memory, logger, available), nil
 }
 
 // sanitizeRedisError strips raw URLs and credentials from Redis errors.

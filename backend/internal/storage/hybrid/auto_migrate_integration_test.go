@@ -3,12 +3,13 @@ package hybrid
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"net/url"
 	"os"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/vanquan3008/tracepilot/internal/storage/clickhouse/clienttest"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/vanquan3008/tracepilot/internal/config"
@@ -42,7 +43,7 @@ func TestAutoMigrationInitializesBothDatabasesOnlyWhenEnabledIntegration(t *test
 		ConnectTimeout: time.Second, MaxConnectionLifetime: time.Minute, MaxConnectionIdleTime: time.Minute, HealthCheckPeriod: time.Minute},
 		ClickHouse: config.ClickHouseConfig{URL: os.Getenv("TRACEPILOT_CLICKHOUSE_TEST_URL"), Database: name,
 			Username: "default", RequestTimeout: 5 * time.Second, MaxConnections: 2}}
-	defer dropClickHouseTestDatabase(t, cfg.ClickHouse)
+	defer clienttest.DropDatabase(t, cfg.ClickHouse)
 	store, err := Open(ctx, cfg)
 	if store != nil {
 		store.Close()
@@ -118,23 +119,5 @@ func TestAutoMigrationInitializesBothDatabasesOnlyWhenEnabledIntegration(t *test
 	}
 	if err == nil || !strings.Contains(err.Error(), "automatic PostgreSQL migration") {
 		t.Fatalf("migration failure did not block startup: %v", err)
-	}
-}
-
-func dropClickHouseTestDatabase(t *testing.T, cfg config.ClickHouseConfig) {
-	t.Helper()
-	request, err := http.NewRequest(http.MethodPost, cfg.URL+"/?query="+url.QueryEscape("DROP DATABASE IF EXISTS `"+cfg.Database+"`"), nil)
-	if err != nil {
-		t.Error(err)
-		return
-	}
-	response, err := (&http.Client{Timeout: 5 * time.Second}).Do(request)
-	if err != nil {
-		t.Error(err)
-		return
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		t.Error("ClickHouse test cleanup failed", response.StatusCode)
 	}
 }

@@ -6,10 +6,11 @@ import (
 	"io"
 	"mime"
 	"net/http"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/middleware"
 
 	"github.com/vanquan3008/tracepilot/internal/auth"
 	"github.com/vanquan3008/tracepilot/internal/config"
@@ -23,9 +24,13 @@ import (
 
 func newHTTPServer(configuration config.Config, server *Server) *http.Server {
 	router := http.NewServeMux()
-	router.HandleFunc("POST /v1/traces", server.traces)
-	router.HandleFunc("POST /v1/logs", server.logs)
-	router.HandleFunc("POST /v1/metrics", server.httpMetrics)
+	router.HandleFunc("POST /v1/traces", handleHTTP(server, "traces", func() *collectortracepb.ExportTraceServiceRequest {
+		return &collectortracepb.ExportTraceServiceRequest{}
+	}, server.receiver.exportTraces))
+	router.HandleFunc("POST /v1/logs", handleHTTP(server, "logs", func() *collectorlogspb.ExportLogsServiceRequest { return &collectorlogspb.ExportLogsServiceRequest{} }, server.receiver.exportLogs))
+	router.HandleFunc("POST /v1/metrics", handleHTTP(server, "metrics", func() *collectormetricspb.ExportMetricsServiceRequest {
+		return &collectormetricspb.ExportMetricsServiceRequest{}
+	}, server.receiver.exportMetrics))
 	return &http.Server{
 		Addr:              server.httpAddress,
 		Handler:           router,
@@ -35,96 +40,6 @@ func newHTTPServer(configuration config.Config, server *Server) *http.Server {
 		IdleTimeout:       configuration.HTTP.IdleTimeout,
 		MaxHeaderBytes:    configuration.HTTP.MaxHeaderBytes,
 	}
-}
-
-func (server *Server) traces(responseWriter http.ResponseWriter, request *http.Request) {
-	startedAt, outcome := time.Now(), "ok"
-	defer func() { server.observeHTTPRequest("traces", outcome, time.Since(startedAt)) }()
-	authorized, authOutcome := server.authorizeHTTP(responseWriter, request)
-	if authOutcome != "" {
-		outcome = authOutcome
-		return
-	}
-	request = authorized
-	release, admitOutcome := server.admitHTTP(responseWriter, request)
-	if admitOutcome != "" {
-		outcome = admitOutcome
-		return
-	}
-	defer release()
-	message := &collectortracepb.ExportTraceServiceRequest{}
-	encoding, decodeError := server.decodeHTTP(responseWriter, request, message)
-	if decodeError != nil {
-		outcome = "rejected"
-		return
-	}
-	response, exportError := server.receiver.exportTraces(request.Context(), message)
-	if exportError != nil {
-		outcome = "unavailable"
-	} else if response.GetPartialSuccess() != nil {
-		outcome = "partial"
-	}
-	server.writeHTTP(responseWriter, encoding, response, exportError)
-}
-
-func (server *Server) logs(responseWriter http.ResponseWriter, request *http.Request) {
-	startedAt, outcome := time.Now(), "ok"
-	defer func() { server.observeHTTPRequest("logs", outcome, time.Since(startedAt)) }()
-	authorized, authOutcome := server.authorizeHTTP(responseWriter, request)
-	if authOutcome != "" {
-		outcome = authOutcome
-		return
-	}
-	request = authorized
-	release, admitOutcome := server.admitHTTP(responseWriter, request)
-	if admitOutcome != "" {
-		outcome = admitOutcome
-		return
-	}
-	defer release()
-	message := &collectorlogspb.ExportLogsServiceRequest{}
-	encoding, decodeError := server.decodeHTTP(responseWriter, request, message)
-	if decodeError != nil {
-		outcome = "rejected"
-		return
-	}
-	response, exportError := server.receiver.exportLogs(request.Context(), message)
-	if exportError != nil {
-		outcome = "unavailable"
-	} else if response.GetPartialSuccess() != nil {
-		outcome = "partial"
-	}
-	server.writeHTTP(responseWriter, encoding, response, exportError)
-}
-
-func (server *Server) httpMetrics(responseWriter http.ResponseWriter, request *http.Request) {
-	startedAt, outcome := time.Now(), "ok"
-	defer func() { server.observeHTTPRequest("metrics", outcome, time.Since(startedAt)) }()
-	authorized, authOutcome := server.authorizeHTTP(responseWriter, request)
-	if authOutcome != "" {
-		outcome = authOutcome
-		return
-	}
-	request = authorized
-	release, admitOutcome := server.admitHTTP(responseWriter, request)
-	if admitOutcome != "" {
-		outcome = admitOutcome
-		return
-	}
-	defer release()
-	message := &collectormetricspb.ExportMetricsServiceRequest{}
-	encoding, decodeError := server.decodeHTTP(responseWriter, request, message)
-	if decodeError != nil {
-		outcome = "rejected"
-		return
-	}
-	response, exportError := server.receiver.exportMetrics(request.Context(), message)
-	if exportError != nil {
-		outcome = "unavailable"
-	} else if response.GetPartialSuccess() != nil {
-		outcome = "partial"
-	}
-	server.writeHTTP(responseWriter, encoding, response, exportError)
 }
 
 func (server *Server) observeHTTPRequest(signal, outcome string, duration time.Duration) {
@@ -140,7 +55,7 @@ func (server *Server) authorizeHTTP(responseWriter http.ResponseWriter, request 
 	}
 	var throttled *throttledError
 	if errors.As(err, &throttled) {
-		responseWriter.Header().Set("Retry-After", strconv.Itoa(retryAfterSeconds(throttled.retryAfter)))
+		responseWriter.Header().Set("Retry-After", middleware.RetryAfterSeconds(throttled.retryAfter))
 		server.writeHTTPError(responseWriter, responseEncoding(request), http.StatusTooManyRequests, "too many failed authentication attempts")
 		return request, "throttled"
 	}
@@ -154,15 +69,6 @@ func (server *Server) authorizeHTTP(responseWriter http.ResponseWriter, request 
 	}
 	server.writeHTTPError(responseWriter, responseEncoding(request), http.StatusServiceUnavailable, "OTLP authentication temporarily unavailable")
 	return request, "unavailable"
-}
-
-// retryAfterSeconds rounds up so a client never retries before the window ends.
-func retryAfterSeconds(wait time.Duration) int {
-	seconds := int((wait + time.Second - 1) / time.Second)
-	if seconds < 1 {
-		return 1
-	}
-	return seconds
 }
 
 // admitHTTP runs after authentication and before the body is read, so an

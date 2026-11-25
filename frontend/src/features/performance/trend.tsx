@@ -5,7 +5,7 @@ import { formatDuration, formatTime } from "../../shared/ui";
 
 const pad = (n: number) => String(n).padStart(2, "0");
 
-export const formatAxisTick = (isoString?: string, durationMs = 0) => {
+const formatAxisTick = (isoString?: string, durationMs = 0) => {
   if (!isoString) return "";
   const t = Date.parse(isoString);
   if (Number.isNaN(t)) return "";
@@ -17,7 +17,7 @@ export const formatAxisTick = (isoString?: string, durationMs = 0) => {
   return time;
 };
 
-export const formatTooltipTime = (fromIso?: string, toIso?: string) => {
+const formatTooltipTime = (fromIso?: string, toIso?: string) => {
   if (!fromIso) return "";
   const d1 = new Date(fromIso);
   if (Number.isNaN(d1.getTime())) return "";

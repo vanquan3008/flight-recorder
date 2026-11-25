@@ -42,10 +42,9 @@ const (
 // It guarantees zero downtime by degrading gracefully to the local in-memory cache whenever Redis fails,
 // and automatically resumes distributed caching once Redis recovers.
 type ResilientCache struct {
-	redis   *RedisCache
-	memory  *MemoryCache
-	logger  *slog.Logger
-	metrics Metrics
+	redis  *RedisCache
+	memory *MemoryCache
+	logger *slog.Logger
 
 	mu                  sync.Mutex
 	state               atomic.Int32
@@ -61,7 +60,6 @@ func NewResilientCache(
 	redis *RedisCache,
 	memory *MemoryCache,
 	logger *slog.Logger,
-	metrics Metrics,
 	redisHealthy bool,
 ) *ResilientCache {
 	if logger == nil {
@@ -75,7 +73,6 @@ func NewResilientCache(
 		redis:       redis,
 		memory:      memory,
 		logger:      logger,
-		metrics:     metrics,
 		maxFailures: defaultMaxFailures,
 		cooldown:    defaultCooldown,
 		now:         time.Now,
@@ -87,9 +84,6 @@ func NewResilientCache(
 	} else {
 		rc.state.Store(int32(StateOpen))
 		rc.lastStateChange = rc.currentTime()
-		if metrics != nil {
-			metrics.RecordCircuitBreakerState("open")
-		}
 	}
 
 	return rc
@@ -123,9 +117,6 @@ func (r *ResilientCache) Get(ctx context.Context, key string) ([]byte, bool, err
 		r.onFailure(ctx, "read", key, err)
 	}
 
-	if r.metrics != nil {
-		r.metrics.RecordFallback("get")
-	}
 	return r.memory.Get(ctx, key)
 }
 
@@ -141,9 +132,6 @@ func (r *ResilientCache) Set(ctx context.Context, key string, value []byte, ttl 
 			return nil
 		}
 		r.onFailure(ctx, "write", key, err)
-		if r.metrics != nil {
-			r.metrics.RecordFallback("set")
-		}
 	}
 
 	return nil
@@ -160,9 +148,6 @@ func (r *ResilientCache) Delete(ctx context.Context, key string) error {
 			return nil
 		}
 		r.onFailure(ctx, "delete", key, err)
-		if r.metrics != nil {
-			r.metrics.RecordFallback("delete")
-		}
 	}
 
 	return nil
@@ -203,9 +188,6 @@ func (r *ResilientCache) shouldAttemptRedis() bool {
 			r.state.Store(int32(StateHalfOpen))
 			r.lastStateChange = now
 			r.logger.Info("redis circuit breaker entered HALF-OPEN state; probing connection")
-			if r.metrics != nil {
-				r.metrics.RecordCircuitBreakerState("half-open")
-			}
 			return true
 		}
 	}
@@ -225,9 +207,6 @@ func (r *ResilientCache) onSuccess() {
 			r.state.Store(int32(StateClosed))
 			r.lastStateChange = r.currentTime()
 			r.logger.Info("redis cache recovered; circuit breaker CLOSED, distributed caching resumed")
-			if r.metrics != nil {
-				r.metrics.RecordCircuitBreakerState("closed")
-			}
 		}
 	}
 }
@@ -250,9 +229,6 @@ func (r *ResilientCache) onFailure(ctx context.Context, op, key string, err erro
 			slog.String("key", key),
 			slog.Any("error", err),
 		)
-		if r.metrics != nil {
-			r.metrics.RecordCircuitBreakerState("open")
-		}
 		return
 	}
 
@@ -266,9 +242,6 @@ func (r *ResilientCache) onFailure(ctx context.Context, op, key string, err erro
 			slog.String("key", key),
 			slog.Any("error", err),
 		)
-		if r.metrics != nil {
-			r.metrics.RecordCircuitBreakerState("open")
-		}
 	} else if currentState == StateClosed {
 		r.logger.DebugContext(ctx, "redis cache operation encountered transient error",
 			slog.Int("consecutive_failures", int(failures)),

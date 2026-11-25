@@ -1,2 +1,2 @@
 export * from "./model";
-export { AuthContext, useAuth, type AuthState } from "./context";
+export { AuthContext, useAuth } from "./context";

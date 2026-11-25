@@ -33,7 +33,7 @@ const intelligenceFlow: FlowNode[] = [
 ];
 
 const firstRun = [
-  [KeyRound, "Register", "Create an account, then request an administrator to grant project access."],
+  [KeyRound, "Sign in", "Use the account the super administrator created, then replace its temporary password."],
   [Sparkles, "Create a project", "Make a project for your product, then an ingest token for it."],
   [RadioTower, "Send a signal", "Copy the OTLP variables into one application."],
   [Search, "Find the cause", "Open a failed trace and inspect its linked logs."],

@@ -41,10 +41,9 @@ func TestRedisCache_NilSafety(t *testing.T) {
 func TestResilientCache_FallbackWhenRedisDown(t *testing.T) {
 	ctx := context.Background()
 	mem := NewMemoryCache(time.Minute, 100)
-	metrics := NewStatsCollector()
 
 	// Initialized with Redis marked as unhealthy (circuit open)
-	rc := NewResilientCache(nil, mem, nil, metrics, false)
+	rc := NewResilientCache(nil, mem, nil, false)
 
 	if rc.State() != StateOpen {
 		t.Fatalf("expected initial state StateOpen, got %v", rc.State())
@@ -69,11 +68,6 @@ func TestResilientCache_FallbackWhenRedisDown(t *testing.T) {
 	if ok {
 		t.Fatalf("expected miss after delete")
 	}
-
-	snapshot := metrics.Snapshot()
-	if snapshot.FallbacksTotal == 0 {
-		t.Fatalf("expected fallback metrics to be recorded, got 0")
-	}
 }
 
 func TestResilientCache_CircuitBreakerStateTransitions(t *testing.T) {
@@ -82,7 +76,7 @@ func TestResilientCache_CircuitBreakerStateTransitions(t *testing.T) {
 	now := time.Now()
 
 	dummyRedis := &RedisCache{}
-	rc := NewResilientCache(dummyRedis, mem, nil, nil, false)
+	rc := NewResilientCache(dummyRedis, mem, nil, false)
 	rc.now = func() time.Time { return now }
 	rc.cooldown = 5 * time.Second
 
@@ -144,36 +138,6 @@ func TestInvalidRedisConfigurationDoesNotLogCredentials(t *testing.T) {
 	logStr := output.String()
 	if strings.Contains(logStr, "do-not-log-this") || strings.Contains(logStr, "redis://") {
 		t.Fatalf("cache diagnostic leaked credentials or raw URL in logs: %s", logStr)
-	}
-}
-
-func TestStatsCollector_Counters(t *testing.T) {
-	sc := NewStatsCollector()
-
-	sc.RecordHit("memory")
-	sc.RecordHit("redis")
-	sc.RecordMiss("redis")
-	sc.RecordSet("redis")
-	sc.RecordDelete("memory")
-	sc.RecordEviction("memory", "expired")
-	sc.RecordFallback("get")
-	sc.RecordCircuitBreakerState("open")
-
-	snap := sc.Snapshot()
-	if snap.HitsTotal != 2 {
-		t.Fatalf("expected 2 total hits, got %d", snap.HitsTotal)
-	}
-	if snap.MissesTotal != 1 {
-		t.Fatalf("expected 1 total miss, got %d", snap.MissesTotal)
-	}
-	if snap.SetsTotal != 1 {
-		t.Fatalf("expected 1 total set, got %d", snap.SetsTotal)
-	}
-	if snap.FallbacksTotal != 1 {
-		t.Fatalf("expected 1 fallback, got %d", snap.FallbacksTotal)
-	}
-	if snap.LastCircuitState != "open" {
-		t.Fatalf("expected last circuit state 'open', got %s", snap.LastCircuitState)
 	}
 }
 

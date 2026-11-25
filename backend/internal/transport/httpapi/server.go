@@ -1,195 +1,191 @@
+// Package httpapi serves the console's REST API, the OpenAPI document, health checks, and /metrics.
+// It assembles the feature packages into one router behind the shared middleware.
 package httpapi
 
 import (
 	"context"
-	"crypto/subtle"
 	"crypto/tls"
 	"errors"
 	"log/slog"
 	"net"
 	"net/http"
 	"net/netip"
+	"strings"
 	"sync/atomic"
 	"time"
 
-	incidentapp "github.com/vanquan3008/tracepilot/internal/application/incident"
 	"github.com/vanquan3008/tracepilot/internal/application/live"
-	"github.com/vanquan3008/tracepilot/internal/auth"
 	"github.com/vanquan3008/tracepilot/internal/config"
 	"github.com/vanquan3008/tracepilot/internal/observability/metrics"
+	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/access"
+	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/api"
+	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/features/health"
+	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/features/incidents"
+	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/features/ingesttokens"
 	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/middleware"
 )
 
-// TokenInvalidator is an optional callback to immediately invalidate revoked ingest tokens in cache.
-type TokenInvalidator interface {
-	Invalidate(tokenID string)
+// Dependencies are the collaborators cmd/tracepilot creates and closes.
+type Dependencies struct {
+	Logger    *slog.Logger
+	Metrics   *metrics.Registry
+	Readiness func(context.Context) error
+	// Store serves the API. Without it only health checks, /metrics, and the OpenAPI document are served.
+	Store Backend
+	// Replay runs captured requests. Without it the replay route is left out.
+	Replay incidents.ReplayRunner
+	// TokenInvalidator drops revoked ingest tokens from the ingest cache at once.
+	TokenInvalidator ingesttokens.Invalidator
+	// StreamHub feeds the live stream and is closed on shutdown.
+	StreamHub *live.Hub
 }
 
+// Server owns the router, the middleware chain, and the admission guard. It does not own the store,
+// the metrics registry, or the stream hub.
 type Server struct {
-	httpServer              *http.Server
-	logger                  *slog.Logger
-	metrics                 *metrics.Registry
-	metricsHandler          http.Handler
-	readinessCheck          func(context.Context) error
-	readinessTimeout        time.Duration
-	environmentID           string
-	defaultProjectID        string
-	jwtSecret               []byte
-	ingestJWTSecret         []byte
-	metricsToken            string
-	allowRegistration       bool
-	production              bool
-	accessTokenTTL          time.Duration
-	refreshTokenTTL         time.Duration
-	cookieDomain            string
-	cookieSameSite          http.SameSite
-	issuer                  string
-	audience                string
-	environments            *environmentCache
-	identity                *identityCache
-	maxBodyBytes            int64
-	ready                   atomic.Bool
-	shutdownTimeout         time.Duration
-	backend                 Backend
-	incidentCommands        *incidentapp.Service
-	replay                  ReplayRunner
-	replayMaxRequestBytes   int64
-	allowedOrigins          map[string]struct{}
-	trustedProxies          []netip.Prefix
-	queryGate               chan struct{}
-	logQueryGate            chan struct{}
-	authGate                chan struct{}
-	tokenInvalidator        TokenInvalidator
-	requestTimeout          time.Duration
-	corsAllowedMethods      string
-	metricsRequireAuth      bool
-	rateLimiter             *middleware.RequestRateLimiter
-	rateLimitRequests       int
-	rateLimitAuthRequests   int
-	rateLimitReplayRequests int
-	certificateFile         string
-	privateKeyFile          string
-	webhooksEnabled         bool
-	defaultRetentionAge     time.Duration
-	streamHub               *live.Hub
+	httpServer      *http.Server
+	logger          *slog.Logger
+	metrics         *metrics.Registry
+	ready           atomic.Bool
+	shutdownTimeout time.Duration
+	streamHub       *live.Hub
+	tlsCertificate  string
+	tlsPrivateKey   string
+
+	guard  *access.Guard
+	routes []api.Route
+
+	rateLimiter    *middleware.RequestRateLimiter
+	rateLimits     rateLimits
+	trustedProxies []netip.Prefix
+	allowedOrigins map[string]struct{}
+	maxBodyBytes   int64
 }
 
-func New(configuration config.Config, logger *slog.Logger, readinessCheck func(context.Context) error, metricRegistry *metrics.Registry, backend Backend, replayRunner ReplayRunner) *Server {
+// rateLimits are the requests a client may send per window in each class.
+type rateLimits struct {
+	queries int
+	auth    int
+	replay  int
+}
+
+func New(configuration config.Config, dependencies Dependencies) *Server {
+	configuration.HTTP = configuration.HTTP.WithRequestDefaults()
 	server := &Server{
-		logger:                  logger,
-		metrics:                 metricRegistry,
-		metricsHandler:          metricRegistry.Handler(),
-		readinessCheck:          readinessCheck,
-		readinessTimeout:        configuration.Database.ReadinessTimeout,
-		environmentID:           configuration.Ingestion.EnvironmentID,
-		defaultProjectID:        configuration.Ingestion.ProjectID,
-		jwtSecret:               []byte(configuration.Auth.JWTSecret),
-		ingestJWTSecret:         []byte(configuration.Auth.EffectiveIngestJWTSecret()),
-		metricsToken:            configuration.HTTP.MetricsToken,
-		allowRegistration:       configuration.Auth.AllowRegistration,
-		production:              configuration.App.Production,
-		accessTokenTTL:          configuration.Auth.AccessTokenTTL,
-		refreshTokenTTL:         configuration.Auth.RefreshTokenTTL,
-		cookieDomain:            configuration.Auth.CookieDomain,
-		cookieSameSite:          configuration.Auth.CookieSameSiteMode(),
-		issuer:                  configuration.Auth.EffectiveIssuer(),
-		audience:                configuration.Auth.EffectiveAudience(),
-		environments:            newEnvironmentCache(configuration.Cache.EffectiveScopeTTL(), configuration.Cache.EffectiveScopeLimit()),
-		identity:                newIdentityCache(configuration.Cache.EffectiveIdentityTTL(), configuration.Cache.EffectiveIdentityLimit()),
-		maxBodyBytes:            configuration.HTTP.ManagementMaxBodyBytes,
-		shutdownTimeout:         configuration.App.ShutdownTimeout,
-		backend:                 backend,
-		incidentCommands:        incidentapp.New(backend),
-		replay:                  replayRunner,
-		replayMaxRequestBytes:   configuration.Replay.MaxRequestBytes,
-		allowedOrigins:          make(map[string]struct{}, len(configuration.HTTP.AllowedOrigins)),
-		corsAllowedMethods:      corsMethods(apiRouteDefinitions),
-		metricsRequireAuth:      configuration.App.Production,
-		rateLimiter:             middleware.NewRequestRateLimiter(configuration.HTTP.RateLimitWindow),
-		rateLimitRequests:       configuration.HTTP.RateLimitRequests,
-		rateLimitAuthRequests:   configuration.HTTP.RateLimitAuthRequests,
-		rateLimitReplayRequests: configuration.HTTP.RateLimitReplayRequests,
-		certificateFile:         configuration.App.TLS.CertificateFile,
-		privateKeyFile:          configuration.App.TLS.PrivateKeyFile,
-		webhooksEnabled:         configuration.Notifications.Enabled,
-		defaultRetentionAge:     configuration.Storage.Retention.MaxAge,
-	}
-	if server.rateLimitRequests <= 0 {
-		server.rateLimitRequests = 120
-	}
-	if server.rateLimitAuthRequests <= 0 {
-		server.rateLimitAuthRequests = 20
-	}
-	if server.rateLimitReplayRequests <= 0 {
-		server.rateLimitReplayRequests = 10
+		logger:          dependencies.Logger,
+		metrics:         dependencies.Metrics,
+		shutdownTimeout: configuration.App.ShutdownTimeout,
+		streamHub:       dependencies.StreamHub,
+		tlsCertificate:  configuration.App.TLS.CertificateFile,
+		tlsPrivateKey:   configuration.App.TLS.PrivateKeyFile,
+
+		rateLimiter: middleware.NewRequestRateLimiter(configuration.HTTP.RateLimitWindow),
+		rateLimits: rateLimits{
+			queries: configuration.HTTP.RateLimitRequests,
+			auth:    configuration.HTTP.RateLimitAuthRequests,
+			replay:  configuration.HTTP.RateLimitReplayRequests,
+		},
+		trustedProxies: configuration.HTTP.TrustedProxyPrefixes(),
+		allowedOrigins: make(map[string]struct{}, len(configuration.HTTP.AllowedOrigins)),
+		maxBodyBytes:   configuration.HTTP.ManagementMaxBodyBytes,
 	}
 	for _, origin := range configuration.HTTP.AllowedOrigins {
 		server.allowedOrigins[origin] = struct{}{}
 	}
-	server.trustedProxies = configuration.HTTP.TrustedProxyPrefixes()
-	server.queryGate = make(chan struct{}, positiveOr(configuration.HTTP.MaxConcurrentQueries, defaultConcurrentQueries))
-	server.logQueryGate = make(chan struct{}, positiveOr(configuration.HTTP.MaxConcurrentLogQueries, defaultConcurrentLogQueries))
-	server.authGate = make(chan struct{}, defaultAuthConcurrentQueries)
-	server.requestTimeout = configuration.HTTP.RequestTimeout
-	if server.requestTimeout <= 0 {
-		server.requestTimeout = defaultRequestTimeout
-	}
+	server.guard = access.New(access.Config{
+		TokenSecret:             []byte(configuration.Auth.JWTSecret),
+		TokenIssuer:             configuration.Auth.EffectiveIssuer(),
+		TokenAudience:           configuration.Auth.EffectiveAudience(),
+		DefaultProjectID:        configuration.Ingestion.ProjectID,
+		DefaultEnvironmentID:    configuration.Ingestion.EnvironmentID,
+		IdentityCacheTTL:        configuration.Cache.EffectiveIdentityTTL(),
+		IdentityCacheLimit:      configuration.Cache.EffectiveIdentityLimit(),
+		ScopeCacheTTL:           configuration.Cache.EffectiveScopeTTL(),
+		ScopeCacheLimit:         configuration.Cache.EffectiveScopeLimit(),
+		MaxConcurrentQueries:    configuration.HTTP.MaxConcurrentQueries,
+		MaxConcurrentLogQueries: configuration.HTTP.MaxConcurrentLogQueries,
+		RequestTimeout:          configuration.HTTP.RequestTimeout,
+	}, dependencies.Store, dependencies.Logger, dependencies.Metrics)
+	server.routes = server.featureRoutes(configuration, dependencies)
+
 	router := http.NewServeMux()
 	router.HandleFunc("GET /openapi.json", server.openAPI)
-	router.HandleFunc("GET /health/live", server.live)
-	router.HandleFunc("GET /health/ready", server.readiness)
-	router.HandleFunc("GET /metrics", server.metricsEndpoint)
-	// Keep the query routes available whenever the database is available. When
-	// authentication has not been configured they return an explicit 401 instead
-	// of falling through to the dashboard and looking like a missing route.
-	if backend != nil {
-		server.registerAPIRoutes(router)
+	var authenticator health.Authenticator
+	if dependencies.Store != nil {
+		authenticator = server.guard
+		server.RegisterAPIRoutes(router)
 	}
+	health.New(health.Config{
+		ReadinessTimeout:   configuration.Database.ReadinessTimeout,
+		MetricsToken:       configuration.HTTP.MetricsToken,
+		RequireMetricsAuth: configuration.App.Production,
+	}, server.ready.Load, dependencies.Readiness, dependencies.Metrics, authenticator).Register(router)
 
-	var requestHandler http.Handler = router
-	requestHandler = server.withBodyLimit(requestHandler)
-	requestHandler = server.withPanicRecovery(requestHandler)
-	requestHandler = server.withCORS(requestHandler)
-	requestHandler = server.withAccessLog(requestHandler)
-	requestHandler = server.withRateLimit(requestHandler)
-	requestHandler = server.withMetrics(requestHandler)
-	requestHandler = server.withSecurityHeaders(requestHandler)
-	requestHandler = server.withRequestID(requestHandler)
 	server.httpServer = &http.Server{
 		Addr:              configuration.HTTP.Address,
-		Handler:           requestHandler,
+		Handler:           server.withMiddleware(router, corsMethods(server.routes)),
 		ReadHeaderTimeout: configuration.HTTP.ReadHeaderTimeout,
 		ReadTimeout:       configuration.HTTP.ReadTimeout,
 		WriteTimeout:      configuration.HTTP.WriteTimeout,
 		IdleTimeout:       configuration.HTTP.IdleTimeout,
 		MaxHeaderBytes:    configuration.HTTP.MaxHeaderBytes,
 	}
-	if server.certificateFile != "" {
+	if server.tlsCertificate != "" {
 		server.httpServer.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
 	}
 	return server
 }
 
-func (server *Server) WithTokenInvalidator(invalidator TokenInvalidator) *Server {
-	server.tokenInvalidator = invalidator
-	return server
+// withMiddleware wraps the router in the shared middleware. The list runs from the outermost layer
+// inward: the request ID and trace context come first so every later layer, including the access log
+// and panic recovery, can attach them, and the body limit sits closest to the handlers.
+func (server *Server) withMiddleware(router http.Handler, corsAllowedMethods string) http.Handler {
+	layers := []func(http.Handler) http.Handler{
+		middleware.RequestID(),
+		middleware.SecurityHeaders(server.tlsCertificate != ""),
+		middleware.Metrics(server.metrics),
+		middleware.RateLimit(server.rateLimiter, server.rateLimitKey),
+		middleware.AccessLog(server.logger),
+		middleware.CORS(server.allowedOrigins, corsAllowedMethods),
+		middleware.PanicRecovery(server.logger),
+		middleware.BodyLimit(server.maxBodyBytes),
+	}
+	handler := router
+	for index := len(layers) - 1; index >= 0; index-- {
+		handler = layers[index](handler)
+	}
+	return handler
 }
 
-func (server *Server) WithStreamHub(hub *live.Hub) *Server {
-	server.streamHub = hub
-	return server
+// rateLimitKey assigns an API request to its limit class and keys it on the client address; requests
+// outside /api/v1 have no limit.
+func (server *Server) rateLimitKey(request *http.Request) (string, int) {
+	if !strings.HasPrefix(request.URL.Path, "/api/v1/") {
+		return "", 0
+	}
+	class, limit := "query", server.rateLimits.queries
+	switch {
+	case strings.HasSuffix(request.URL.Path, "/replays"):
+		class, limit = "replay", server.rateLimits.replay
+	case strings.HasPrefix(request.URL.Path, "/api/v1/auth/") || strings.HasSuffix(request.URL.Path, "/ingest-tokens"):
+		class, limit = "auth", server.rateLimits.auth
+	}
+	return class + ":" + server.clientAddress(request), limit
 }
 
-// ServeHTTP delegates directly to the underlying http.Handler.
+// clientAddress is the address rate limits are keyed on; see config.ClientAddress for how forwarded
+// headers are trusted.
+func (server *Server) clientAddress(request *http.Request) string {
+	return config.ClientAddress(request.RemoteAddr, request.Header.Values("X-Forwarded-For"), server.trustedProxies)
+}
+
+// ServeHTTP serves a request through the middleware and the router.
 func (server *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	server.httpServer.Handler.ServeHTTP(w, r)
 }
 
-// RegisterAPIRoutes mounts the server's API routes onto a ServeMux.
-func (server *Server) RegisterAPIRoutes(router *http.ServeMux) {
-	server.registerAPIRoutes(router)
-}
-
+// Run listens and serves until applicationContext ends, then marks the server not ready, closes the
+// stream hub so open streams return, and shuts down within the configured timeout.
 func (server *Server) Run(applicationContext context.Context) error {
 	listener, listenError := net.Listen("tcp", server.httpServer.Addr)
 	if listenError != nil {
@@ -199,8 +195,8 @@ func (server *Server) Run(applicationContext context.Context) error {
 
 	serveResult := make(chan error, 1)
 	go func() {
-		if server.certificateFile != "" {
-			serveResult <- server.httpServer.ServeTLS(listener, server.certificateFile, server.privateKeyFile)
+		if server.tlsCertificate != "" {
+			serveResult <- server.httpServer.ServeTLS(listener, server.tlsCertificate, server.tlsPrivateKey)
 			return
 		}
 		serveResult <- server.httpServer.Serve(listener)
@@ -226,46 +222,4 @@ func (server *Server) Run(applicationContext context.Context) error {
 		}
 		return nil
 	}
-}
-
-func (server *Server) metricsEndpoint(responseWriter http.ResponseWriter, request *http.Request) {
-	if !server.metricsRequireAuth {
-		server.metricsHandler.ServeHTTP(responseWriter, request)
-		return
-	}
-	if server.backend == nil {
-		writeAPIError(responseWriter, http.StatusServiceUnavailable, "UNAVAILABLE", "metrics authentication is unavailable")
-		return
-	}
-	// A scraper cannot sign in and renew a 15 minute token, so it presents the configured scrape token.
-	// Anyone else needs to be a signed-in super administrator.
-	if scrape := bearerToken(request); server.metricsToken != "" && subtle.ConstantTimeCompare([]byte(scrape), []byte(server.metricsToken)) == 1 {
-		server.metricsHandler.ServeHTTP(responseWriter, request)
-		return
-	}
-	if _, ok := server.authenticateScope(responseWriter, request, auth.ScopePlatform); !ok {
-		return
-	}
-	server.metricsHandler.ServeHTTP(responseWriter, request)
-}
-
-func (server *Server) live(responseWriter http.ResponseWriter, _ *http.Request) {
-	writeJSONValue(responseWriter, http.StatusOK, map[string]string{"status": "ok"})
-}
-
-func (server *Server) readiness(responseWriter http.ResponseWriter, request *http.Request) {
-	if !server.ready.Load() {
-		server.metrics.SetDatabaseReady(false)
-		writeJSONValue(responseWriter, http.StatusServiceUnavailable, map[string]string{"status": "not_ready"})
-		return
-	}
-	readinessContext, cancelReadiness := context.WithTimeout(request.Context(), server.readinessTimeout)
-	defer cancelReadiness()
-	if readinessError := server.readinessCheck(readinessContext); readinessError != nil {
-		server.metrics.SetDatabaseReady(false)
-		writeJSONValue(responseWriter, http.StatusServiceUnavailable, map[string]string{"status": "not_ready"})
-		return
-	}
-	server.metrics.SetDatabaseReady(true)
-	writeJSONValue(responseWriter, http.StatusOK, map[string]string{"status": "ready"})
 }

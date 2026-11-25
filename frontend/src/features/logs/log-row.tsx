@@ -3,12 +3,12 @@ import { memo, useId, useMemo, useState } from "react";
 import type { MouseEvent } from "react";
 import type { LogRecord } from "../../shared/types";
 import { Badge, CopyButton, DetailLink, formatTimeParts, logBodyText } from "../../shared/ui";
-import { traceURL } from "../../shared/ui/navigation";
+import { traceURL } from "../../shared/ui/links";
 import { HttpStatusBadge, MethodBadge } from "./log-badges";
 import { LogDetail } from "./log-detail";
 import { normalizeSeverityText, parseHttpLog } from "./log-format";
 
-export interface LogRowProps {
+interface LogRowProps {
   log: LogRecord;
   forceOpen?: boolean;
 }

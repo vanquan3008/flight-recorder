@@ -8,7 +8,7 @@ describe("api", () => {
   it("only adds the JSON content type for a body", async () => {
     const fetchMock = vi.fn().mockImplementation(() => new Response(JSON.stringify({ ok: true }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
-    await expect(api<{ ok: boolean }>("/api/v1/auth/status", "")).resolves.toEqual({ ok: true });
+    await expect(api<{ ok: boolean }>("/api/v1/projects", "")).resolves.toEqual({ ok: true });
     await api("/api/v1/auth/login", "", { method: "POST", body: "{}" });
     const [[, plain], [, withBody]] = fetchMock.mock.calls as [string, RequestInit][];
     expect(new Headers(plain.headers).get("Content-Type")).toBeNull();

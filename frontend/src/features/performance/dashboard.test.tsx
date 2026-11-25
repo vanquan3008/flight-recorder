@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import { AuthContext } from "../../shared/session";
 import { PerformanceDashboard } from "./dashboard";
-import { emptyPerformance } from "./test-data";
+import { emptyPerformance } from "../../testing/performance";
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 

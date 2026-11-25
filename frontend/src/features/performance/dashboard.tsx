@@ -11,7 +11,7 @@ import { QualityDonut, ServiceErrorBars } from "./insights";
 import { PerformanceSkeleton } from "./skeleton";
 import { PerformanceTrend } from "./trend";
 
-export const formatRate = (value: number) => value.toLocaleString("en", { maximumSignificantDigits: 3 });
+const formatRate = (value: number) => value.toLocaleString("en", { maximumSignificantDigits: 3 });
 const percent = (value: number) => `${(value * 100).toFixed(2)}%`;
 const latency = (requests: number, nanos: number) => requests ? (nanos === 0 ? "0ms" : formatDuration(nanos)) : "—";
 const columns = (stats: PerformanceStats) => [

@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import { App } from "../../app/app";
-import { emptyPerformance } from "./test-data";
+import { emptyPerformance } from "../../testing/performance";
 
 afterEach(() => { cleanup(); sessionStorage.clear(); window.location.hash = ""; vi.unstubAllGlobals(); });
 

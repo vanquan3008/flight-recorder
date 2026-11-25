@@ -70,11 +70,11 @@ For an upgrade, pause exporters, stop the backend and let it drain, back up both
 new image's migrations before starting the application. Readiness and retries handle database failures
 after the initial startup checks.
 
-### Backend lifecycle
-
 For each setting, the process environment takes precedence over `backend/.env` and built-in defaults.
 `serve` loads and validates all groups. The event and metric pipelines use the same `TRACEPILOT_QUEUE_*`
-settings. See [Configuration](CONFIGURATION.md) for how renamed variables resolve.
+settings. See [Configuration](CONFIGURATION.md) for names and types.
+
+### Backend lifecycle
 
 Before starting a new version, run `migrate all`. It upgrades PostgreSQL under its own advisory lock,
 upgrades ClickHouse using its own journal, then verifies readiness of both databases. A failed step
@@ -137,7 +137,8 @@ the daily-partitioned `events` table of incident envelopes in a single transacti
 create telemetry tables. `000002_drop_postgres_logs` drops the legacy `logs` table.
 `000003_project_retention` adds the optional project override. `000004_drop_signal_tables` drops the
 legacy `spans`, `metric_data_points`, `services`, and span rollup tables and functions from databases
-created by earlier releases; their rows are not copied to ClickHouse. Each down migration recreates the
+created by earlier releases; their rows are not copied to ClickHouse. `000005_single_platform_admin`
+adds a partial unique index so at most one account can be the super administrator. Each down migration recreates the
 empty tables the previous release expects. The baseline has no down SQL, so a baseline rollback is
 rejected before journal or table changes. Add changes under a new ID and leave applied files intact.
 
@@ -192,22 +193,25 @@ wait for requests. The events and metrics pipelines then drain concurrently with
 (15 seconds), followed by the ClickHouse HTTP client and PostgreSQL pool closing. Allow a container stop
 grace period of at least 35 seconds. Exporters retry unacknowledged data.
 
-## 3. Registration, sign-in, and refresh [3]
+## 3. Accounts, sign-in, and refresh [3]
 
-- **Administrators.** After migration, run `create-admin --email ... --name ... --password-stdin`
-  to provision a super admin in development or production.
+- **Super administrator.** There is exactly one. TracePilot never creates accounts automatically. After
+  migration, in development or production, run `create-admin --email ... --name ... --password-stdin`
+  once to create it.
   - The command connects only to PostgreSQL and checks production TLS and schema readiness.
   - It reads a single password line from stdin, applies the API's password rules, and keeps the
     password out of arguments and logs.
   - It hashes the password with PBKDF2-SHA256 and writes the account and its `user.created` audit
     entry in one transaction.
-  - Each run creates one administrator. An existing email exits with code 1 and leaves that account
-    intact.
-- **Registration.** When `TRACEPILOT_AUTH_ALLOW_REGISTRATION=true`, the form and API create regular
-  accounts. The first registered account gets no extra rights. A super admin can grant
-  `platform_admin` in **Settings → Accounts** or add an account to a project in **Settings → Members**.
-  Passwords must be 12–256 characters. Setting `TRACEPILOT_AUTH_ALLOW_REGISTRATION=false` closes public
-  registration, and `create-admin` still works.
+  - It succeeds only once. With a super administrator present, it exits with code 1 for any email.
+    The `users_single_platform_admin` index refuses a second one even when two commands run at the
+    same time.
+  - The super administrator cannot be disabled, and the API cannot grant or remove the role. Requests
+    that send `platform_admin` to `POST /api/v1/users` or `PATCH /api/v1/users/{id}` are rejected.
+- **Accounts.** There is no self registration. The super administrator creates every account in
+  **Settings → Accounts** (`POST /api/v1/users`) with a temporary password. Until the person replaces
+  it, only `/auth/me` and `/auth/password` answer. Project owners and admins grant access in
+  **Settings → Members**. Passwords must be 12–256 characters.
 - **Sign-in.** Limits apply per IP and allow ten attempts per email during the configured window.
   Unknown emails and wrong passwords get the same message and take the same time to check. On success,
   the server creates a refresh session, sets the `tp_refresh` cookie (`HttpOnly`, `SameSite=Strict`,
@@ -281,7 +285,9 @@ The router enforces the **scope** declared in the route table.
    client. It uses a 10-second handshake, keepalive, and a 30-minute connection lifetime to rebalance
    across replicas. Acquire a processing slot or return 503, then decode within the compressed and
    decompressed body limits. Normalize records, redact sensitive keys, and scrub secret patterns from
-   free text. Count invalid records as `rejected` and continue processing the rest.
+   free text. The top-level `gen_ai.usage.input_tokens` and `gen_ai.usage.output_tokens` counters keep
+   nonnegative integer values unless `TRACEPILOT_INGESTION_REDACTED_KEYS` lists them; other types and
+   nested keys are masked. Count invalid records as `rejected` and continue processing the rest.
 6. Reserve slots and bytes for the whole request before putting events in the pipeline. If space stays
    unavailable during `TRACEPILOT_QUEUE_ENQUEUE_TIMEOUT`, return 503 with `Retry-After`. Rejecting before any event is
    written lets exporters retry safely. Requests larger than the whole queue are admitted in parts.
@@ -291,8 +297,9 @@ The router enforces the **scope** declared in the route table.
    `tracepilot_log_records` and spans to `tracepilot_spans` over HTTP as gzipped JSONEachRow with
    `async_insert=1` and `wait_for_async_insert=1`. It then passes the failed spans and error logs to
    `Database.StoreEvents`, which stores only a compact envelope with empty attributes in `events`,
-   excluding the body and resource and scope attributes. It calls `RecordOccurrences` and writes the
-   outbox in the same PostgreSQL transaction. Healthy telemetry never reaches PostgreSQL. The metrics
+   excluding the body and resource and scope attributes. It inserts envelopes in `(id, occurred_at)`
+   order so replicas acquire row locks consistently, then records occurrences and outbox deliveries
+   in the same PostgreSQL transaction. Healthy telemetry never reaches PostgreSQL. The metrics
    pipeline writes each batch to `tracepilot_metric_points` only. Both stores deduplicate by ID, so a
    retry after a partial failure is safe.
 8. Acknowledge the batch after all steps succeed. Because the databases use separate transactions, a
@@ -314,6 +321,71 @@ before `to`, the page cursor, or the current time, as trace lists do. An outage 
 and an error for telemetry reads. `Database.StoreEvents` skips healthy events, so a log or span routed
 to it by mistake writes nothing. Migrations `000002` and `000004` drop the PostgreSQL telemetry tables
 without copying their rows; spans, metrics, and logs stored only there are lost on upgrade.
+
+### Refund policy demo
+
+Follow the HTTP branch for request execution and the dotted arrow for asynchronous trace export. The SDK selects the direct or Collector route from its configured endpoint.
+
+```mermaid
+flowchart TD
+  Client["Client"] -->|POST /ask| Ask["aidemo starts the server span"]
+  Ask --> Retrieve["policy.retrieve"]
+  Retrieve --> DB[("PostgreSQL SELECT refund_policies")]
+  DB --> Model["Generation via the stub or OpenAI Responses API"]
+  Model --> Response["response.assemble"]
+  Response --> Result["JSON answer and trace_id"]
+
+  Ask -.->|Completed spans| SDK["OpenTelemetry SDK batches spans asynchronously"]
+  SDK -->|Direct OTLP/HTTP, metadata only| Ingest["TracePilot OTLP ingest"]
+  SDK -->|OTLP/HTTP on port 14318| Collector["Collector filters the demo spans"]
+  Collector --> TPQueue["TracePilot export queue and retry"]
+  Collector --> LFQueue["Langfuse mapping, export queue and retry"]
+  TPQueue -->|Metadata only| Ingest
+  LFQueue -->|Metadata and optional demo content| Langfuse["Langfuse"]
+  Retrieve -.->|Policy event| Logs["Go standard-library log worker"]
+  Model -.->|Generation event| Logs
+  Response -.->|Request event| Logs
+  Logs -->|OTLP/HTTP /v1/logs| Ingest
+  Ingest --> Store[("ClickHouse spans and logs")]
+  Store --> Console["Trace detail and Log explorer"]
+```
+
+`cmd/aidemo` runs on loopback as a sample producer for `POST /ask`. Each PostgreSQL connection seeds
+its own temporary `refund_policies` table with version `1` (14 days) and version `2` (30 days). The
+handler extracts incoming W3C `traceparent` when supplied and creates its own server span. The
+`policy.retrieve` span records the selected version and parents the PostgreSQL `SELECT` span. The
+`chat refund-demo` span records the model stub identifiers and prompt version. An explicitly
+configured OpenAI sandbox model uses a `chat openai` client span that records the requested
+model, model reported by the provider, and token usage when supplied. The fixture input and output
+follow the same opt-in capture setting as the stub. A provider timeout returns `504`, and other
+provider failures return `502`. The generation and HTTP spans carry an error status on both
+paths. `response.assemble` records the HTTP status, and the JSON response and stderr request log
+carry the same trace ID. The diagram shows execution order. The server span is the parent of
+retrieval, generation, and response assembly.
+
+The Go OpenTelemetry SDK exports spans in batches over OTLP/HTTP. The retrieval, generation, and
+request completion events write to stderr and use the active span IDs. When the log endpoint is
+configured, the Go standard-library worker also exports those events directly to `/v1/logs` through a
+bounded queue. Both signals use TracePilot's authenticated ingest and ClickHouse storage. The console
+can show correlated logs even when a trace has no stored spans. Direct export carries metadata, and
+the HTTP caller receives the refund answer. [Run the demo](../README.md#try-the-refund-policy-ai-tracing-demo)
+
+### AI demo Collector
+
+The optional loopback Collector under `deploy/aidemo` accepts the known sample service and span
+names. It keeps approved metadata and clears free-text status messages, events, links, and trace
+state. The TracePilot pipeline strips input, output, and token count fields before it exports with
+the ingest token and environment. The Langfuse pipeline keeps the same trace and span IDs, maps
+retrieval and generation types, and exports the reported model, prompt version, and available token
+counts. When the demo's content capture is enabled, it maps the fixture prompt and the model
+output onto the generation observation and maps the returned answer onto the response observation.
+String values are bounded and oversized generation input is omitted. A failed generation can
+carry the captured input with an empty output field.
+
+Both exporters have their own bounded queue and retry policy. Queue overflow can reject an
+OTLP request after the other exporter has accepted its copy. The demo's asynchronous SDK exporter
+keeps that retry path separate from `POST /ask`. This Collector runs the traces pipelines. The
+demo's log sender uses its own direct TracePilot endpoint when configured. [Run the Collector](../README.md#send-the-demo-trace-to-both-tracepilot-and-langfuse)
 
 ## 6. Incident lifecycle [6]
 
@@ -354,13 +426,16 @@ observation-weighted histogram mean. A counter's new start time marks a reset.
 
 Before each pass the worker refreshes the minute rollups under a separate 20-second deadline. A
 materialized view stamps `tracepilot_span_minute_marks` with the ClickHouse clock for every minute that
-receives spans, including retries and late spans. The refresh selects up to 1,000 closed minutes from
+receives spans, including retries and late spans. Each refresh pass selects up to 1,000 closed minutes from
 the last eight days whose latest mark is newer than their last computation in
 `tracepilot_span_minute_done`, rebuilds each one from deduplicated spans into `tracepilot_span_minutes`
 (`ReplacingMergeTree` keyed by minute and dimensions, with t-digest latency states), and records the
 computation time five seconds before the refresh began. Rebuilding a whole minute never double-counts
-retries, and a span that arrives while its minute is being rebuilt marks it dirty again. A failed
-refresh leaves detection unaffected.
+retries, and a span that arrives while its minute is being rebuilt marks it dirty again. The worker
+repeats passes while a pass returns a full batch, so a backlog from many active environments or a
+catch-up after downtime drains within the deadline instead of growing every minute. A failed refresh
+leaves detection unaffected and its minutes dirty, so queries read them from raw spans.
+`tracepilot_span_rollup_runs_total{outcome}` and `tracepilot_span_rollup_minutes_total` report the refresh.
 
 `RequestPerformance` summarizes SERVER spans for the window, each service, each endpoint, and each
 chart bucket in one `GROUPING SETS` query. Windows of an hour or longer read clean minutes fully
@@ -399,7 +474,11 @@ user account keys without interrupting OTLP exporters.
 ## 9. Webhooks and the outbox [9]
 
 Opening or reopening an incident queues a delivery in the outbox **in the same transaction** as
-ingestion. The worker claims deliveries with `FOR UPDATE SKIP LOCKED`. The six-minute lease allows
+ingestion, and so does an operator's status change that notifies. Each delivery ID derives from the
+webhook and the domain event that caused it (the incident for an opening, the status change for a
+reopen or a manual transition), not from the payload. Reprocessing one event therefore queues nothing
+new, while a second resolve with an identical payload still notifies. The worker claims deliveries with
+`FOR UPDATE SKIP LOCKED`. The six-minute lease allows
 another attempt after a worker crash. The worker checks the destination URL, requires HTTPS, blocks
 private and metadata address ranges, skips redirects, and signs the request with HMAC. Failed attempts
 follow the retry policy until delivery succeeds or reaches `failed`. Consumers should expect
@@ -491,8 +570,12 @@ text. SSE also includes `severity_number`.
   opens the inspector on the right on wide screens and in a bottom sheet on narrower screens. Use clicks,
   arrow keys, Home, or End to switch between Attributes, Resource, Events, and Raw. Attribute values
   use the full inspector width. Related logs span the full card below the waterfall and inspector,
-  with full contents and copy controls on each row. Local log filters search the loaded
-  logs. The Log explorer queries the server while retaining the trace or span filter and the time range.
+  with full contents and copy controls on each row. Correlated logs can be read while spans load
+  or after a trace lookup fails. Check for spans again when they may still be arriving.
+  Local log filters search the loaded logs. Log explorer filters server results by trace and, when
+  available, span ID. Body search prompts for a window of at most 24 hours before sending the query.
+  Trace links open the selected span directly when its ID is available. Back links restore the
+  originating scope, filters, incident tab, and selected span.
 - **Explorer and Overview.** Cursor-based tables fetch more on request, up to 20 pages per query, then
   ask the user to narrow the filters. Timestamps show millisecond precision in the local time zone.
 - **Span precision.** The waterfall positions spans from their nanosecond start and end times and
@@ -503,6 +586,20 @@ text. SSE also includes `severity_number`.
   Overview labels counts from the loaded page and gets aggregate error signals from Performance for the
   same window. It avoids inferring overall system health from a partial incident page or an empty
   traffic result.
+
+```mermaid
+flowchart LR
+  Incidents["Incident workspace"] -->|Linked trace| Trace["Trace detail"]
+  Trace --> Flow["Request summary and service self-time"]
+  Flow -->|On demand| Map["Service map"]
+  Trace -->|Load spans| Waterfall["Virtualized waterfall"]
+  Trace -->|Load independently| Logs["Correlated logs"]
+  Waterfall -->|Select a span| Inspector["Span inspector"]
+  Inspector -->|Logs for this span| Explorer["Log explorer"]
+  Logs --> Explorer
+  Explorer -->|Open trace or return| Inspector
+  Trace -->|Back to incident tab| Incidents
+```
 
 ## 12. Known limits
 

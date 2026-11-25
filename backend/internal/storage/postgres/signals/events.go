@@ -1,10 +1,12 @@
 package signals
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/vanquan3008/tracepilot/internal/config"
@@ -23,8 +25,6 @@ import (
 // event content wrap telemetry.ErrInvalidEvent.
 func (store *SignalStore) StoreEvents(ctx context.Context, ingestion config.IngestionConfig, events []telemetry.Event) error {
 	var failures []telemetry.Event
-	queue := &pgbatch.Queue{}
-	writes := sqlcstore.New(queue)
 	for _, event := range events {
 		if event.ProjectID != ingestion.ProjectID || event.Environment != ingestion.EnvironmentName {
 			return errors.New("event ingestion scope mismatch")
@@ -33,13 +33,21 @@ func (store *SignalStore) StoreEvents(ctx context.Context, ingestion config.Inge
 			continue
 		}
 		event.Attributes = map[string]any{}
-		if err := queueEventEnvelope(ctx, writes, ingestion, event); err != nil {
-			return err
-		}
 		failures = append(failures, event)
 	}
 	if len(failures) == 0 {
 		return nil
+	}
+	// Replicas can receive the same batch in different orders. Acquire row locks in primary key order.
+	slices.SortStableFunc(failures, func(left, right telemetry.Event) int {
+		return cmp.Or(cmp.Compare(left.ID, right.ID), left.Timestamp.Compare(right.Timestamp))
+	})
+	queue := &pgbatch.Queue{}
+	writes := sqlcstore.New(queue)
+	for _, event := range failures {
+		if err := queueEventEnvelope(ctx, writes, ingestion, event); err != nil {
+			return err
+		}
 	}
 	return markInvalidEvents(pgx.BeginFunc(ctx, store.pool, func(transaction pgx.Tx) error {
 		if err := queue.Send(ctx, transaction); err != nil {

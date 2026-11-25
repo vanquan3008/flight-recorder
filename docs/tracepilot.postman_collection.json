@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "TracePilot API",
-    "description": "Smoke and hardening tests for TracePilot.\n\n1. Start TracePilot (`go -C backend run ./cmd/tracepilot serve`) and set the variables below if your ports differ.\n2. Run folders 1-6 in order with the Collection Runner (or send requests one by one).\n3. Folder 2 registers `accountEmail` (or signs in), makes a project for the run and an ingest token for it. Telemetry is sent with that ingest token; everything is read back as the account that owns the project.\n\nThere are no API keys: people sign in with a JWT access token, applications send telemetry with an ingest token. Production endpoints use HTTPS: change baseUrl and otlpUrl.",
+    "description": "Smoke and hardening tests for TracePilot.\n\n1. Start TracePilot (`go -C backend run ./cmd/tracepilot serve`) and set the variables below if your ports differ.\n2. Run folders 1-6 in order with the Collection Runner (or send requests one by one).\n3. Folder 2 signs in as the super administrator (`accountEmail`, created by `create-admin`), makes a project for the run and an ingest token for it. Telemetry is sent with that ingest token; everything is read back as the account that owns the project.\n\nThere are no API keys: people sign in with a JWT access token, applications send telemetry with an ingest token. Production endpoints use HTTPS: change baseUrl and otlpUrl.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "event": [
@@ -32,6 +32,10 @@
     {
       "key": "otlpUrl",
       "value": "http://localhost:4318"
+    },
+    {
+      "key": "aiDemoUrl",
+      "value": "http://127.0.0.1:8090"
     },
     {
       "key": "runId",
@@ -207,87 +211,8 @@
     },
     {
       "name": "2. Account, project and ingest token",
-      "description": "Registers (or signs in) and makes a project for this run. Everything after this folder works in that project, so a run never touches other people's data.\n\nTo provision an administrator after migration, use `tracepilot create-admin`. Set accountEmail and accountPassword to an existing account, or leave the variables at their defaults to register a test account when registration is open.",
+      "description": "Signs in as the super administrator and makes a project for this run. Everything after this folder works in that project, so a run never touches other people's data.\n\nThere is no self registration. Set accountEmail/accountPassword to the one super administrator that create-admin made; it creates every other account. Server startup does not create a default project.",
       "item": [
-        {
-          "name": "Auth status",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{baseUrl}}/api/v1/auth/status",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "v1",
-                "auth",
-                "status"
-              ]
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
-                  "pm.test('says whether registration is open', function () { pm.expect(pm.response.json().registration_open).to.be.a('boolean'); });"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Register (or already registered)",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "X-TracePilot-Refresh",
-                "value": "1"
-              },
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/api/v1/auth/register",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "v1",
-                "auth",
-                "register"
-              ]
-            },
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"email\": \"{{accountEmail}}\",\n  \"display_name\": \"Postman Owner\",\n  \"password\": \"{{accountPassword}}\"\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('created, already registered, or registration closed', function () { pm.expect(pm.response.code).to.be.oneOf([201, 409, 403]); });"
-                ]
-              }
-            }
-          ]
-        },
         {
           "name": "Sign in",
           "request": {
@@ -410,7 +335,7 @@
                 }
               }
             },
-            "description": "Any registered account may create a project; a regular account may own up to ten."
+            "description": "Any signed-in account may create a project; a regular account may own up to ten."
           },
           "event": [
             {
@@ -616,14 +541,14 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"resourceSpans\": [\n    {\n      \"resource\": {\n        \"attributes\": [\n          {\n            \"key\": \"service.name\",\n            \"value\": {\n              \"stringValue\": \"postman-checkout\"\n            }\n          }\n        ]\n      },\n      \"scopeSpans\": [\n        {\n          \"scope\": {\n            \"name\": \"postman\"\n          },\n          \"spans\": [\n            {\n              \"traceId\": \"{{traceId}}\",\n              \"spanId\": \"{{spanId}}\",\n              \"name\": \"POST /checkout?token=abc123\",\n              \"kind\": 2,\n              \"startTimeUnixNano\": \"{{startNs}}\",\n              \"endTimeUnixNano\": \"{{endNs}}\",\n              \"attributes\": [\n                {\n                  \"key\": \"http.response.status_code\",\n                  \"value\": {\n                    \"intValue\": \"500\"\n                  }\n                }\n              ],\n              \"events\": [\n                {\n                  \"name\": \"exception\",\n                  \"timeUnixNano\": \"{{midNs}}\",\n                  \"attributes\": [\n                    {\n                      \"key\": \"exception.type\",\n                      \"value\": {\n                        \"stringValue\": \"PaymentError\"\n                      }\n                    },\n                    {\n                      \"key\": \"exception.message\",\n                      \"value\": {\n                        \"stringValue\": \"card declined api_key=sk_live_abc123\"\n                      }\n                    }\n                  ]\n                }\n              ],\n              \"status\": {\n                \"code\": 2,\n                \"message\": \"payment failed password=hunter2\"\n              }\n            }\n          ]\n        }\n      ]\n    }\n  ]\n}",
+              "raw": "{\n  \"resourceSpans\": [\n    {\n      \"resource\": {\n        \"attributes\": [\n          {\n            \"key\": \"service.name\",\n            \"value\": {\n              \"stringValue\": \"postman-checkout\"\n            }\n          }\n        ]\n      },\n      \"scopeSpans\": [\n        {\n          \"scope\": {\n            \"name\": \"postman\"\n          },\n          \"spans\": [\n            {\n              \"traceId\": \"{{traceId}}\",\n              \"spanId\": \"{{spanId}}\",\n              \"name\": \"POST /checkout?token=abc123\",\n              \"kind\": 2,\n              \"startTimeUnixNano\": \"{{startNs}}\",\n              \"endTimeUnixNano\": \"{{endNs}}\",\n              \"attributes\": [\n                {\n                  \"key\": \"http.response.status_code\",\n                  \"value\": {\n                    \"intValue\": \"500\"\n                  }\n                },\n                {\n                  \"key\": \"gen_ai.usage.input_tokens\",\n                  \"value\": {\n                    \"intValue\": \"128\"\n                  }\n                }\n              ],\n              \"events\": [\n                {\n                  \"name\": \"exception\",\n                  \"timeUnixNano\": \"{{midNs}}\",\n                  \"attributes\": [\n                    {\n                      \"key\": \"exception.type\",\n                      \"value\": {\n                        \"stringValue\": \"PaymentError\"\n                      }\n                    },\n                    {\n                      \"key\": \"exception.message\",\n                      \"value\": {\n                        \"stringValue\": \"card declined api_key=sk_live_abc123\"\n                      }\n                    }\n                  ]\n                }\n              ],\n              \"status\": {\n                \"code\": 2,\n                \"message\": \"payment failed password=hunter2\"\n              }\n            }\n          ]\n        }\n      ]\n    }\n  ]\n}",
               "options": {
                 "raw": {
                   "language": "json"
                 }
               }
             },
-            "description": "Status 500 with exception. The span name, status message and exception.message contain credentials that must be stored as [REDACTED]. The failed span opens an incident; PostgreSQL keeps only its envelope without attributes, and the full span stays in ClickHouse."
+            "description": "Status 500 with exception. The span name, status message and exception.message contain credentials that must be stored as [REDACTED]. The failed span opens an incident; PostgreSQL keeps only its envelope without attributes, and the full span stays in ClickHouse. The gen_ai.usage.input_tokens counter is a count, not a credential, so it stays readable."
           },
           "event": [
             {
@@ -883,7 +808,12 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });"
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "const failedSpan = (pm.response.json().spans || []).find(function (span) { return span.span_id === pm.collectionVariables.get('spanId'); });",
+                  "if (failedSpan) {",
+                  "  pm.test('usage counter survives redaction', function () { pm.expect(failedSpan.attributes['gen_ai.usage.input_tokens']).to.eql('128'); });",
+                  "  pm.test('span secrets stay masked', function () { pm.expect(JSON.stringify(failedSpan)).to.not.include('hunter2'); });",
+                  "}"
                 ]
               }
             }
@@ -892,6 +822,7 @@
         {
           "name": "Trace: correlated logs",
           "request": {
+            "description": "Lookup works independently of span availability. Paste the trace_id from POST /ask and select the same project and environment. Add spanId to isolate one operation. Hexadecimal trace and span IDs are case-insensitive.",
             "method": "GET",
             "header": [
               {
@@ -1791,7 +1722,7 @@
     },
     {
       "name": "6. Roles, members and sessions",
-      "description": "Two people in one project: the owner made it, the user was let in. Then the refresh token rotation and sign-out.\n\nSend the refresh requests with the cookie jar enabled (Postman app; newman keeps it for a run). The cookie belongs to the account that signed in or registered last.",
+      "description": "Two people in one project: the owner made it, the user was let in. Then the refresh token rotation and sign-out.\n\nSend the refresh requests with the cookie jar enabled (Postman app; newman keeps it for a run). The cookie belongs to the account that signed in last.",
       "item": [
         {
           "name": "A wrong password is refused",
@@ -1992,7 +1923,58 @@
           ]
         },
         {
-          "name": "Register a second person",
+          "name": "The super administrator creates a second person",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"postman-user-{{runId}}@example.test\",\n  \"display_name\": \"Postman User\",\n  \"password\": \"postman-temporary-passphrase\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Only the super administrator creates accounts. The person must replace the temporary password before anything else works."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('created', function () { pm.response.to.have.status(201); });",
+                  "const b = pm.response.json();",
+                  "pm.collectionVariables.set('memberUserId', b.user.id);",
+                  "pm.test('never a second super administrator', function () { pm.expect(b.user.platform_admin).to.equal(false); pm.expect(b.user.must_change_password).to.equal(true); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "The second person signs in with the temporary password",
           "request": {
             "method": "POST",
             "header": [
@@ -2006,7 +1988,7 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/api/v1/auth/register",
+              "raw": "{{baseUrl}}/api/v1/auth/login",
               "host": [
                 "{{baseUrl}}"
               ],
@@ -2014,19 +1996,18 @@
                 "api",
                 "v1",
                 "auth",
-                "register"
+                "login"
               ]
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"email\": \"postman-user-{{runId}}@example.test\",\n  \"display_name\": \"Postman User\",\n  \"password\": \"postman-user-passphrase\"\n}",
+              "raw": "{\n  \"email\": \"postman-user-{{runId}}@example.test\",\n  \"password\": \"postman-temporary-passphrase\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
                 }
               }
-            },
-            "description": "Needs registration to be open."
+            }
           },
           "event": [
             {
@@ -2034,8 +2015,61 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('created', function () { pm.expect(pm.response.code).to.be.oneOf([201, 403]); });",
-                  "if (pm.response.code === 201) { const b = pm.response.json(); pm.collectionVariables.set('memberToken', b.access_token); pm.collectionVariables.set('memberUserId', b.user.id); }"
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.collectionVariables.set('memberToken', pm.response.json().access_token);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "The second person replaces the temporary password",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{memberToken}}"
+              },
+              {
+                "key": "X-TracePilot-Refresh",
+                "value": "1"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/password",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "password"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"current_password\": \"postman-temporary-passphrase\",\n  \"new_password\": \"postman-user-passphrase\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.collectionVariables.set('memberToken', pm.response.json().access_token);"
                 ]
               }
             }
@@ -2066,7 +2100,7 @@
                 "traces"
               ]
             },
-            "description": "Registering does not give access to anyone's project."
+            "description": "A new account has no access to anyone's project until it is added."
           },
           "event": [
             {
@@ -2453,6 +2487,96 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('status is 401', function () { pm.response.to.have.status(401); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Optional - Refund policy AI demo",
+      "description": "Start cmd/aidemo with a disposable database, direct OTLP trace and log endpoints, and no TRACEPILOT_AI_DEMO_OPENAI_MODEL for deterministic results. Compare the HTTP 200 responses. Use each trace_id in the Trace: detail and Trace: correlated logs requests and expect policy.retrieved, generation.completed, and request.completed. Allow batches to arrive independently. For the optional OpenAI sandbox run, inspect chat openai. A model timeout returns 504, and other provider failures return 502 with a trace ID.",
+      "item": [
+        {
+          "name": "Ask with a stale refund policy",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"policy_version\":1}"
+            },
+            "url": {
+              "raw": "{{aiDemoUrl}}/ask",
+              "host": [
+                "{{aiDemoUrl}}"
+              ],
+              "path": [
+                "ask"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200 with stale policy and trace ID', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  const result = pm.response.json();",
+                  "  pm.expect(result.policy_version).to.eql(1);",
+                  "  pm.expect(result.answer).to.include('14 days');",
+                  "  pm.expect(result.trace_id).to.match(/^[0-9a-f]{32}$/);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Ask with the latest refund policy",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            },
+            "url": {
+              "raw": "{{aiDemoUrl}}/ask",
+              "host": [
+                "{{aiDemoUrl}}"
+              ],
+              "path": [
+                "ask"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200 with latest policy and trace ID', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  const result = pm.response.json();",
+                  "  pm.expect(result.policy_version).to.eql(2);",
+                  "  pm.expect(result.answer).to.include('30 days');",
+                  "  pm.expect(result.trace_id).to.match(/^[0-9a-f]{32}$/);",
+                  "});"
                 ]
               }
             }

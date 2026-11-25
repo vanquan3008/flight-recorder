@@ -2,6 +2,7 @@ import { useId, useMemo, useState } from "react";
 import type { TopologyEdge, TopologyNode } from "../types";
 import { edgeLabelPoint, edgePath, layoutTopology, nodeHeight, nodeWidth, truncate } from "./graph-layout";
 import { formatDuration } from "../ui";
+import { kindClass, plural, typeDotBg, typeStripeFill } from "./node-style";
 
 type Props = { nodes: TopologyNode[]; edges: TopologyEdge[]; selected: string; onSelect: (id: string) => void; label?: string };
 
@@ -9,23 +10,7 @@ type NodeStats = { callsIn: number; callsOut: number; errorsOut: number; errorsI
 
 // Labels would collide on a busy graph, so a call shows its numbers only when focused or hovered.
 const compact = new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 });
-const kindClass = (type: string) => type.toLowerCase().replace(/[^a-z0-9]/g, "");
-function typeDotBg(type: string): string {
-  const k = kindClass(type);
-  if (k === "external") return "bg-violet";
-  if (k === "database" || k === "db") return "bg-cyan";
-  if (k === "messaging" || k === "queue") return "bg-warning";
-  return "bg-accent";
-}
-function typeStripeFill(type: string): string {
-  const k = kindClass(type);
-  if (k === "external") return "fill-violet";
-  if (k === "database" || k === "db") return "fill-cyan";
-  if (k === "messaging" || k === "queue") return "fill-warning";
-  return "fill-accent";
-}
 const edgeKey = (edge: TopologyEdge) => `${edge.source_node_id}>${edge.target_node_id}>${edge.kind}`;
-const plural = (value: number, noun: string) => `${value.toLocaleString()} ${noun}${value === 1 ? "" : "s"}`;
 
 /** Left-to-right caller → callee graph shared by the topology page and the per-trace service flow. */
 export function ServiceGraph({ nodes, edges, selected, onSelect, label = "Service graph" }: Props) {

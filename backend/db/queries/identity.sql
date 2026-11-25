@@ -5,9 +5,6 @@ INSERT INTO users (id, email, display_name, password_hash, platform_admin, must_
 VALUES (@id, @email, @display_name, @password_hash, @platform_admin, @must_change_password)
 RETURNING *;
 
--- name: UsersExist :one
-SELECT EXISTS (SELECT 1 FROM users);
-
 -- name: GetUser :one
 SELECT * FROM users WHERE id = @id;
 
@@ -17,15 +14,13 @@ SELECT * FROM users WHERE email = @email;
 -- name: LockUser :one
 SELECT * FROM users WHERE id = @id FOR UPDATE;
 
--- name: CountOtherActivePlatformAdmins :one
-SELECT count(*) FROM users
-WHERE platform_admin AND disabled_at IS NULL AND id <> @id;
+-- name: PlatformAdminExists :one
+SELECT EXISTS (SELECT 1 FROM users WHERE platform_admin);
 
 -- Revocation markers advance even for concurrent changes or a clock moving backwards.
 -- name: UpdateUser :one
 UPDATE users SET
     display_name   = COALESCE(sqlc.narg(display_name), display_name),
-    platform_admin = COALESCE(sqlc.narg(platform_admin)::boolean, platform_admin),
     disabled_at    = CASE
         WHEN sqlc.narg(disabled)::boolean IS NULL THEN disabled_at
         WHEN sqlc.narg(disabled)::boolean THEN COALESCE(disabled_at, now())

@@ -9,5 +9,7 @@ TracePilot collects OpenTelemetry traces, logs, and metrics to help you monitor 
 | PostgreSQL | Stores accounts, projects, tokens, incidents, webhooks, and replays. |
 | ClickHouse | Stores logs, traces, and metrics and serves their queries and anomaly signals. |
 | Deployment (`deploy/`) | Configures the backend and console for production. |
+| AI tracing demo (`backend/cmd/aidemo`) | Reads fixture policies from disposable PostgreSQL, runs a deterministic stub or an opt-in OpenAI sandbox model, and exports OpenTelemetry traces. |
+| Demo Collector (`deploy/aidemo`) | Routes operational spans to TracePilot and model observations to Langfuse for the local pilot. |
 
-See the [quick start](../README.md#quick-start) or [application flow](FLOW.md).
+See the [quick start](../README.md#quick-start), [application flow](FLOW.md), or [AI demo flow](FLOW.md#refund-policy-demo).

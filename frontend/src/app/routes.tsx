@@ -1,7 +1,7 @@
 import { lazy, Suspense } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { ErrorBoundary } from "../shared/ui";
-import { Welcome } from "./welcome";
+import { Welcome } from "./access/welcome";
 
 const FlowPage = lazy(() => import("../features/flow/page").then((m) => ({ default: m.FlowPage })));
 const IncidentPage = lazy(() => import("../features/operations/page").then((m) => ({ default: m.IncidentPage })));

@@ -107,6 +107,20 @@ func (registry *Registry) ObserveIncidentDetection(duration time.Duration, count
 	registry.detectionRuns.WithLabelValues("empty").Inc()
 }
 
+// ObserveSpanRollup records one refresh: the minutes it recomputed and
+// whether it failed. Failures leave minutes dirty, so queries read them from
+// raw spans; a steady error rate means slower, not wrong, performance pages.
+func (registry *Registry) ObserveSpanRollup(minutes int, failed bool) {
+	if minutes > 0 {
+		registry.rollupMinutes.Add(float64(minutes))
+	}
+	outcome := "ok"
+	if failed {
+		outcome = "error"
+	}
+	registry.rollupRuns.WithLabelValues(outcome).Inc()
+}
+
 func (registry *Registry) Handler() http.Handler {
 	return promhttp.HandlerFor(registry.prometheusRegistry, promhttp.HandlerOpts{})
 }

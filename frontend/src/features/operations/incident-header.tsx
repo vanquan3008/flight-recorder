@@ -3,7 +3,7 @@ import type { Incident } from "../../shared/types";
 import { BackLink, Badge, CopyButton, DetailLink, formatTime } from "../../shared/ui";
 import { secondaryButtonClass } from "../../shared/ui/styles";
 
-export const incidentTransitions: Record<string, string[]> = {
+const incidentTransitions: Record<string, string[]> = {
   OPEN: ["INVESTIGATING", "RESOLVED", "IGNORED"], INVESTIGATING: ["RESOLVED", "IGNORED"],
   RESOLVED: ["OPEN"], IGNORED: ["OPEN"],
 };

@@ -26,13 +26,7 @@ func configEnvironment() []string {
 
 func clearConfigEnvironment(t *testing.T) {
 	t.Helper()
-	names := configEnvironment()
-	for _, name := range names {
-		if legacy := legacyEnvironmentName(name); legacy != "" {
-			names = append(names, legacy)
-		}
-	}
-	for _, name := range names {
+	for _, name := range configEnvironment() {
 		originalValue, existed := os.LookupEnv(name)
 		if unsetError := os.Unsetenv(name); unsetError != nil {
 			t.Fatal(unsetError)

@@ -14,7 +14,7 @@ import {
   formatTime,
   useTimeWindow,
 } from "../../shared/ui";
-import { contextURL } from "../../shared/ui/navigation";
+import { contextURL } from "../../shared/ui/links";
 import { Onboarding } from "../onboarding/onboarding";
 import { StatusHero, overviewStatus } from "./hero";
 import { useOverviewData } from "./use-overview-data";

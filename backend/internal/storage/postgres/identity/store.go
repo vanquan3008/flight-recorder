@@ -24,9 +24,10 @@ const (
 	sessionMaxTTL  = 30 * 24 * time.Hour
 
 	// Advisory lock keys serialize checks that span several rows.
-	setupLockKey      int64 = 7_203_411_004
 	membershipLockKey int64 = 7_203_411_005
 	adminLockKey      int64 = 7_203_411_006
+
+	singlePlatformAdminIndex = "users_single_platform_admin"
 )
 
 type IdentityStore struct {

@@ -73,7 +73,7 @@ func (store *AnalyticsStore) PersistObservabilityIncident(ctx context.Context, i
 		if !created {
 			return nil
 		}
-		return outbox.EnqueueDeliveries(ctx, transaction, ingestion.ProjectID, "incident.opened", map[string]any{
+		return outbox.EnqueueDeliveries(ctx, transaction, ingestion.ProjectID, "incident.opened", "opened:"+incidentID, map[string]any{
 			"incident_id": incidentID, "environment_id": ingestion.EnvironmentID, "service": service,
 			"title": service + " observability baseline failed", "severity": "ERROR",
 		})

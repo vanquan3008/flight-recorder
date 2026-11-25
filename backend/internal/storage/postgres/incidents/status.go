@@ -42,8 +42,9 @@ func (store *IncidentStore) UpdateIncidentStatus(ctx context.Context, projectID,
 		}); setError != nil {
 			return fmt.Errorf("set incident status: %w", setError)
 		}
+		changeID := telemetry.DeterministicID(changedAt, "incident-status", projectID, incidentID, previous, status, actor.Label())
 		if insertError := queries.InsertIncidentStatusChange(ctx, sqlcstore.InsertIncidentStatusChangeParams{
-			ID:        telemetry.DeterministicID(changedAt, "incident-status", projectID, incidentID, previous, status, actor.Label()),
+			ID:        changeID,
 			ProjectID: projectID, IncidentID: incidentID, PreviousStatus: previous, Status: status,
 			ActorUserID: pgvalue.OrNil(actor.UserID), ChangedAt: changedAt,
 		}); insertError != nil {
@@ -53,7 +54,7 @@ func (store *IncidentStore) UpdateIncidentStatus(ctx context.Context, projectID,
 		if !notifies {
 			return nil
 		}
-		return outbox.EnqueueDeliveries(ctx, transaction, projectID, eventType, map[string]any{
+		return outbox.EnqueueDeliveries(ctx, transaction, projectID, eventType, changeID, map[string]any{
 			"incident_id": incidentID, "environment_id": environmentID,
 			"previous_status": previous, "status": status, "actor_user_id": actor.UserID,
 		})

@@ -276,8 +276,7 @@ for (const theme of ["Light", "Dark"] as const) {
   }
 }
 
-test("keeps sign-in, registration and reduced-motion forms styled without component CSS", async ({ page }, testInfo) => {
-  await page.route("**/api/v1/auth/status", (route) => route.fulfill({ contentType: "application/json", body: JSON.stringify({ registration_open: true }) }));
+test("keeps the sign-in and reduced-motion forms styled without component CSS", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto("/");
@@ -286,11 +285,9 @@ test("keeps sign-in, registration and reduced-motion forms styled without compon
   for (const theme of ["Light", "Dark"]) {
     await page.getByRole("button", { name: `${theme} theme` }).click();
     await expect(page.getByLabel("Email", { exact: true })).toHaveCSS("border-top-width", "1px");
-    await page.getByRole("button", { name: "Register", exact: true }).click();
-    await expect(page.getByLabel("Display name", { exact: true })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Create account", exact: true })).not.toHaveCSS("background-image", "none");
+    await expect(page.getByRole("button", { name: "Register", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Sign in", exact: true })).not.toHaveCSS("background-image", "none");
     expect(await page.evaluate(() => document.body.scrollWidth)).toBeLessThanOrEqual(390);
-    await page.screenshot({ path: testInfo.outputPath(`register-${theme.toLowerCase()}.png`), animations: "disabled" });
-    await page.getByRole("button", { name: "Sign in", exact: true }).first().click();
+    await page.screenshot({ path: testInfo.outputPath(`sign-in-${theme.toLowerCase()}.png`), animations: "disabled" });
   }
 });

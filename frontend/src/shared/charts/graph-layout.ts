@@ -7,8 +7,8 @@ const rowGap = 30;
 const margin = 24;
 const bandGap = 56;
 
-export type PlacedNode = TopologyNode & { x: number; y: number; layer: number; isolated: boolean };
-export type TopologyLayout = { nodes: PlacedNode[]; width: number; height: number; byID: Map<string, PlacedNode> };
+type PlacedNode = TopologyNode & { x: number; y: number; layer: number; isolated: boolean };
+type TopologyLayout = { nodes: PlacedNode[]; width: number; height: number; byID: Map<string, PlacedNode> };
 
 /**
  * Layered left-to-right layout: callers sit left of their callees. Cycles are tolerated

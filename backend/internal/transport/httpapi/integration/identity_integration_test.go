@@ -18,6 +18,7 @@ import (
 	"github.com/vanquan3008/tracepilot/internal/observability/metrics"
 	"github.com/vanquan3008/tracepilot/internal/storage/postgres"
 	"github.com/vanquan3008/tracepilot/internal/transport/httpapi"
+	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/api"
 )
 
 func TestAccountsProjectsAndTokensIntegration(t *testing.T) {
@@ -49,11 +50,11 @@ func TestAccountsProjectsAndTokensIntegration(t *testing.T) {
 	if err := database.EnsureIngestionScope(ctx, ingestion); err != nil {
 		t.Fatal(err)
 	}
-	adminEmail, aliceEmail, bobEmail := "admin-"+run+"@example.test", "alice-"+run+"@example.test", "bob-"+run+"@example.test"
+	aliceEmail, bobEmail := "alice-"+run+"@example.test", "bob-"+run+"@example.test"
 	t.Cleanup(func() {
 		for _, statement := range []string{
 			"DELETE FROM projects WHERE slug LIKE 'acme-" + run + "%' OR id = '" + projectID + "'",
-			"DELETE FROM users WHERE email IN ('" + adminEmail + "', '" + aliceEmail + "', '" + bobEmail + "')",
+			"DELETE FROM users WHERE email IN ('" + aliceEmail + "', '" + bobEmail + "')",
 		} {
 			if _, err := cleanup.Exec(ctx, statement); err != nil {
 				t.Error(err)
@@ -61,27 +62,30 @@ func TestAccountsProjectsAndTokensIntegration(t *testing.T) {
 		}
 	})
 	server := httpapi.New(config.Config{
-		HTTP: config.HTTPConfig{ManagementMaxBodyBytes: 4096}, Ingestion: ingestion, Auth: config.AuthConfig{JWTSecret: integrationJWTSecret, AllowRegistration: true},
+		HTTP: config.HTTPConfig{ManagementMaxBodyBytes: 4096}, Ingestion: ingestion, Auth: config.AuthConfig{JWTSecret: integrationJWTSecret},
 		Database: config.DatabaseConfig{ReadinessTimeout: time.Second}, App: config.AppConfig{ShutdownTimeout: time.Second},
-	}, slog.New(slog.NewTextHandler(io.Discard, nil)), func(context.Context) error { return nil }, metrics.New("test", "test", "test"), postgresBackend{database}, nil)
+	}, httpapi.Dependencies{Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), Metrics: metrics.New("test", "test", "test"), Readiness: func(context.Context) error { return nil }, Store: postgresBackend{database}})
 	router := http.NewServeMux()
 	server.RegisterAPIRoutes(router)
 
-	// Anyone can register; nobody sees a project until they make one or are let in.
-	alice := &client{t: t, handler: router}
-	status, body := alice.register(aliceEmail, "Alice", "a-long-enough-passphrase")
-	if status != http.StatusCreated || alice.access == "" || alice.refresh == "" {
-		t.Fatalf("register: %d %v", status, body)
+	// Only the super administrator makes accounts; nobody can sign themselves up.
+	admin := &client{t: t, handler: router, access: newIntegrationAdmin(t, database)}
+	if status, _ := (&client{t: t, handler: router}).do(http.MethodPost, "/api/v1/auth/register", `{"email":"self-`+run+`@example.test","display_name":"Self","password":"a-long-enough-passphrase"}`, ""); status == http.StatusCreated || status == http.StatusOK {
+		t.Fatalf("self registration: status %d; only the super administrator creates accounts", status)
 	}
-	aliceIsAdmin, _ := nested(body, "user", "platform_admin").(bool)
-	if aliceIsAdmin {
-		t.Fatalf("platform_admin = true; newly registered accounts must not be super administrator")
+	alice, _ := admin.createAccount(aliceEmail, "Alice", "a-long-enough-passphrase")
+	status, body := alice.do(http.MethodGet, "/api/v1/auth/me", "", "")
+	if aliceIsAdmin, _ := nested(body, "user", "platform_admin").(bool); status != http.StatusOK || aliceIsAdmin {
+		t.Fatalf("me: %d %v; an account the super administrator creates is never a super administrator", status, body)
 	}
-	if status, _ = (&client{t: t, handler: router}).register(strings.ToUpper(aliceEmail), "Again", "a-long-enough-passphrase"); status != http.StatusConflict {
-		t.Fatalf("registering an address twice: status %d, want 409", status)
+	if status, _ = admin.do(http.MethodPost, "/api/v1/users", `{"email":"`+strings.ToUpper(aliceEmail)+`","display_name":"Again"}`, ""); status != http.StatusConflict {
+		t.Fatalf("creating an address twice: status %d, want 409", status)
 	}
-	if status, _ = (&client{t: t, handler: router}).register("bad-"+run+"@example.test", "Weak", "short"); status != http.StatusBadRequest {
+	if status, _ = admin.do(http.MethodPost, "/api/v1/users", `{"email":"bad-`+run+`@example.test","display_name":"Weak","password":"short"}`, ""); status != http.StatusBadRequest {
 		t.Fatalf("a weak password: status %d, want 400", status)
+	}
+	if status, _ = admin.do(http.MethodPost, "/api/v1/users", `{"email":"second-admin-`+run+`@example.test","display_name":"Second","platform_admin":true}`, ""); status != http.StatusBadRequest {
+		t.Fatalf("granting a second super administrator: status %d, want 400", status)
 	}
 
 	// A registered person creates a project for their product and becomes its owner.
@@ -101,22 +105,18 @@ func TestAccountsProjectsAndTokensIntegration(t *testing.T) {
 	}
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/services", nil)
 	request.Header.Set("Authorization", "Bearer "+alice.access)
-	request.Header.Set(httpapi.HeaderProjectID, acme)
-	request.Header.Set(httpapi.HeaderEnvironment, "no-such-environment")
+	request.Header.Set(api.HeaderProjectID, acme)
+	request.Header.Set(api.HeaderEnvironment, "no-such-environment")
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("an environment the project lacks: status %d, want 400", recorder.Code)
 	}
 
-	// Another registered person sees nothing of it until the owner lets them in.
-	bob := &client{t: t, handler: router}
-	if status, body = bob.register(bobEmail, "Bob", "another-long-passphrase"); status != http.StatusCreated {
-		t.Fatalf("register bob: %d %v", status, body)
-	}
-	bobID, _ := nested(body, "user", "id").(string)
+	// Another account sees nothing of it until the owner lets them in.
+	bob, bobID := admin.createAccount(bobEmail, "Bob", "another-long-passphrase")
 	if status, _ = bob.do(http.MethodGet, "/api/v1/services", "", acme); status != http.StatusForbidden {
-		t.Fatalf("a registered person who was not added: status %d, want 403", status)
+		t.Fatalf("an account that was not added: status %d, want 403", status)
 	}
 	if status, _ = alice.do(http.MethodPost, "/api/v1/projects/"+acme+"/members", `{"email":"nobody-`+run+`@example.test","role":"user"}`, ""); status != http.StatusNotFound {
 		t.Fatalf("adding an address with no account: status %d, want 404", status)
@@ -182,8 +182,7 @@ func TestAccountsProjectsAndTokensIntegration(t *testing.T) {
 	if status, _ = alice.do(http.MethodDelete, "/api/v1/projects/"+acme+"/members/"+aliceID, "", ""); status != http.StatusNoContent {
 		t.Fatalf("an owner leaving while another remains: status %d", status)
 	}
-	// A super administrator keeps access to every project, so only an ordinary account loses it by leaving.
-	if status, _ = alice.do(http.MethodGet, "/api/v1/services", "", acme); !aliceIsAdmin && status != http.StatusForbidden {
+	if status, _ = alice.do(http.MethodGet, "/api/v1/services", "", acme); status != http.StatusForbidden {
 		t.Fatalf("someone who left: status %d, want 403", status)
 	}
 	if status, body = bob.do(http.MethodDelete, "/api/v1/projects/"+acme+"/members/"+bobID, "", ""); status != http.StatusConflict || nested(body, "error", "code") != "LAST_OWNER" {
@@ -226,13 +225,9 @@ func TestAccountsProjectsAndTokensIntegration(t *testing.T) {
 		t.Fatalf("the old password: status %d, want 401", code)
 	}
 
-	// A super administrator can end an account's access at once.
-	if _, err := database.CreateUser(ctx, auth.CreateUserParams{Email: adminEmail, DisplayName: "Admin", Password: "an-administrator-passphrase", PlatformAdmin: true}, auth.Actor{}); err != nil {
-		t.Fatal(err)
-	}
-	admin := &client{t: t, handler: router}
-	if code := admin.signIn(adminEmail, "an-administrator-passphrase"); code != http.StatusOK {
-		t.Fatalf("admin sign in: %d", code)
+	// The super administrator can end an account's access at once, but never its own.
+	if status, body = admin.do(http.MethodPatch, "/api/v1/users/"+integrationAdminID(t, database), `{"disabled":true}`, ""); status != http.StatusConflict || nested(body, "error", "code") != "LAST_PLATFORM_ADMIN" {
+		t.Fatalf("disabling the super administrator: %d %v", status, body)
 	}
 	if status, _ = admin.do(http.MethodPatch, "/api/v1/users/"+bobID, `{"disabled":true}`, ""); status != http.StatusOK {
 		t.Fatalf("disable: status %d", status)

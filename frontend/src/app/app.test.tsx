@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { App } from "./app";
-import { emptyPerformance } from "../features/performance/test-data";
+import { emptyPerformance } from "../testing/performance";
 import { setAccessToken, setProjectContext } from "../shared/api";
 
 afterEach(() => {
@@ -10,25 +10,17 @@ afterEach(() => {
   localStorage.clear();
   window.location.hash = "";
   vi.unstubAllGlobals();
-  vi.unstubAllEnvs();
 });
 
 describe("App", () => {
-  it("keeps protected routes behind an account, with registration beside sign-in", () => {
+  it("keeps protected routes behind an account and offers no self registration", () => {
     render(<App />);
     expect(screen.getByRole("heading", { name: "Welcome to TracePilot" })).toBeTruthy();
     expect(screen.getByLabelText("Email")).toBeTruthy();
     expect(screen.getByLabelText("Password")).toBeTruthy();
     expect(screen.queryByLabelText(/API key/i)).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Register" }));
-    expect(screen.getByLabelText("Display name")).toBeTruthy();
-  });
-
-  it("ignores legacy development administrator credentials on the sign-in screen", () => {
-    vi.stubEnv("VITE_DEV_ADMIN_EMAIL", "admin@example.test");
-    vi.stubEnv("VITE_DEV_ADMIN_PASSWORD", "test-only-password");
-    render(<App />);
-    expect(screen.queryByTitle("Autofill default admin credentials")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Register" })).toBeNull();
+    expect(screen.queryByLabelText("Display name")).toBeNull();
   });
 
   it("guides a connected operator from an empty console to the first trace", async () => {
@@ -50,7 +42,6 @@ describe("App", () => {
     const calls: { path: string; init: RequestInit }[] = [];
     vi.stubGlobal("fetch", vi.fn().mockImplementation((path: string, init: RequestInit = {}) => {
       calls.push({ path, init });
-      if (path === "/api/v1/auth/status") return new Response(JSON.stringify({ registration_open: true, first_account: false }), { status: 200 });
       if (path === "/api/v1/auth/login") return new Response(JSON.stringify(view), { status: 200 });
       if (path === "/api/v1/auth/logout") return new Response(null, { status: 204 });
       return new Response(JSON.stringify(path.startsWith("/api/v1/performance") ? emptyPerformance : { data: [] }), { status: 200 });
@@ -101,26 +92,22 @@ describe("App", () => {
     for (const call of projectCalls) expect(call.headers.get("X-Project-ID"), call.path).toBe("01900000-0000-7000-8000-0000000000a1");
   });
 
-  it("registers a new account and enters the console", async () => {
+  it("signs a new account in and offers it a first project", async () => {
     const view = {
       user: { id: "u9", email: "new@example.com", display_name: "New", platform_admin: false, must_change_password: false, created_at: "2026-01-01T00:00:00Z" },
       memberships: [], access_token: "jwt-9", expires_at: "2099-01-01T00:00:00Z",
     };
-    let registered: unknown;
+    let signedIn: unknown;
     vi.stubGlobal("fetch", vi.fn().mockImplementation((path: string, init: RequestInit = {}) => {
-      if (path === "/api/v1/auth/status") return new Response(JSON.stringify({ registration_open: true, first_account: false }), { status: 200 });
-      if (path === "/api/v1/auth/register") { registered = JSON.parse(String(init.body)); return new Response(JSON.stringify(view), { status: 201 }); }
+      if (path === "/api/v1/auth/login") { signedIn = JSON.parse(String(init.body)); return new Response(JSON.stringify(view), { status: 200 }); }
       return new Response(JSON.stringify({ data: [] }), { status: 200 });
     }));
     render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: "Register" }));
-    fireEvent.change(screen.getByLabelText("Display name"), { target: { value: "New" } });
     fireEvent.change(screen.getByLabelText("Email"), { target: { value: "new@example.com" } });
     fireEvent.change(screen.getByLabelText(/^Password/), { target: { value: "a-long-enough-passphrase" } });
-    fireEvent.click(screen.getByRole("button", { name: /Create account/ }));
-    // A new account belongs to no project yet, so the console offers to make the first one.
+    fireEvent.click(screen.getAllByRole("button", { name: /^Sign in/ }).at(-1)!);
     expect(await screen.findByRole("heading", { name: "Create your first project" })).toBeTruthy();
-    expect(registered).toEqual({ email: "new@example.com", display_name: "New", password: "a-long-enough-passphrase" });
+    expect(signedIn).toEqual({ email: "new@example.com", password: "a-long-enough-passphrase" });
   });
 
   it("holds an account with a temporary password at the password change", async () => {

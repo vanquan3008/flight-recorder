@@ -2,11 +2,11 @@ package main
 
 import (
 	"fmt"
-	"net/http"
-	"net/url"
 	"os"
 	"testing"
 	"time"
+
+	"github.com/vanquan3008/tracepilot/internal/storage/clickhouse/clienttest"
 
 	"github.com/vanquan3008/tracepilot/internal/config"
 )
@@ -33,7 +33,7 @@ func TestClickHouseMigrationCommandDoesNotRequirePostgresIntegration(t *testing.
 	}
 	cfg := config.ClickHouseConfig{URL: os.Getenv("TRACEPILOT_CLICKHOUSE_TEST_URL"),
 		Database: fmt.Sprintf("tracepilot_independent_%d", time.Now().UnixNano())}
-	defer dropClickHouseTestDatabase(t, cfg)
+	defer clienttest.DropDatabase(t, cfg)
 	t.Setenv("TRACEPILOT_APP_PRODUCTION", "false")
 	t.Setenv("TRACEPILOT_CLICKHOUSE_URL", cfg.URL)
 	t.Setenv("TRACEPILOT_CLICKHOUSE_DATABASE", cfg.Database)
@@ -47,23 +47,5 @@ func TestClickHouseMigrationCommandDoesNotRequirePostgresIntegration(t *testing.
 		if code := runMigrations([]string{"clickhouse", operation}); code != 0 {
 			t.Fatalf("ClickHouse %s depended on PostgreSQL: exit %d", operation, code)
 		}
-	}
-}
-
-func dropClickHouseTestDatabase(t *testing.T, cfg config.ClickHouseConfig) {
-	t.Helper()
-	request, err := http.NewRequest(http.MethodPost, cfg.URL+"/?query="+url.QueryEscape("DROP DATABASE IF EXISTS `"+cfg.Database+"`"), nil)
-	if err != nil {
-		t.Error(err)
-		return
-	}
-	response, err := (&http.Client{Timeout: 5 * time.Second}).Do(request)
-	if err != nil {
-		t.Error(err)
-		return
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		t.Error("ClickHouse test cleanup failed", response.StatusCode)
 	}
 }

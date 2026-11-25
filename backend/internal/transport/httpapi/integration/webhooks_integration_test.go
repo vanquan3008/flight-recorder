@@ -44,7 +44,7 @@ func TestWebhookManagementAPIIntegration(t *testing.T) {
 	})
 	bootstrap := newIntegrationAdmin(t, database)
 	configuration := config.Config{Notifications: config.NotificationsConfig{Enabled: true}, Auth: config.AuthConfig{JWTSecret: integrationJWTSecret}, HTTP: config.HTTPConfig{ManagementMaxBodyBytes: 4096}, Ingestion: ingestion, Database: config.DatabaseConfig{ReadinessTimeout: time.Second}, App: config.AppConfig{ShutdownTimeout: time.Second}}
-	server := httpapi.New(configuration, slog.New(slog.NewTextHandler(io.Discard, nil)), func(context.Context) error { return nil }, metrics.New("test", "test", "test"), postgresBackend{database}, nil)
+	server := httpapi.New(configuration, httpapi.Dependencies{Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), Metrics: metrics.New("test", "test", "test"), Readiness: func(context.Context) error { return nil }, Store: postgresBackend{database}})
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/webhooks", strings.NewReader(`{"name":"pager","url":"https://example.com/hook","events":["incident.opened"]}`))
 	integrationAuth(request, bootstrap, projectID)
 	request.Header.Set("Content-Type", "application/json")

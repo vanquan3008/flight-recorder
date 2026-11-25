@@ -35,8 +35,8 @@ queue size, batch size, and timeouts at their defaults.
 
 ## Names and types
 
-A canonical variable name is `TRACEPILOT_` followed by the setting's path in upper case, joined with
-underscores. For example, `storage.retention.max_age` becomes `TRACEPILOT_STORAGE_RETENTION_MAX_AGE`.
+A variable name is `TRACEPILOT_` followed by the setting's path in upper case, joined with
+underscores. The backend reads no other names. For example, `storage.retention.max_age` becomes `TRACEPILOT_STORAGE_RETENTION_MAX_AGE`.
 
 | Type | Format |
 | --- | --- |
@@ -58,7 +58,7 @@ not the value, so secrets do not end up in logs.
 | `http` | `TRACEPILOT_HTTP_` | API listener, CORS, trusted proxies, rate limits, query limits, and timeouts |
 | `database` | `TRACEPILOT_DATABASE_` | PostgreSQL URL, pool, session timeouts, migrations, and partitions |
 | `clickhouse` | `TRACEPILOT_CLICKHOUSE_` | ClickHouse endpoint, credentials, timeouts, and log partitioning |
-| `auth` | `TRACEPILOT_AUTH_` | JWT secrets, token lifetimes, cookies, and registration |
+| `auth` | `TRACEPILOT_AUTH_` | JWT secrets, token lifetimes, and cookies |
 | `cache` | `TRACEPILOT_CACHE_` | Cache driver, Redis connection, TTLs, and capacities |
 | `storage` | `TRACEPILOT_STORAGE_RETENTION_` | Retention ages, check interval, and delete batch size |
 | `queue` | `TRACEPILOT_QUEUE_` | Queue capacity, byte budget, batch size, flush interval, timeouts, and workers for both pipelines |
@@ -71,12 +71,12 @@ not the value, so secrets do not end up in logs.
 above. Defaults are defined once, in `backend/internal/config/defaults.go`, and a test fails when the
 template misses a setting or names one that does not exist.
 
-## Renamed variables
+## Upgrading configuration names
 
-Within each source, the current name takes precedence over its legacy alias. A process variable
-still takes precedence over a file variable. Use the current names for new configuration.
+Update stored environment files and process variables before upgrading if they use the previous names.
+Copy values to the current names to preserve production checks, listener TLS, retention, and worker settings.
 
-| Legacy name or prefix | Current name or prefix |
+| Previous name or prefix | Current name or prefix |
 | --- | --- |
 | `TRACEPILOT_PRODUCTION` | `TRACEPILOT_APP_PRODUCTION` |
 | `TRACEPILOT_SHUTDOWN_TIMEOUT` | `TRACEPILOT_APP_SHUTDOWN_TIMEOUT` |

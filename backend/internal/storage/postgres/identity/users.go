@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/vanquan3008/tracepilot/internal/xslices"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -21,6 +22,9 @@ func insertUser(ctx context.Context, queries *sqlcstore.Queries, params auth.Cre
 		ID: newID(), Email: params.Email, DisplayName: params.DisplayName, PasswordHash: hash,
 		PlatformAdmin: params.PlatformAdmin, MustChangePassword: params.MustChangePassword,
 	})
+	if pgvalue.IsUniqueViolationOf(insertError, singlePlatformAdminIndex) {
+		return auth.User{}, auth.ErrPlatformAdminExists
+	}
 	if pgvalue.IsUniqueViolation(insertError) {
 		return auth.User{}, auth.ErrEmailExists
 	}
@@ -30,40 +34,6 @@ func insertUser(ctx context.Context, queries *sqlcstore.Queries, params auth.Cre
 	return userFrom(row), nil
 }
 
-// RegisterUser creates an ordinary account when registration is open.
-func (store *IdentityStore) RegisterUser(ctx context.Context, _ string, params auth.CreateUserParams, open bool) (auth.User, error) {
-	if !open {
-		return auth.User{}, auth.ErrRegistrationClosed
-	}
-	params, validationError := auth.NormalizeCreateUserParams(params)
-	if validationError != nil {
-		return auth.User{}, validationError
-	}
-	params.PlatformAdmin, params.MustChangePassword = false, false
-	var user auth.User
-	registerError := store.inTransaction(ctx, func(queries *sqlcstore.Queries) error {
-		created, insertError := insertUser(ctx, queries, params)
-		if insertError != nil {
-			return insertError
-		}
-		user = created
-		return audit(ctx, queries, "", auth.Actor{UserID: created.ID}, "user.registered", "user", created.ID, map[string]any{"email": created.Email, "platform_admin": created.PlatformAdmin})
-	})
-	if registerError != nil {
-		return auth.User{}, fmt.Errorf("register user: %w", registerError)
-	}
-	return user, nil
-}
-
-// HasUsers reports whether any account exists, so the console can offer first-time setup.
-func (store *IdentityStore) HasUsers(ctx context.Context) (bool, error) {
-	exists, queryError := store.queries.UsersExist(ctx)
-	if queryError != nil {
-		return false, fmt.Errorf("check users: %w", queryError)
-	}
-	return exists, nil
-}
-
 func (store *IdentityStore) CreateUser(ctx context.Context, params auth.CreateUserParams, actor auth.Actor) (auth.User, error) {
 	params, validationError := auth.NormalizeCreateUserParams(params)
 	if validationError != nil {
@@ -71,6 +41,18 @@ func (store *IdentityStore) CreateUser(ctx context.Context, params auth.CreateUs
 	}
 	var user auth.User
 	createError := store.inTransaction(ctx, func(queries *sqlcstore.Queries) error {
+		if params.PlatformAdmin {
+			if lockError := queries.AcquireTransactionLock(ctx, adminLockKey); lockError != nil {
+				return lockError
+			}
+			exists, existsError := queries.PlatformAdminExists(ctx)
+			if existsError != nil {
+				return existsError
+			}
+			if exists {
+				return auth.ErrPlatformAdminExists
+			}
+		}
 		created, insertError := insertUser(ctx, queries, params)
 		if insertError != nil {
 			return insertError
@@ -141,15 +123,11 @@ func (store *IdentityStore) ListUsers(ctx context.Context, filter auth.UserFilte
 	if queryError != nil {
 		return nil, fmt.Errorf("list users: %w", queryError)
 	}
-	users := make([]auth.User, 0, len(rows))
-	for _, row := range rows {
-		users = append(users, userFrom(row))
-	}
-	return users, nil
+	return xslices.Map(rows, userFrom), nil
 }
 
-// UpdateUser applies the set fields. It never leaves the platform without an active
-// administrator, and disabling an account ends its sessions.
+// UpdateUser applies the set fields. The super administrator cannot be disabled, and disabling
+// an account ends its sessions.
 func (store *IdentityStore) UpdateUser(ctx context.Context, userID string, update auth.UpdateUserParams, actor auth.Actor) (auth.User, error) {
 	if update.DisplayName != nil {
 		name, nameError := auth.NormalizeDisplayName(*update.DisplayName)
@@ -160,9 +138,6 @@ func (store *IdentityStore) UpdateUser(ctx context.Context, userID string, updat
 	}
 	var user auth.User
 	updateError := store.inTransaction(ctx, func(queries *sqlcstore.Queries) error {
-		if lockError := queries.AcquireTransactionLock(ctx, adminLockKey); lockError != nil {
-			return lockError
-		}
 		current, loadError := queries.LockUser(ctx, userID)
 		if errors.Is(loadError, pgx.ErrNoRows) {
 			return auth.ErrUserNotFound
@@ -170,25 +145,11 @@ func (store *IdentityStore) UpdateUser(ctx context.Context, userID string, updat
 		if loadError != nil {
 			return loadError
 		}
-		nextAdmin, nextDisabled := current.PlatformAdmin, current.DisabledAt != nil
-		if update.PlatformAdmin != nil {
-			nextAdmin = *update.PlatformAdmin
-		}
-		if update.Disabled != nil {
-			nextDisabled = *update.Disabled
-		}
-		wasActiveAdmin := current.PlatformAdmin && current.DisabledAt == nil
-		if wasActiveAdmin && !(nextAdmin && !nextDisabled) {
-			others, countError := queries.CountOtherActivePlatformAdmins(ctx, userID)
-			if countError != nil {
-				return countError
-			}
-			if others == 0 {
-				return auth.ErrLastPlatformAdmin
-			}
+		if current.PlatformAdmin && update.Disabled != nil && *update.Disabled {
+			return auth.ErrLastPlatformAdmin
 		}
 		updated, saveError := queries.UpdateUser(ctx, sqlcstore.UpdateUserParams{
-			ID: userID, DisplayName: update.DisplayName, PlatformAdmin: update.PlatformAdmin, Disabled: update.Disabled, ValidAfter: time.Now().UTC(),
+			ID: userID, DisplayName: update.DisplayName, Disabled: update.Disabled, ValidAfter: time.Now().UTC(),
 		})
 		if saveError != nil {
 			return saveError

@@ -12,6 +12,11 @@ func IsUniqueViolation(err error) bool {
 	return errors.As(err, &postgresError) && postgresError.Code == "23505"
 }
 
+func IsUniqueViolationOf(err error, constraint string) bool {
+	var postgresError *pgconn.PgError
+	return errors.As(err, &postgresError) && postgresError.Code == "23505" && postgresError.ConstraintName == constraint
+}
+
 // IsForeignKeyViolation reports a PostgreSQL foreign-key violation (23503).
 func IsForeignKeyViolation(err error) bool {
 	var postgresError *pgconn.PgError

@@ -55,45 +55,12 @@ func readEnvironmentFileAt(path string) (map[string]string, error) {
 	return nil, fmt.Errorf("%s: invalid or unreadable file", path)
 }
 
-func environmentValue(name string, fileValues map[string]string) (string, string, bool) {
-	names := []string{name}
-	if legacy := legacyEnvironmentName(name); legacy != "" {
-		names = append(names, legacy)
+func environmentValue(name string, fileValues map[string]string) (string, bool) {
+	if value, exists := os.LookupEnv(name); exists {
+		return value, true
 	}
-	for _, candidate := range names {
-		if value, exists := os.LookupEnv(candidate); exists {
-			return value, candidate, true
-		}
-	}
-	for _, candidate := range names {
-		if value, exists := fileValues[candidate]; exists {
-			return value, candidate, true
-		}
-	}
-	return "", "", false
-}
-
-func legacyEnvironmentName(name string) string {
-	switch name {
-	case "TRACEPILOT_APP_PRODUCTION", "TRACEPILOT_APP_SHUTDOWN_TIMEOUT",
-		"TRACEPILOT_APP_TLS_CERTIFICATE_FILE", "TRACEPILOT_APP_TLS_PRIVATE_KEY_FILE":
-		return environmentPrefix + strings.TrimPrefix(name, "TRACEPILOT_APP_")
-	case "TRACEPILOT_OBSERVABILITY_LOG_LEVEL":
-		return "TRACEPILOT_LOG_LEVEL"
-	case "TRACEPILOT_NOTIFICATIONS_ENABLED":
-		return "TRACEPILOT_APP_NOTIFICATIONS_ENABLED"
-	}
-	for _, pair := range [][2]string{
-		{"TRACEPILOT_STORAGE_RETENTION_", "TRACEPILOT_RETENTION_"},
-		{"TRACEPILOT_QUEUE_", "TRACEPILOT_INGESTION_"},
-		{"TRACEPILOT_REPLAY_", "TRACEPILOT_APP_REPLAY_"},
-		{"TRACEPILOT_NOTIFICATIONS_", "TRACEPILOT_WEBHOOK_"},
-	} {
-		if suffix, ok := strings.CutPrefix(name, pair[0]); ok {
-			return pair[1] + suffix
-		}
-	}
-	return ""
+	value, exists := fileValues[name]
+	return value, exists
 }
 
 func applyEnvironment(configuration *Config, fileValues map[string]string, scopes ...string) error {
@@ -137,7 +104,9 @@ func bindEnvironment(value reflect.Value, path []string, fileValues map[string]s
 }
 
 func bindField(field reflect.Value, path []string, fileValues map[string]string) error {
-	rawValue, name, found := environmentValue(environmentName(path), fileValues)
+	name := environmentName(path)
+
+	rawValue, found := environmentValue(name, fileValues)
 	if !found {
 		return nil
 	}

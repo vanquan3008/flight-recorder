@@ -128,18 +128,23 @@ func runServer(arguments []string) int {
 	streamHub := live.NewHub()
 	ingestionPipeline.SetOnPersist(streamHub.BroadcastEvents)
 
-	managementServer := httpapi.New(
-		cfg,
-		logger,
-		buildReadinessCheck(store,
+	serverDependencies := httpapi.Dependencies{
+		Logger:  logger,
+		Metrics: selfMetrics,
+		Readiness: buildReadinessCheck(store,
 			namedReadyComponent{name: "event pipeline", reporter: ingestionPipeline},
 			namedReadyComponent{name: "metrics pipeline", reporter: metricsPipeline},
 			namedReadyComponent{name: "OTLP listener", reporter: otlpServer},
 		),
-		selfMetrics,
-		store,
-		replayService,
-	).WithTokenInvalidator(tokenCache).WithStreamHub(streamHub)
+		Store:            store,
+		TokenInvalidator: tokenCache,
+		StreamHub:        streamHub,
+	}
+	// A nil *replay.Service in the interface would still mount the replay route.
+	if replayService != nil {
+		serverDependencies.Replay = replayService
+	}
+	managementServer := httpapi.New(cfg, serverDependencies)
 
 	// ---------------------------------------------------------
 	// 6. Runtime components

@@ -2,7 +2,6 @@ package middleware
 
 import (
 	"crypto/rand"
-	"encoding/hex"
 	"log/slog"
 	"net/http"
 	"regexp"
@@ -16,6 +15,7 @@ import (
 const (
 	CORSMaxAgeSeconds = "600"
 	RequestIDHeader   = render.RequestIDHeader
+	traceparentHeader = "traceparent"
 )
 
 var safeRequestID = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
@@ -110,26 +110,18 @@ func RequestID() func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(responseWriter http.ResponseWriter, request *http.Request) {
 			requestID := request.Header.Get(RequestIDHeader)
 			if !safeRequestID.MatchString(requestID) {
-				requestID = NewRequestID()
+				requestID = rand.Text()
 			}
 			request.Header.Set(RequestIDHeader, requestID)
 			responseWriter.Header().Set(RequestIDHeader, requestID)
 
-			tc, hasTrace := logging.ParseTraceparent(request.Header.Get("traceparent"))
-			if !hasTrace {
-				tc = logging.TraceContext{
-					TraceID:    logging.NewTraceID(),
-					SpanID:     logging.NewSpanID(),
-					TraceFlags: "01",
-				}
-			}
-			tc.RequestID = requestID
+			traceContext := logging.ContinueTrace(request.Header.Get(traceparentHeader))
+			traceContext.RequestID = requestID
+			traceparent := traceContext.Traceparent()
+			request.Header.Set(traceparentHeader, traceparent)
+			responseWriter.Header().Set(traceparentHeader, traceparent)
 
-			traceparentVal := logging.FormatTraceparent(tc)
-			request.Header.Set("traceparent", traceparentVal)
-			responseWriter.Header().Set("traceparent", traceparentVal)
-
-			ctx := logging.WithTraceContext(request.Context(), tc)
+			ctx := logging.WithTraceContext(request.Context(), traceContext)
 			nextHandler.ServeHTTP(responseWriter, request.WithContext(ctx))
 		})
 	}
@@ -214,14 +206,4 @@ func PanicRecovery(logger *slog.Logger) func(http.Handler) http.Handler {
 			nextHandler.ServeHTTP(responseWriter, request)
 		})
 	}
-}
-
-// NewRequestID generates a 16-byte random hex string.
-func NewRequestID() string {
-	var randomBytes [16]byte
-	if _, randomError := rand.Read(randomBytes[:]); randomError != nil {
-		timestamp := time.Now().UTC().Format(time.RFC3339Nano)
-		return hex.EncodeToString([]byte(timestamp))
-	}
-	return hex.EncodeToString(randomBytes[:])
 }

@@ -3,6 +3,7 @@ package otlp
 import (
 	"context"
 	"errors"
+	"github.com/vanquan3008/tracepilot/internal/ingest/otlp/normalize"
 
 	"github.com/vanquan3008/tracepilot/internal/auth"
 	"github.com/vanquan3008/tracepilot/internal/config"
@@ -30,9 +31,9 @@ func (receiver *Receiver) WithScopes(resolve ScopeResolver) *Receiver {
 }
 
 // normalizerFor returns the normalizer for the scope the request was authorized into.
-func (receiver *Receiver) normalizerFor(ctx context.Context) *normalizer {
+func (receiver *Receiver) normalizerFor(ctx context.Context) *normalize.Normalizer {
 	if scope, scoped := ctx.Value(scopeContextKey{}).(config.IngestionConfig); scoped {
-		return newNormalizer(scope)
+		return normalize.New(scope)
 	}
 	return receiver.normalizer
 }
@@ -66,7 +67,7 @@ func (receiver *Receiver) authorizeScope(ctx context.Context, rawKey, environmen
 		return ctx, auth.ErrUnauthorized
 	}
 	if receiver.scopes == nil {
-		if principal.ProjectID != receiver.normalizer.configuration.ProjectID {
+		if principal.ProjectID != receiver.projectID {
 			receiver.guard.failed(client, rawKey, false)
 			return ctx, auth.ErrUnauthorized
 		}

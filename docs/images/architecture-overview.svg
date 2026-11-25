@@ -1,0 +1,155 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 780" width="1280" height="780" role="img" aria-labelledby="title desc">
+  <title id="title">TracePilot architecture overview</title>
+  <desc id="desc">Producers send OTLP to the receiver. The normalizer feeds the event and metrics pipelines. logs.Persist writes logs and spans to ClickHouse and failures to PostgreSQL in one transaction. The console calls the API through middleware and the scope router; REST handlers read ClickHouse and PostgreSQL, and Live Tail flows from the event pipeline through live.Hub to SSE. Background workers run detection, partition maintenance, retention, replay, and webhook delivery.</desc>
+  <style>
+    .bg { fill: #0f1820; }
+    .frame { fill: none; stroke: #34495a; stroke-width: 1.5; stroke-dasharray: 6 5; }
+    .box { fill: #16222c; stroke: #8193a2; stroke-width: 1.2; }
+    .opt { stroke-dasharray: 5 4; }
+    .store { fill: #11303d; stroke: #4fc0ea; stroke-width: 1.4; }
+    .ext { fill: #0f1820; stroke: #8193a2; stroke-width: 1.2; }
+    .t { fill: #e2e9ef; font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif; font-size: 13px; font-weight: 600; }
+    .s { fill: #93a4b2; font-family: Consolas, Menlo, "DejaVu Sans Mono", monospace; font-size: 10.5px; }
+    .lane { fill: #93a4b2; font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif; font-size: 11px; font-weight: 600; letter-spacing: .08em; }
+    .lbl { fill: #93a4b2; font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif; font-size: 11px; }
+    .lbl.hot { fill: #4fc0ea; font-weight: 600; }
+    .ln { fill: none; stroke: #93a4b2; stroke-width: 1.4; }
+    .ln.hot { stroke: #4fc0ea; stroke-width: 2; }
+    .ln.dash { stroke-dasharray: 5 4; }
+    .halo { fill: none; stroke: #0f1820; stroke-width: 8; }
+    .ah { fill: #93a4b2; }
+    .ah.hot { fill: #4fc0ea; }
+  </style>
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah" d="M0,0 L10,5 L0,10 z"/></marker>
+    <marker id="ahh" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah hot" d="M0,0 L10,5 L0,10 z"/></marker>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1280" height="780"/>
+
+  <!-- process frame -->
+  <rect class="frame" x="225" y="24" width="760" height="700" rx="14"/>
+  <text class="t" x="243" y="50">tracepilot serve · one Go process</text>
+  <text class="lane" x="245" y="96">WRITE PATH · OTLP</text>
+  <text class="lane" x="245" y="428">READ PATH · API :8080</text>
+  <text class="lane" x="245" y="608">BACKGROUND WORKERS · restarted with backoff</text>
+
+  <!-- left column -->
+  <rect class="box" x="20" y="104" width="170" height="52" rx="8"/>
+  <text class="t" x="34" y="126">Your service</text><text class="s" x="34" y="144">OTel SDK or Collector</text>
+  <rect class="box" x="20" y="166" width="170" height="52" rx="8"/>
+  <text class="t" x="34" y="188">aidemo</text><text class="s" x="34" y="206">POST /ask demo</text>
+  <rect class="box" x="20" y="228" width="170" height="52" rx="8"/>
+  <text class="t" x="34" y="250">loadgen</text><text class="s" x="34" y="268">synthetic load</text>
+  <rect class="ext opt" x="20" y="310" width="170" height="52" rx="8"/>
+  <text class="t" x="34" y="332">Redis (optional)</text><text class="s" x="34" y="350">shared token cache</text>
+  <rect class="box" x="20" y="450" width="170" height="64" rx="8"/>
+  <text class="t" x="34" y="474">React console</text><text class="s" x="34" y="492">browser, nginx</text><text class="s" x="34" y="506">access JWT in memory</text>
+
+  <!-- write path -->
+  <rect class="box" x="245" y="104" width="160" height="84" rx="8"/>
+  <text class="t" x="257" y="126">OTLP receiver</text><text class="s" x="257" y="146">:4317 gRPC, :4318 HTTP</text><text class="s" x="257" y="162">auth, 32 slots</text><text class="s" x="257" y="178">decode, body limits</text>
+  <rect class="box" x="425" y="104" width="160" height="84" rx="8"/>
+  <text class="t" x="437" y="126">Normalizer</text><text class="s" x="437" y="146">normalize fields</text><text class="s" x="437" y="162">redact, scrub secrets</text><text class="s" x="437" y="178">bad record: rejected</text>
+  <rect class="box" x="605" y="36" width="160" height="48" rx="8"/>
+  <text class="t" x="617" y="56">Metrics pipeline</text><text class="s" x="617" y="74">separate queue</text>
+  <rect class="box" x="605" y="104" width="160" height="84" rx="8"/>
+  <text class="t" x="617" y="126">Event pipeline</text><text class="s" x="617" y="146">queue 4096, 2 workers</text><text class="s" x="617" y="162">batch 256 or 200 ms</text><text class="s" x="617" y="178">grouped by scope</text>
+  <rect class="box" x="785" y="104" width="180" height="84" rx="8"/>
+  <text class="t" x="797" y="126">logs.Persist</text><text class="s" x="797" y="146">logs, spans, failures</text><text class="s" x="797" y="162">3 attempts</text><text class="s" x="797" y="178">bisect bad batches</text>
+  <rect class="box" x="245" y="300" width="160" height="60" rx="8"/>
+  <text class="t" x="257" y="322">Token cache</text><text class="s" x="257" y="340">memory, 30 s TTL</text><text class="s" x="257" y="354">miss: PostgreSQL</text>
+  <rect class="box" x="605" y="300" width="160" height="60" rx="8"/>
+  <text class="t" x="617" y="322">live.Hub</text><text class="s" x="617" y="340">in memory</text><text class="s" x="617" y="354">max 256 subscribers</text>
+
+  <!-- read path -->
+  <rect class="box" x="245" y="440" width="160" height="84" rx="8"/>
+  <text class="t" x="257" y="462">Middleware</text><text class="s" x="257" y="482">request ID, headers</text><text class="s" x="257" y="498">rate limits, CORS</text><text class="s" x="257" y="514">recovery, body limit</text>
+  <rect class="box" x="425" y="440" width="160" height="84" rx="8"/>
+  <text class="t" x="437" y="462">Scope router</text><text class="s" x="437" y="482">JWT, account, role</text><text class="s" x="437" y="498">environment</text><text class="s" x="437" y="514">gates: query 4, logs 8</text>
+  <rect class="box" x="605" y="440" width="160" height="84" rx="8"/>
+  <text class="t" x="617" y="462">SSE live stream</text><text class="s" x="617" y="482">access check / 15 s</text><text class="s" x="617" y="498">outside query gates</text><text class="s" x="617" y="514">ends at JWT expiry</text>
+  <rect class="box" x="785" y="440" width="180" height="84" rx="8"/>
+  <text class="t" x="797" y="462">REST handlers</text><text class="s" x="797" y="482">55 routes, /api/v1</text><text class="s" x="797" y="498">20 s deadline</text><text class="s" x="797" y="514">OpenAPI from routes</text>
+
+  <!-- workers -->
+  <rect class="box" x="245" y="620" width="136" height="64" rx="8"/>
+  <text class="t" x="257" y="642">Detection</text><text class="s" x="257" y="660">every minute</text><text class="s" x="257" y="675">CH signals → PG</text>
+  <rect class="box" x="391" y="620" width="136" height="64" rx="8"/>
+  <text class="t" x="403" y="642">Partitions</text><text class="s" x="403" y="660">every hour</text><text class="s" x="403" y="675">daily PG events</text>
+  <rect class="box" x="537" y="620" width="136" height="64" rx="8"/>
+  <text class="t" x="549" y="642">Retention</text><text class="s" x="549" y="660">every hour</text><text class="s" x="549" y="675">expire CH and PG</text>
+  <rect class="box opt" x="683" y="620" width="136" height="64" rx="8"/>
+  <text class="t" x="695" y="642">Replay</text><text class="s" x="695" y="660">on request</text><text class="s" x="695" y="675">optional</text>
+  <rect class="box opt" x="829" y="620" width="136" height="64" rx="8"/>
+  <text class="t" x="841" y="642">Webhooks</text><text class="s" x="841" y="660">polls every 5 s</text><text class="s" x="841" y="675">optional</text>
+
+  <!-- stores and external -->
+  <rect class="store" x="1030" y="96" width="230" height="158" rx="10"/>
+  <text class="t" x="1044" y="120">ClickHouse</text>
+  <text class="s" x="1044" y="142">log_records</text><text class="s" x="1044" y="158">spans, trace_index (MV)</text><text class="s" x="1044" y="174">metric_points</text><text class="s" x="1044" y="190">span_minutes (rollup)</text><text class="s" x="1044" y="206">span_minute_marks, done</text><text class="s" x="1044" y="226">ReplacingMergeTree, FINAL</text><text class="s" x="1044" y="242">weekly partitions</text>
+  <rect class="store" x="1030" y="300" width="230" height="200" rx="10"/>
+  <text class="t" x="1044" y="324">PostgreSQL</text>
+  <text class="s" x="1044" y="346">users, sessions, audit</text><text class="s" x="1044" y="362">projects, environments</text><text class="s" x="1044" y="378">members, ingest_tokens</text><text class="s" x="1044" y="394">events (failure envelopes)</text><text class="s" x="1044" y="410">incidents, occurrences</text><text class="s" x="1044" y="426">webhook outbox, deliveries</text><text class="s" x="1044" y="442">replay executions</text><text class="s" x="1044" y="470">no healthy telemetry</text>
+  <rect class="ext" x="1030" y="620" width="230" height="64" rx="8"/>
+  <text class="t" x="1044" y="642">Webhook and replay targets</text><text class="s" x="1044" y="660">HTTPS only, HMAC signed</text><text class="s" x="1044" y="675">private ranges blocked</text>
+
+  <!-- producers to receiver -->
+  <path class="ln hot" d="M190,130 L245,132" marker-end="url(#ahh)"/>
+  <path class="ln hot" d="M190,192 L218,192 L218,150 L245,150" marker-end="url(#ahh)"/>
+  <path class="ln hot" d="M190,254 L218,254 L218,192"/>
+  <text class="lbl hot" x="196" y="88">OTLP</text>
+  <text class="lbl hot" x="196" y="100">+ token</text>
+
+  <!-- write chain -->
+  <path class="ln hot" d="M405,146 L425,146" marker-end="url(#ahh)"/>
+  <path class="ln hot" d="M585,146 L605,146" marker-end="url(#ahh)"/>
+  <path class="ln hot" d="M765,146 L785,146" marker-end="url(#ahh)"/>
+  <path class="ln hot" d="M585,124 L595,124 L595,60 L605,60" marker-end="url(#ahh)"/>
+  <path class="ln hot" d="M765,60 L1140,60 L1140,96" marker-end="url(#ahh)"/>
+  <text class="lbl hot" x="900" y="54">metric points</text>
+  <path class="ln hot" d="M965,132 L1030,132" marker-end="url(#ahh)"/>
+  <text class="lbl hot" x="975" y="124">insert</text>
+  <path class="ln hot" d="M965,176 L1005,176 L1005,330 L1030,330" marker-end="url(#ahh)"/>
+  <text class="lbl hot" x="995" y="206" text-anchor="end">failures only</text>
+  <text class="lbl hot" x="995" y="219" text-anchor="end">one transaction</text>
+
+  <!-- token cache -->
+  <path class="ln" d="M325,188 L325,300" marker-end="url(#ah)"/>
+  <text class="lbl" x="333" y="250">verify</text>
+  <path class="ln dash" d="M245,336 L190,336" marker-end="url(#ah)"/>
+
+  <!-- live tail -->
+  <path class="ln dash" d="M685,188 L685,300" marker-end="url(#ah)"/>
+  <text class="lbl" x="693" y="240">onPersist</text>
+  <text class="lbl" x="693" y="253">after the write</text>
+  <path class="ln dash" d="M685,360 L685,440" marker-end="url(#ah)"/>
+  <text class="lbl" x="693" y="404">fan-out by scope</text>
+
+  <!-- console and API -->
+  <path class="ln" d="M190,482 L245,482" marker-start="url(#ah)" marker-end="url(#ah)"/>
+  <text class="lbl" x="34" y="540">REST + JWT →</text>
+  <text class="lbl" x="34" y="553">← JSON, SSE</text>
+  <path class="ln" d="M405,482 L425,482" marker-end="url(#ah)"/>
+  <path class="ln" d="M585,470 L605,470" marker-end="url(#ah)"/>
+  <path class="ln" d="M585,506 L595,506 L595,548 L875,548 L875,524" marker-end="url(#ah)"/>
+  <text class="lbl" x="720" y="566">other routes</text>
+
+  <!-- handlers to stores; the halo leaves a gap where the read path crosses the failure path -->
+  <path class="ln" d="M965,482 L1030,482" marker-end="url(#ah)"/>
+  <text class="lbl" x="975" y="474">state</text>
+  <path class="halo" d="M997,240 L1013,240"/>
+  <path class="ln" d="M965,454 L985,454 L985,240 L1030,240" marker-end="url(#ah)"/>
+  <text class="lbl" x="977" y="400" text-anchor="end">telemetry</text>
+  <text class="lbl" x="977" y="413" text-anchor="end">reads</text>
+
+  <!-- workers to external targets -->
+  <path class="ln" d="M965,652 L1030,652" marker-end="url(#ah)"/>
+  <path class="ln" d="M751,684 L751,706 L1145,706 L1145,684" marker-end="url(#ah)"/>
+  <text class="lbl" x="880" y="700">allowlisted HTTP</text>
+
+  <!-- legend -->
+  <path class="ln hot" d="M245,756 L275,756"/><text class="lbl" x="283" y="760">telemetry write path</text>
+  <path class="ln" d="M425,756 L455,756"/><text class="lbl" x="463" y="760">synchronous call or read</text>
+  <path class="ln dash" d="M625,756 L655,756"/><text class="lbl" x="663" y="760">callback, optional, or asynchronous</text>
+</svg>

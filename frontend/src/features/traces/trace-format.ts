@@ -2,7 +2,7 @@ import type { Span } from "../../shared/types";
 import type { TraceModel } from "./trace-model";
 import { formatMs, isError } from "./trace-model";
 
-export type SpanDisplayInfo = {
+type SpanDisplayInfo = {
   method?: string;
   target?: string;
   displayName: string;
@@ -103,7 +103,7 @@ export function getSpanDisplayInfo(span: Span): SpanDisplayInfo {
   };
 }
 
-export type TraceInsight = {
+type TraceInsight = {
   type: "error" | "warning" | "info";
   title: string;
   description: string;

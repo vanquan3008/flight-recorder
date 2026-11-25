@@ -1,6 +1,6 @@
 import type { Span, TopologyEdge, TopologyNode } from "../../shared/types";
 
-export type TraceRow = {
+type TraceRow = {
   span: Span;
   depth: number;
   /** Span IDs of every ancestor, used to hide a collapsed subtree. */
@@ -14,7 +14,7 @@ export type TraceRow = {
   serviceIndex: number;
 };
 
-export type ServiceStat = { name: string; index: number; spans: number; errors: number; selfMs: number };
+type ServiceStat = { name: string; index: number; spans: number; errors: number; selfMs: number };
 
 export type TraceModel = {
   rows: TraceRow[];

@@ -26,7 +26,7 @@ Initial thresholds to agree with the pilot owner are p95 at or below 1 second fo
 | 3 | Add project-level budgets for ingest and expensive reads alongside the existing process-wide limits. Budget PostgreSQL and ClickHouse connections across the full replica count. | Saturate one project and verify the other projects remain within the agreed latency and error budgets. Drain one replica and verify acknowledged records remain readable. |
 | 4 | Support expand-and-contract migrations with a single migration job and an explicit schema compatibility policy. Rehearse startup, readiness, rolling upgrade, and rollback of the application. | Run the previous and new binaries together through a compatible schema upgrade. Restore both databases on a fresh stack and compare telemetry, incidents, and audit state before cutting over. |
 
-The Compose deployment uses static addresses and host ports today. Exercise the pilot through a load balancer and a separate disposable configuration. [Runtime lifecycle](../backend/cmd/tracepilot/serve.go), [Live Tail](../backend/internal/application/live/hub.go), [Schema readiness](../backend/internal/storage/clickhouse/schema.go)
+The Compose deployment uses static addresses and host ports today. Exercise the pilot through a load balancer and a separate disposable configuration. [Runtime lifecycle](../backend/cmd/tracepilot/serve.go), [Live Tail](../backend/internal/application/live/hub.go), [Schema readiness](../backend/internal/storage/clickhouse/schema/ready.go)
 
 ## 3. Reduce the measured bottlenecks
 
@@ -35,7 +35,7 @@ The Compose deployment uses static addresses and host ports today. Exercise the 
 - [ ] Profile the console's Overview fan-out. Load the primary data first and handle overload responses without amplifying retry traffic.
 - [ ] Compare vertical scaling and two replicas on the same data at equal total CPU and memory. Use sustainable throughput, p95/p99, and database saturation to choose the topology. Split ingest, API, or background workers when the measurements show a need for independent scaling or failure isolation.
 
-Exit this phase when two repeated tests meet the pilot thresholds with the intended retained volume, and the results explain the cost and capacity of the chosen deployment. [Trace queries](../backend/internal/storage/clickhouse/traces.go), [Topology queries](../backend/internal/storage/clickhouse/analytics.go), [Overview queries](../frontend/src/features/overview/use-overview-data.ts)
+Exit this phase when two repeated tests meet the pilot thresholds with the intended retained volume, and the results explain the cost and capacity of the chosen deployment. [Trace queries](../backend/internal/storage/clickhouse/traces/traces.go), [Topology queries](../backend/internal/storage/clickhouse/analytics/topology.go), [Overview queries](../frontend/src/features/overview/use-overview-data.ts)
 
 ## 4. Deliver enterprise controls
 

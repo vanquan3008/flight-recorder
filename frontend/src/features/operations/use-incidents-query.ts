@@ -2,7 +2,7 @@ import { queryString, pageItems, usePagedQuery } from "../../shared/api";
 import { useAuth } from "../../shared/session";
 import type { Incident } from "../../shared/types";
 
-export type IncidentFilters = {
+type IncidentFilters = {
   service?: string;
   status?: string;
   from: string;

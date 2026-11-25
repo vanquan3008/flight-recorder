@@ -10,6 +10,7 @@ step "npm ci"
 npm ci --no-audit --no-fund
 
 step "Playwright against ${TRACEPILOT_E2E_BASE_URL}"
+export TRACEPILOT_E2E_EMAIL="$TRACEPILOT_TEST_ADMIN_EMAIL" TRACEPILOT_E2E_PASSWORD="$TRACEPILOT_TEST_ADMIN_PASSWORD"
 export PLAYWRIGHT_HTML_OPEN=never
 export PLAYWRIGHT_HTML_REPORT=/results/playwright-report
 rm -rf /results/playwright-report /results/playwright-artifacts
