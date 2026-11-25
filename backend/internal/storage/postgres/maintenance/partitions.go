@@ -41,11 +41,6 @@ func partitionName(table string, day time.Time) string {
 	return table + "_p" + day.UTC().Format(partitionNameDateLayout)
 }
 
-func startOfUTCDay(moment time.Time) time.Time {
-	year, month, day := moment.UTC().Date()
-	return time.Date(year, month, day, 0, 0, 0, 0, time.UTC)
-}
-
 // EnsurePartitions creates the daily partitions that cover `days` days starting
 // at the UTC day of `from`, for every partitioned table. It is idempotent and
 // safe to call from several replicas at once.
@@ -66,7 +61,7 @@ func (store *PartitionStore) EnsurePartitions(ctx context.Context, from time.Tim
 	if lockError := store.queries.WithTx(transaction).AcquireTransactionLock(ctx, partitionLockKey); lockError != nil {
 		return fmt.Errorf("lock partition maintenance: %w", lockError)
 	}
-	firstDay := startOfUTCDay(from)
+	firstDay := from.UTC().Truncate(24 * time.Hour)
 	for offset := range days {
 		day := firstDay.AddDate(0, 0, offset)
 		for _, table := range partitionedTables {

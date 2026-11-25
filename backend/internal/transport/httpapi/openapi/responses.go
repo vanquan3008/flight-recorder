@@ -153,15 +153,3 @@ func routeResponses(route Route, registry *schemas) map[string]any {
 func jsonContent(schema map[string]any) map[string]any {
 	return map[string]any{"application/json": map[string]any{"schema": schema}}
 }
-
-// OpenAPIResponses documents the success status for a method and every reusable error response.
-//
-// Deprecated: use SpecForRoutes with Route.Response, which also documents the success body.
-func OpenAPIResponses(method string, configuredSuccessStatus int) map[string]any {
-	status := successStatus(method, configuredSuccessStatus)
-	responses := map[string]any{strconv.Itoa(status): map[string]any{"description": successDescription(status)}}
-	for _, entry := range errorResponses {
-		responses[strconv.Itoa(entry.status)] = ref("responses", entry.name)
-	}
-	return responses
-}

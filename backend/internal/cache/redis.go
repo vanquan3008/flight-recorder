@@ -14,16 +14,10 @@ import (
 type RedisCache struct {
 	client     *redis.Client
 	defaultTTL time.Duration
-	metrics    Metrics
 }
 
 // NewRedisCache constructs a Redis client using configuration URL or Address.
 func NewRedisCache(cfg config.CacheConfig) (*RedisCache, error) {
-	return NewRedisCacheWithMetrics(cfg, nil)
-}
-
-// NewRedisCacheWithMetrics constructs a Redis client with an optional metrics collector.
-func NewRedisCacheWithMetrics(cfg config.CacheConfig, metrics Metrics) (*RedisCache, error) {
 	var opts *redis.Options
 
 	if strings.TrimSpace(cfg.URL) != "" {
@@ -57,7 +51,6 @@ func NewRedisCacheWithMetrics(cfg config.CacheConfig, metrics Metrics) (*RedisCa
 	return &RedisCache{
 		client:     client,
 		defaultTTL: defaultTTL,
-		metrics:    metrics,
 	}, nil
 }
 
@@ -77,21 +70,12 @@ func (r *RedisCache) Get(ctx context.Context, key string) ([]byte, bool, error) 
 
 	val, err := r.client.Get(ctx, key).Bytes()
 	if errors.Is(err, redis.Nil) {
-		if r.metrics != nil {
-			r.metrics.RecordMiss("redis")
-		}
 		return nil, false, nil
 	}
 	if err != nil {
-		if r.metrics != nil {
-			r.metrics.RecordError("redis", "get")
-		}
 		return nil, false, err
 	}
 
-	if r.metrics != nil {
-		r.metrics.RecordHit("redis")
-	}
 	return val, true, nil
 }
 
@@ -106,13 +90,7 @@ func (r *RedisCache) Set(ctx context.Context, key string, value []byte, ttl time
 	}
 	err := r.client.Set(ctx, key, value, ttl).Err()
 	if err != nil {
-		if r.metrics != nil {
-			r.metrics.RecordError("redis", "set")
-		}
 		return err
-	}
-	if r.metrics != nil {
-		r.metrics.RecordSet("redis")
 	}
 	return nil
 }
@@ -125,13 +103,7 @@ func (r *RedisCache) Delete(ctx context.Context, key string) error {
 
 	err := r.client.Del(ctx, key).Err()
 	if err != nil {
-		if r.metrics != nil {
-			r.metrics.RecordError("redis", "delete")
-		}
 		return err
-	}
-	if r.metrics != nil {
-		r.metrics.RecordDelete("redis")
 	}
 	return nil
 }

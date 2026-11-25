@@ -4,9 +4,9 @@ import { useAuth } from "../../shared/session";
 import type { TraceSummary } from "../../shared/types";
 import type { TablePagination } from "../../shared/ui";
 
-export const PAGE_SIZE_OPTIONS = [10, 15, 25, 50];
+const PAGE_SIZE_OPTIONS = [10, 15, 25, 50];
 
-export type TraceQueryFilters = {
+type TraceQueryFilters = {
   service?: string;
   status?: string;
   traceId?: string;

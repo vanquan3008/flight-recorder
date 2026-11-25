@@ -172,8 +172,4 @@ func logStartup(logger *slog.Logger, cfg config.Config, version string) {
 	if cfg.App.TLS.CertificateFile == "" {
 		logger.Warn("OTLP listeners are plaintext; use TLS or terminate TLS before TracePilot")
 	}
-
-	if !cfg.Auth.AllowRegistration {
-		logger.Info("registration is closed; create administrators with create-admin")
-	}
 }

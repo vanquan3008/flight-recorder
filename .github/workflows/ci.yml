@@ -13,14 +13,6 @@ concurrency:
 permissions:
   contents: read
 
-env:
-  POSTGRES_DB: tracepilot
-  POSTGRES_USER: tracepilot
-  POSTGRES_PASSWORD: tracepilot-test
-  TRACEPILOT_DATABASE_URL: postgres://tracepilot:tracepilot-test@127.0.0.1:5432/tracepilot?sslmode=disable
-  TRACEPILOT_CLICKHOUSE_URL: http://127.0.0.1:8123
-  TRACEPILOT_CLICKHOUSE_TEST_URL: http://127.0.0.1:8123
-
 jobs:
   frontend:
     runs-on: ubuntu-latest
@@ -74,6 +66,12 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      TRACEPILOT_DATABASE_URL: postgres://tracepilot:tracepilot-test@127.0.0.1:5432/tracepilot?sslmode=disable
+      TRACEPILOT_CLICKHOUSE_URL: http://127.0.0.1:8123
+      TRACEPILOT_CLICKHOUSE_TEST_URL: http://127.0.0.1:8123
+      TRACEPILOT_E2E_EMAIL: admin@tracepilot.test
+      TRACEPILOT_E2E_PASSWORD: admin-password-test-only-123
     services:
       postgres:
         image: postgres:17-alpine
@@ -110,6 +108,8 @@ jobs:
           /tmp/tracepilot migrate clickhouse status
           /tmp/tracepilot migrate all
           /tmp/tracepilot migrate all
+      - name: Create the super administrator
+        run: printf '%s\n' "$TRACEPILOT_E2E_PASSWORD" | /tmp/tracepilot create-admin --email "$TRACEPILOT_E2E_EMAIL" --name "E2E Admin" --password-stdin
       - name: Test
         env:
           TRACEPILOT_INTEGRATION_TEST: "1"

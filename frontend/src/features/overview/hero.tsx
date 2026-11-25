@@ -2,11 +2,11 @@ import { secondaryButtonClass, primaryButtonClass } from "../../shared/ui/styles
 import { Link, useLocation } from "react-router-dom";
 import type { Incident, RequestPerformance } from "../../shared/types";
 import { Badge, DetailLink, formatCount, formatDuration, formatPercent } from "../../shared/ui";
-import { contextURL } from "../../shared/ui/navigation";
+import { contextURL } from "../../shared/ui/links";
 import { PerformanceTrend } from "../performance/trend";
 
-export type StatusTone = "danger" | "warning" | "ok" | "idle";
-export type OverviewStatus = { tone: StatusTone; headline: string; detail: string };
+type StatusTone = "danger" | "warning" | "ok" | "idle";
+type OverviewStatus = { tone: StatusTone; headline: string; detail: string };
 
 const shownIncidents = 3;
 

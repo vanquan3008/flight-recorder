@@ -1,7 +1,7 @@
 import type { InputHTMLAttributes, ReactNode } from "react";
 import { AlertCircle } from "lucide-react";
 
-export interface FormFieldProps extends InputHTMLAttributes<HTMLInputElement> {
+interface FormFieldProps extends InputHTMLAttributes<HTMLInputElement> {
   label: string;
   icon?: React.ComponentType<{ className?: string; size?: number }>;
   rightElement?: ReactNode;

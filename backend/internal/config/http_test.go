@@ -3,6 +3,7 @@ package config
 import (
 	"net/netip"
 	"testing"
+	"time"
 )
 
 func TestClientAddressUsesForwardedForOnlyBehindTrustedProxies(t *testing.T) {
@@ -65,5 +66,17 @@ func TestFromTrustedProxyJudgesOnlyTheConnectionPeer(t *testing.T) {
 		if got := FromTrustedProxy(remoteAddr, trusted); got != want {
 			t.Errorf("FromTrustedProxy(%q) = %t, want %t", remoteAddr, got, want)
 		}
+	}
+}
+
+func TestRequestDefaultsPreserveExplicitLimits(t *testing.T) {
+	configuration := HTTPConfig{MaxConcurrentQueries: 2, RateLimitAuthRequests: 100}
+	got := configuration.WithRequestDefaults()
+	if got.MaxConcurrentQueries != 2 || got.RateLimitAuthRequests != 100 {
+		t.Fatalf("explicit request limits were overwritten: %+v", got)
+	}
+	if got.MaxConcurrentLogQueries != 8 || got.RequestTimeout != 20*time.Second ||
+		got.RateLimitRequests != 120 || got.RateLimitReplayRequests != 10 {
+		t.Fatalf("request defaults were not applied: %+v", got)
 	}
 }

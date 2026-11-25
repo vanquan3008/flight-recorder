@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { BrowserRouter, useLocation, useNavigate } from "react-router-dom";
-import { AppShell } from "./app-shell";
+import { AppShell } from "./shell/app-shell";
 
 /** Synchronizes and cleans legacy hash URLs (e.g. `/#/settings?tab=projects` -> `/settings?tab=projects`). */
 function HashRedirect() {

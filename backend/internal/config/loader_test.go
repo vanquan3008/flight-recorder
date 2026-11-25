@@ -73,14 +73,6 @@ func TestLoadResolvesEachPropertyByPrecedence(t *testing.T) {
 			check: func(c Config) bool { return c.Observability.LogLevel == slog.LevelInfo },
 		},
 		{
-			name: "legacy names keep existing settings and source precedence",
-			file: "TRACEPILOT_STORAGE_RETENTION_MAX_AGE=168h\nTRACEPILOT_INGESTION_WORKERS=6\nTRACEPILOT_QUEUE_WORKERS=4\n",
-			env:  map[string]string{"TRACEPILOT_RETENTION_MAX_AGE": "0s", "TRACEPILOT_LOG_LEVEL": "debug"},
-			check: func(c Config) bool {
-				return c.Storage.Retention.MaxAge == 0 && c.Queue.Workers == 4 && c.Observability.LogLevel == slog.LevelDebug
-			},
-		},
-		{
 			name:  "explicit zero overrides a default",
 			env:   map[string]string{"TRACEPILOT_INGESTION_AUTH_FAILURE_LIMIT": "0", "TRACEPILOT_STORAGE_RETENTION_MAX_AGE": "0s"},
 			check: func(c Config) bool { return c.Ingestion.AuthFailureLimit == 0 && c.Storage.Retention.MaxAge == 0 },
@@ -178,13 +170,9 @@ func TestMigrationScopeIgnoresUnrelatedGroups(t *testing.T) {
 	if _, err := LoadMigrations("postgres"); err != nil {
 		t.Fatalf("migration loading parsed an unrelated group: %v", err)
 	}
-	t.Setenv("TRACEPILOT_PRODUCTION", "true")
+	t.Setenv("TRACEPILOT_APP_PRODUCTION", "true")
 	if _, err := LoadMigrations("postgres"); err == nil {
-		t.Fatal("the legacy production flag was ignored by scoped loading")
-	}
-	t.Setenv("TRACEPILOT_APP_PRODUCTION", "false")
-	if _, err := LoadMigrations("postgres"); err != nil {
-		t.Fatalf("the canonical production flag did not take precedence: %v", err)
+		t.Fatal("the production flag was ignored by scoped loading")
 	}
 }
 

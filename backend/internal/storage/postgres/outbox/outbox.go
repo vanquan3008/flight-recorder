@@ -2,8 +2,6 @@ package outbox
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,19 +14,23 @@ import (
 	sqlcstore "github.com/vanquan3008/tracepilot/internal/storage/postgres/sqlc"
 )
 
-func webhookDeliveryID(projectID, webhookID, eventType string, payload []byte) string {
-	payloadDigest := sha256.Sum256(payload)
-	// The payload digest makes notification emission idempotent across retries
-	// and restarts. A fixed epoch is intentional: created_at remains the real
-	// ordering field exposed to operators.
-	return telemetry.DeterministicID(time.Unix(0, 0), "webhook-delivery", projectID, webhookID, eventType, hex.EncodeToString(payloadDigest[:]))
+// webhookDeliveryID derives a delivery's ID from the domain event that caused
+// it, not from the payload: two transitions can carry identical payloads (an
+// incident resolved twice by the same operator), and each must notify. A fixed
+// epoch is intentional: created_at remains the real ordering field.
+func webhookDeliveryID(projectID, webhookID, eventType, eventKey string) string {
+	return telemetry.DeterministicID(time.Unix(0, 0), "webhook-delivery", projectID, webhookID, eventType, eventKey)
 }
 
-// EnqueueDeliveries is called inside the same transaction that creates
-// the incident/detection. Thus a committed domain event cannot be committed
-// without its durable notification intent, while duplicate event processing is
-// absorbed by the deterministic delivery key.
-func EnqueueDeliveries(ctx context.Context, transaction pgx.Tx, projectID, eventType string, payload any) error {
+// EnqueueDeliveries is called inside the same transaction that creates the
+// domain event, so a committed event always has its durable notification
+// intent. eventKey identifies that one event (an incident or status change ID):
+// processing the same event again yields the same delivery IDs, which the
+// insert absorbs, while a new event with an equal payload still notifies.
+func EnqueueDeliveries(ctx context.Context, transaction pgx.Tx, projectID, eventType, eventKey string, payload any) error {
+	if eventKey == "" {
+		return errors.New("webhook delivery requires an event key")
+	}
 	encoded, marshalError := json.Marshal(map[string]any{"event": eventType, "payload": payload})
 	if marshalError != nil {
 		return fmt.Errorf("marshal webhook payload: %w", marshalError)
@@ -40,7 +42,7 @@ func EnqueueDeliveries(ctx context.Context, transaction pgx.Tx, projectID, event
 	}
 	for _, webhookID := range webhookIDs {
 		if insertError := queries.EnqueueWebhookDelivery(ctx, sqlcstore.EnqueueWebhookDeliveryParams{
-			ID:        webhookDeliveryID(projectID, webhookID, eventType, encoded),
+			ID:        webhookDeliveryID(projectID, webhookID, eventType, eventKey),
 			ProjectID: projectID, WebhookID: webhookID, EventType: eventType, Payload: encoded,
 		}); insertError != nil {
 			return fmt.Errorf("enqueue webhook delivery: %w", insertError)

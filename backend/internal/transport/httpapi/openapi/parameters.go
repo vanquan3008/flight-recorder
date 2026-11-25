@@ -1,7 +1,6 @@
 package openapi
 
 import (
-	"maps"
 	"slices"
 	"strings"
 )
@@ -99,11 +98,6 @@ func HasParameter(name string) bool {
 	return ok
 }
 
-// ParameterNames lists every reusable parameter.
-func ParameterNames() []string {
-	return slices.Sorted(maps.Keys(parameterComponents))
-}
-
 func parametersComponent() map[string]any {
 	components := make(map[string]any, len(parameterComponents))
 	for name, build := range parameterComponents {
@@ -139,11 +133,4 @@ func RouteParameters(route Route) []map[string]any {
 		}
 	}
 	return parameters
-}
-
-// OpenAPIParameters returns the path parameters of a route.
-//
-// Deprecated: query parameters are declared on Route.Query; use RouteParameters.
-func OpenAPIParameters(path, operationID string) []map[string]any {
-	return RouteParameters(Route{Path: path, OperationID: operationID})
 }

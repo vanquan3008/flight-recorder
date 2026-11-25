@@ -3,7 +3,6 @@ package postgres
 import (
 	"context"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"os"
 	"slices"
@@ -12,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/vanquan3008/tracepilot/internal/config"
 	"github.com/vanquan3008/tracepilot/internal/domain/analysis"
 	notificationdomain "github.com/vanquan3008/tracepilot/internal/domain/notification"
@@ -51,23 +49,6 @@ func runOnReplicas(replicas []*Database, work func(index int, replica *Database)
 	return results
 }
 
-func isDeadlock(err error) bool {
-	var postgresError *pgconn.PgError
-	return errors.As(err, &postgresError) && postgresError.Code == "40P01"
-}
-
-// storeLikeThePipeline retries what the ingestion pipeline retries: a
-// transient error such as a detected deadlock.
-func storeLikeThePipeline(replica *Database, scope config.IngestionConfig, events []telemetry.Event) error {
-	var err error
-	for range 3 {
-		if err = replica.StoreEvents(context.Background(), scope, events); !isDeadlock(err) {
-			return err
-		}
-	}
-	return err
-}
-
 func TestReplicasIngestingTheSameRetriedBatchStoreItOnce(t *testing.T) {
 	database, scope := newFlowTestDatabase(t)
 	ctx := context.Background()
@@ -87,9 +68,9 @@ func TestReplicasIngestingTheSameRetriedBatchStoreItOnce(t *testing.T) {
 	// One exporter retried through three replicas, two of them seeing the batch in another order.
 	for _, err := range runOnReplicas(replicas, func(index int, replica *Database) error {
 		if index == 1 {
-			return storeLikeThePipeline(replica, scope, reversed)
+			return replica.StoreEvents(ctx, scope, reversed)
 		}
-		return storeLikeThePipeline(replica, scope, batch)
+		return replica.StoreEvents(ctx, scope, batch)
 	}) {
 		if err != nil {
 			t.Fatal(err)

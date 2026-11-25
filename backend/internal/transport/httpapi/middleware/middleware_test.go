@@ -3,6 +3,7 @@ package middleware
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -42,6 +43,30 @@ func TestRequestID(t *testing.T) {
 	}
 	if recorder.Header().Get("traceparent") == "" {
 		t.Error("missing traceparent header")
+	}
+}
+
+func TestRequestIDReplacesUnsafeIncomingValues(t *testing.T) {
+	var seenRequestID, seenTraceparent string
+	handler := RequestID()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenRequestID, seenTraceparent = r.Header.Get(RequestIDHeader), r.Header.Get(traceparentHeader)
+	}))
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request.Header.Set(RequestIDHeader, "bad id\nwith newline")
+	request.Header.Set(traceparentHeader, "00-00000000000000000000000000000000-00f067aa0ba902b7-01")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+
+	requestID := recorder.Header().Get(RequestIDHeader)
+	if !safeRequestID.MatchString(requestID) || requestID != seenRequestID {
+		t.Fatalf("request ID = %q (handler saw %q), want one safe generated value", requestID, seenRequestID)
+	}
+	traceparent := recorder.Header().Get(traceparentHeader)
+	if traceparent == "" || traceparent != seenTraceparent {
+		t.Fatalf("traceparent = %q (handler saw %q), want one value", traceparent, seenTraceparent)
+	}
+	if strings.Contains(traceparent, "00000000000000000000000000000000") {
+		t.Fatalf("traceparent = %q kept the all-zero incoming trace ID", traceparent)
 	}
 }
 

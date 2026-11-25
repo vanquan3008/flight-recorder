@@ -1,16 +1,12 @@
 package httpapi
 
 import (
-	"context"
-	"io"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/vanquan3008/tracepilot/internal/config"
-	"github.com/vanquan3008/tracepilot/internal/observability/metrics"
 )
 
 func serverTrusting(proxies ...string) *Server {
@@ -19,7 +15,7 @@ func serverTrusting(proxies ...string) *Server {
 		Database: config.DatabaseConfig{ReadinessTimeout: time.Second},
 		App:      config.AppConfig{ShutdownTimeout: time.Second},
 	}
-	return New(configuration, slog.New(slog.NewTextHandler(io.Discard, nil)), func(context.Context) error { return nil }, metrics.New("test", "test", "test"), nil, nil)
+	return New(configuration, testDependencies())
 }
 
 func TestClientAddressTrustsForwardedForOnlyFromConfiguredProxies(t *testing.T) {

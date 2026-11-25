@@ -45,11 +45,7 @@ func resolveHealthcheckURL() string {
 	if healthcheckURL := os.Getenv("TRACEPILOT_HEALTHCHECK_URL"); healthcheckURL != "" {
 		return healthcheckURL
 	}
-	certificateFile, configured := os.LookupEnv("TRACEPILOT_APP_TLS_CERTIFICATE_FILE")
-	if !configured {
-		certificateFile = os.Getenv("TRACEPILOT_TLS_CERTIFICATE_FILE")
-	}
-	if certificateFile != "" {
+	if os.Getenv("TRACEPILOT_APP_TLS_CERTIFICATE_FILE") != "" {
 		return "https://127.0.0.1:8080/health/ready"
 	}
 	return defaultHealthcheckURL

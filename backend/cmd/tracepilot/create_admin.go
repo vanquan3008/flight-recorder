@@ -68,6 +68,9 @@ type userCreator func(context.Context, auth.CreateUserParams, auth.Actor) (auth.
 func createAdministrator(ctx context.Context, create userCreator, params auth.CreateUserParams) int {
 	user, err := create(ctx, params, auth.Actor{})
 	switch {
+	case errors.Is(err, auth.ErrPlatformAdminExists):
+		slog.Error("administrator not created: a super administrator already exists; it creates every other account")
+		return 1
 	case errors.Is(err, auth.ErrEmailExists):
 		slog.Error("administrator not created: the email is already registered", "email", params.Email)
 		return 1

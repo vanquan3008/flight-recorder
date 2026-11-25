@@ -1,7 +1,7 @@
 import { createContext, useContext } from "react";
 import type { Account, Membership, Role, SessionView } from "./model";
 
-export type AuthState = {
+type AuthState = {
   /** Non-empty while someone is signed in; pass it to `api`, which attaches the access token. */
   credential: string;
   isAuthenticated: boolean;

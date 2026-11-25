@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/vanquan3008/tracepilot/internal/ingest/otlp/normalize/normalizetest"
+
 	"github.com/vanquan3008/tracepilot/internal/auth"
 	"github.com/vanquan3008/tracepilot/internal/config"
 	"github.com/vanquan3008/tracepilot/internal/observability/metrics"
@@ -29,7 +31,7 @@ type guardFixture struct {
 func newGuardFixture(limit int) *guardFixture {
 	fixture := &guardFixture{clock: time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)}
 	fixture.result = func(string) (auth.Principal, error) { return auth.Principal{}, auth.ErrUnauthorized }
-	configuration := testIngestionConfig()
+	configuration := normalizetest.Config()
 	configuration.AuthFailureLimit = limit
 	configuration.AuthFailureWindow = time.Minute
 	fixture.receiver = NewReceiver(configuration, nil, nil, metrics.New("test", "test", "test"), func(_ context.Context, key string) (auth.Principal, error) {
@@ -90,7 +92,7 @@ func TestAuthGuardThrottlesClientPastItsFailureBudget(t *testing.T) {
 func TestAuthGuardNeverCachesAcceptedKeys(t *testing.T) {
 	fixture := newGuardFixture(1000)
 	fixture.result = func(string) (auth.Principal, error) {
-		return auth.Principal{ProjectID: fixture.receiver.normalizer.configuration.ProjectID, Scopes: []string{"ingest"}}, nil
+		return auth.Principal{ProjectID: fixture.receiver.projectID, Scopes: []string{"ingest"}}, nil
 	}
 	if err := fixture.authorize("good", "client"); err != nil {
 		t.Fatal(err)
@@ -118,7 +120,7 @@ func TestAuthGuardIgnoresOutagesAndScopeFailuresForKeyMemory(t *testing.T) {
 
 	fixture = newGuardFixture(1000)
 	fixture.result = func(string) (auth.Principal, error) {
-		return auth.Principal{ProjectID: fixture.receiver.normalizer.configuration.ProjectID, Scopes: []string{"read"}}, nil
+		return auth.Principal{ProjectID: fixture.receiver.projectID, Scopes: []string{"read"}}, nil
 	}
 	for range 2 {
 		if err := fixture.authorize("read-only", "client"); !errors.Is(err, auth.ErrUnauthorized) {
@@ -132,7 +134,7 @@ func TestAuthGuardIgnoresOutagesAndScopeFailuresForKeyMemory(t *testing.T) {
 
 func TestAuthGuardDisabledWithoutALimit(t *testing.T) {
 	fixture := &guardFixture{}
-	configuration := testIngestionConfig()
+	configuration := normalizetest.Config()
 	fixture.receiver = NewReceiver(configuration, nil, nil, metrics.New("test", "test", "test"), func(context.Context, string) (auth.Principal, error) {
 		fixture.lookups++
 		return auth.Principal{}, auth.ErrUnauthorized
@@ -157,7 +159,7 @@ func TestAuthGuardTablesStayBounded(t *testing.T) {
 }
 
 func TestOTLPHTTPReturns429WhenClientKeepsFailingAuthentication(t *testing.T) {
-	configuration := testIngestionConfig()
+	configuration := normalizetest.Config()
 	configuration.AuthFailureLimit = 2
 	configuration.AuthFailureWindow = time.Minute
 	lookups := 0

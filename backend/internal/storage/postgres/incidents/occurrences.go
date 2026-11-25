@@ -25,7 +25,8 @@ const incidentDeduplicationWindow = time.Hour
 type incidentOccurrences struct {
 	id         string
 	created    bool
-	reopened   bool // a RESOLVED incident that failed again after it was resolved
+	reopened   bool   // a RESOLVED incident that failed again after it was resolved
+	reopenID   string // the status change that recorded the reopen
 	lastSeenAt time.Time
 	events     []telemetry.Event // oldest first
 }
@@ -56,10 +57,12 @@ func RecordOccurrences(ctx context.Context, transaction pgx.Tx, ingestion config
 				"incident_id": record.id, "environment_id": ingestion.EnvironmentID, "service": opening.ServiceName,
 				"title": incident.Title(opening), "severity": incident.Severity(opening),
 			}
+			eventKey := "opened:" + record.id
 			if record.reopened {
 				payload["reopened"], payload["previous_status"] = true, "RESOLVED"
+				eventKey = record.reopenID
 			}
-			if enqueueError := outbox.EnqueueDeliveries(ctx, transaction, ingestion.ProjectID, "incident.opened", payload); enqueueError != nil {
+			if enqueueError := outbox.EnqueueDeliveries(ctx, transaction, ingestion.ProjectID, "incident.opened", eventKey, payload); enqueueError != nil {
 				return enqueueError
 			}
 		}
@@ -213,8 +216,9 @@ func reopenIfResolved(ctx context.Context, queries *sqlcstore.Queries, ingestion
 		return nil
 	}
 	record.reopened = true
+	record.reopenID = telemetry.DeterministicID(reopenedAt, "incident-reopen", ingestion.ProjectID, record.id, latest.ID)
 	if insertError := queries.InsertIncidentStatusChange(ctx, sqlcstore.InsertIncidentStatusChangeParams{
-		ID:        telemetry.DeterministicID(reopenedAt, "incident-reopen", ingestion.ProjectID, record.id, latest.ID),
+		ID:        record.reopenID,
 		ProjectID: ingestion.ProjectID, IncidentID: record.id, PreviousStatus: "RESOLVED", Status: "OPEN", ChangedAt: reopenedAt,
 	}); insertError != nil {
 		return fmt.Errorf("record incident reopen: %w", insertError)

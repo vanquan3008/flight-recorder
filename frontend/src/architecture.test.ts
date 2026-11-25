@@ -40,6 +40,11 @@ describe("frontend module boundaries", () => {
     expect(violations).toEqual([]);
   });
 
+  it("keeps test fixtures out of production code", () => {
+    const violations = [...imports].flatMap(([file, targets]) => area(file) === "testing" ? [] : targets.filter((target) => area(target) === "testing").map((target) => `${file} -> ${target}`));
+    expect(violations).toEqual([]);
+  });
+
   it("has no import cycles", () => {
     const state = new Map<string, "visiting" | "done">();
     const cycles: string[] = [];

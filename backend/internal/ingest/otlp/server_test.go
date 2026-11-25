@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/vanquan3008/tracepilot/internal/ingest/otlp/normalize/normalizetest"
+
 	"github.com/vanquan3008/tracepilot/internal/config"
 	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
 	"github.com/vanquan3008/tracepilot/internal/ingest/pipeline"
@@ -38,7 +40,7 @@ func TestOTLPHTTPLogsPersistBeforeSuccess(t *testing.T) {
 		return nil
 	}, metricRegistry)
 	ingestionPipeline.Start()
-	ingestionConfiguration := testIngestionConfig()
+	ingestionConfiguration := normalizetest.Config()
 	ingestionConfiguration.MaxRequestBytes = 1 << 20
 	receiver := NewReceiver(ingestionConfiguration, ingestionPipeline, nil, metricRegistry, nil)
 	server := NewServer(config.Config{
@@ -48,7 +50,7 @@ func TestOTLPHTTPLogsPersistBeforeSuccess(t *testing.T) {
 	}, receiver)
 
 	requestMessage := &collectorlogspb.ExportLogsServiceRequest{ResourceLogs: []*logspb.ResourceLogs{{
-		Resource: &resourcepb.Resource{Attributes: []*commonpb.KeyValue{stringKeyValue("service.name", "worker")}},
+		Resource: &resourcepb.Resource{Attributes: []*commonpb.KeyValue{normalizetest.StringKeyValue("service.name", "worker")}},
 		ScopeLogs: []*logspb.ScopeLogs{{LogRecords: []*logspb.LogRecord{{
 			TimeUnixNano: uint64(time.Now().UTC().UnixNano()),
 			Body:         &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: "hello"}},
@@ -84,7 +86,7 @@ func TestOTLPGRPCTracesPersistBeforeSuccess(t *testing.T) {
 		return nil
 	}, metricRegistry)
 	ingestionPipeline.Start()
-	ingestionConfiguration := testIngestionConfig()
+	ingestionConfiguration := normalizetest.Config()
 	ingestionConfiguration.MaxRequestBytes = 1 << 20
 	server := NewServer(config.Config{Ingestion: ingestionConfiguration}, NewReceiver(ingestionConfiguration, ingestionPipeline, nil, metricRegistry, nil))
 	listener := bufconn.Listen(1 << 20)
@@ -101,7 +103,7 @@ func TestOTLPGRPCTracesPersistBeforeSuccess(t *testing.T) {
 	defer connection.Close()
 	startedAt := time.Now().UTC()
 	request := &collectortracepb.ExportTraceServiceRequest{ResourceSpans: []*tracepb.ResourceSpans{{
-		Resource: &resourcepb.Resource{Attributes: []*commonpb.KeyValue{stringKeyValue("service.name", "api")}},
+		Resource: &resourcepb.Resource{Attributes: []*commonpb.KeyValue{normalizetest.StringKeyValue("service.name", "api")}},
 		ScopeSpans: []*tracepb.ScopeSpans{{Spans: []*tracepb.Span{{
 			TraceId:           bytes.Repeat([]byte{1}, 16),
 			SpanId:            bytes.Repeat([]byte{2}, 8),
@@ -182,11 +184,11 @@ func TestOTLPHTTPStorageFailureIsRetryable(t *testing.T) {
 		}
 	})
 
-	ingestionConfiguration := testIngestionConfig()
+	ingestionConfiguration := normalizetest.Config()
 	ingestionConfiguration.MaxRequestBytes = 1 << 20
 	server := NewServer(config.Config{Ingestion: ingestionConfiguration}, NewReceiver(ingestionConfiguration, ingestionPipeline, nil, metricRegistry, nil))
 	requestMessage := &collectortracepb.ExportTraceServiceRequest{ResourceSpans: []*tracepb.ResourceSpans{{
-		Resource: &resourcepb.Resource{Attributes: []*commonpb.KeyValue{stringKeyValue("service.name", "api")}},
+		Resource: &resourcepb.Resource{Attributes: []*commonpb.KeyValue{normalizetest.StringKeyValue("service.name", "api")}},
 		ScopeSpans: []*tracepb.ScopeSpans{{Spans: []*tracepb.Span{{
 			TraceId:           bytes.Repeat([]byte{1}, 16),
 			SpanId:            bytes.Repeat([]byte{2}, 8),

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { LogRecord } from "../types";
 import { APIError, apiResponse, requestScopeKey } from "./client";
 
-export type LiveStreamOptions = {
+type LiveStreamOptions = {
   enabled: boolean;
   credential: string;
   onLog?: (log: LogRecord) => void;

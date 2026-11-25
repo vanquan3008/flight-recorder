@@ -1,6 +1,6 @@
 import { ExternalLink, Globe, Tag } from "lucide-react";
 import type { LogRecord } from "../../shared/types";
-import { traceURL } from "../../shared/ui/navigation";
+import { traceURL } from "../../shared/ui/links";
 import { CopyButton, DetailLink, formatTime } from "../../shared/ui";
 import { HttpStatusBadge, MethodBadge } from "./log-badges";
 import type { ParsedHttpLog } from "./log-format";

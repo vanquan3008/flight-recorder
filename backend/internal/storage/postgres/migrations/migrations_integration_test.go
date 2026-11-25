@@ -232,13 +232,15 @@ func TestUpgradeDropsPostgresSignalTablesIntegration(t *testing.T) {
 	if _, err := Run(ctx, endpoint, "up", 0); err != nil {
 		t.Fatal(err)
 	}
-	_, err := connection.Exec(ctx, `ALTER TABLE projects DROP COLUMN telemetry_retention_days;
-CREATE TABLE services (id uuid); CREATE TABLE spans (event_id uuid); CREATE TABLE metric_data_points (id uuid);
-CREATE TABLE span_rollup_buckets (project_id uuid); CREATE TABLE span_minute_rollups (project_id uuid);
-CREATE FUNCTION span_dependency_type(attributes jsonb) RETURNS text LANGUAGE sql IMMUTABLE AS 'SELECT NULL::text';
-INSERT INTO projects(id, slug, name) VALUES ('00000000-0000-0000-0000-000000000001', 'upgrade', 'Upgrade');
-UPDATE schema_migrations SET version = 2`)
+	target, err := CurrentVersion()
 	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Run(ctx, endpoint, "down", int(target)-2); err != nil {
+		t.Fatalf("prepare version 2: %v", err)
+	}
+	if _, err := connection.Exec(ctx, `INSERT INTO projects(id, slug, name)
+VALUES ('00000000-0000-0000-0000-000000000001', 'upgrade', 'Upgrade')`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := Run(ctx, endpoint, "up", 0); err != nil {
@@ -263,7 +265,7 @@ UPDATE schema_migrations SET version = 2`)
 		}
 		return count
 	}
-	if _, err := Run(ctx, endpoint, "down", 1); err != nil || signalTables() != 5 {
+	if _, err := Run(ctx, endpoint, "down", int(target)-3); err != nil || signalTables() != 5 {
 		t.Fatalf("rollback of the drop: %v", err)
 	}
 	if _, err := Run(ctx, endpoint, "up", 0); err != nil || signalTables() != 0 {

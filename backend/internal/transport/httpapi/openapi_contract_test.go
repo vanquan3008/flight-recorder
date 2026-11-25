@@ -7,25 +7,25 @@ import (
 	"testing"
 
 	"github.com/vanquan3008/tracepilot/internal/auth"
-	"github.com/vanquan3008/tracepilot/internal/query"
+	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/api"
 	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/openapi"
 )
 
 func TestOpenAPIRoutesDeclareBodiesAndKnownParameters(t *testing.T) {
-	for _, route := range apiRouteDefinitions {
-		key := route.method + " " + route.path
-		if route.response.Kind == openapi.BodyUntyped && !route.streaming {
+	for _, route := range allRoutes() {
+		key := route.Method + " " + route.Path
+		if route.Response.Kind == openapi.BodyUntyped && !route.Streaming {
 			t.Errorf("%s declares no response body", key)
 		}
-		if route.requestBody && route.request == nil {
+		if route.RequestBody && route.Request == nil {
 			t.Errorf("%s accepts a JSON body but declares no request type", key)
 		}
-		if route.request != nil && !route.requestBody {
+		if route.Request != nil && !route.RequestBody {
 			t.Errorf("%s declares a request type without requestBody", key)
 		}
-		for _, name := range slices.Concat(route.query, route.headers) {
+		for _, name := range slices.Concat(route.Query, route.Headers) {
 			if !openapi.HasParameter(name) {
-				t.Errorf("%s names unknown parameter %q; known: %v", key, name, openapi.ParameterNames())
+				t.Errorf("%s names unknown parameter %q", key, name)
 			}
 		}
 	}
@@ -34,7 +34,7 @@ func TestOpenAPIRoutesDeclareBodiesAndKnownParameters(t *testing.T) {
 // TestOpenAPIReferencesResolve serializes the document as clients receive it
 // and checks that every $ref names an existing component.
 func TestOpenAPIReferencesResolve(t *testing.T) {
-	encoded, err := json.Marshal(openAPISpec())
+	encoded, err := json.Marshal(testSpec())
 	if err != nil {
 		t.Fatalf("marshal OpenAPI: %v", err)
 	}
@@ -80,21 +80,21 @@ func parameterSet(spec map[string]any, path, method string) map[string]map[strin
 }
 
 func TestOpenAPIDocumentsProjectHeadersAndScopes(t *testing.T) {
-	spec := openAPISpec()
+	spec := testSpec()
 	traces := parameterSet(spec, "/api/v1/traces", "get")
-	if traces["header:"+HeaderProjectID]["required"] != true || traces["header:"+HeaderEnvironment] == nil {
-		t.Fatalf("trace list must document %s (required) and %s: %v", HeaderProjectID, HeaderEnvironment, traces)
+	if traces["header:"+api.HeaderProjectID]["required"] != true || traces["header:"+api.HeaderEnvironment] == nil {
+		t.Fatalf("trace list must document %s (required) and %s: %v", api.HeaderProjectID, api.HeaderEnvironment, traces)
 	}
 	project := parameterSet(spec, "/api/v1/projects/{projectID}", "get")
-	if project["header:"+HeaderProjectID] != nil || project["header:"+HeaderEnvironment] == nil || project["path:projectID"] == nil {
-		t.Fatalf("a route naming the project in its path must not require %s: %v", HeaderProjectID, project)
+	if project["header:"+api.HeaderProjectID] != nil || project["header:"+api.HeaderEnvironment] == nil || project["path:projectID"] == nil {
+		t.Fatalf("a route naming the project in its path must not require %s: %v", api.HeaderProjectID, project)
 	}
 	if projects := parameterSet(spec, "/api/v1/projects", "get"); len(projects) != 0 {
 		t.Fatalf("session routes take no project headers: %v", projects)
 	}
 	refresh := parameterSet(spec, "/api/v1/auth/refresh", "post")
-	if refresh["header:"+refreshHeader] == nil || refresh["cookie:"+refreshCookieName] == nil {
-		t.Fatalf("refresh must document %s and the %s cookie: %v", refreshHeader, refreshCookieName, refresh)
+	if refresh["header:X-TracePilot-Refresh"] == nil || refresh["cookie:tp_refresh"] == nil {
+		t.Fatalf("refresh must document X-TracePilot-Refresh and the tp_refresh cookie: %v", refresh)
 	}
 
 	paths := spec["paths"].(map[string]any)
@@ -115,7 +115,7 @@ func TestOpenAPIDocumentsProjectHeadersAndScopes(t *testing.T) {
 }
 
 func TestOpenAPIPublishesRequestAndResponseSchemas(t *testing.T) {
-	spec := openAPISpec()
+	spec := testSpec()
 	paths := spec["paths"].(map[string]any)
 	schemas := spec["components"].(map[string]any)["schemas"].(map[string]any)
 	schemaRef := func(content any) string {
@@ -153,38 +153,5 @@ func TestOpenAPIPublishesRequestAndResponseSchemas(t *testing.T) {
 	}
 	if _, ok := login["403"]; ok {
 		t.Fatal("public routes do not return 403")
-	}
-}
-
-// TestTypedResponsesKeepWireFormat proves the response types that replaced
-// map literals encode exactly the same JSON.
-func TestTypedResponsesKeepWireFormat(t *testing.T) {
-	cases := []struct {
-		name  string
-		typed any
-		old   any
-	}{
-		{"auth status", authStatusResponse{RegistrationOpen: true}, map[string]any{"registration_open": true, "first_account": false}},
-		{"trace without more pages", traceResponse{TraceID: "t1", Spans: []query.SpanRecord{}}, map[string]any{"trace_id": "t1", "spans": []query.SpanRecord{}}},
-		{"trace with cursor", traceResponse{TraceID: "t1", Spans: []query.SpanRecord{}, NextCursor: "c"}, map[string]any{"trace_id": "t1", "spans": []query.SpanRecord{}, "next_cursor": "c"}},
-		{"service dependencies", serviceDependenciesResponse{Service: "api"}, map[string]any{"service": "api", "dependencies": []query.ServiceDependency(nil)}},
-		{"created project", createProjectResponse{Project: auth.Project{ID: "p"}, Environment: auth.Environment{ID: "e"}}, map[string]any{"project": auth.Project{ID: "p"}, "environment": auth.Environment{ID: "e"}}},
-		{"project detail", projectDetailResponse{Project: auth.Project{ID: "p"}, Role: "owner"}, map[string]any{"project": auth.Project{ID: "p"}, "role": "owner", "environments": []auth.Environment(nil)}},
-		{"member role", memberRoleResponse{UserID: "u", Role: "user"}, map[string]any{"user_id": "u", "role": "user"}},
-		{"issued token", issuedIngestTokenResponse{JWT: "j"}, map[string]any{"token": auth.IngestToken{}, "jwt": "j"}},
-		{"created user without generated password", createUserResponse{User: auth.User{ID: "u"}}, map[string]any{"user": auth.User{ID: "u"}}},
-		{"created user with generated password", createUserResponse{User: auth.User{ID: "u"}, TemporaryPassword: "pw"}, map[string]any{"user": auth.User{ID: "u"}, "temporary_password": "pw"}},
-		{"temporary password", temporaryPasswordResponse{TemporaryPassword: "pw"}, map[string]any{"temporary_password": "pw"}},
-		{"webhook secret", webhookSecretResponse{Secret: "s"}, map[string]string{"secret": "s"}},
-	}
-	for _, tc := range cases {
-		typed, typedError := json.Marshal(tc.typed)
-		old, oldError := json.Marshal(tc.old)
-		if typedError != nil || oldError != nil {
-			t.Fatalf("%s: marshal errors %v %v", tc.name, typedError, oldError)
-		}
-		if string(typed) != string(old) {
-			t.Errorf("%s: typed %s, previous %s", tc.name, typed, old)
-		}
 	}
 }

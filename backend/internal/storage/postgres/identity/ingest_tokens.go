@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/vanquan3008/tracepilot/internal/xslices"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -55,11 +56,7 @@ func (store *IdentityStore) ListIngestTokens(ctx context.Context, projectID stri
 	if queryError != nil {
 		return nil, fmt.Errorf("list ingest tokens: %w", queryError)
 	}
-	tokens := make([]auth.IngestToken, 0, len(rows))
-	for _, row := range rows {
-		tokens = append(tokens, ingestTokenFrom(row))
-	}
-	return tokens, nil
+	return xslices.Map(rows, ingestTokenFrom), nil
 }
 
 // GetIngestToken finds a token by ID; the receiver uses it to refuse revoked ones.

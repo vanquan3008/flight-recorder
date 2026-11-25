@@ -49,12 +49,11 @@ func defaultConfig() Config {
 			MaxConnections: 8,
 		},
 		Auth: AuthConfig{
-			AllowRegistration: true,
-			AccessTokenTTL:    15 * time.Minute,
-			RefreshTokenTTL:   30 * 24 * time.Hour,
-			CookieSameSite:    "strict",
-			Issuer:            "tracepilot",
-			Audience:          "tracepilot",
+			AccessTokenTTL:  15 * time.Minute,
+			RefreshTokenTTL: 30 * 24 * time.Hour,
+			CookieSameSite:  "strict",
+			Issuer:          "tracepilot",
+			Audience:        "tracepilot",
 		},
 		Cache: CacheConfig{
 			Driver:        CacheDriverAuto,

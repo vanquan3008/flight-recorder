@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/vanquan3008/tracepilot/internal/ingest/otlp/normalize/normalizetest"
+
 	"github.com/vanquan3008/tracepilot/internal/auth"
 	"github.com/vanquan3008/tracepilot/internal/config"
 	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
@@ -33,7 +35,7 @@ func (body *unreadBody) Read([]byte) (int, error) {
 func (*unreadBody) Close() error { return nil }
 
 func TestOTLPHTTPAuthenticatesBeforeReadingBody(t *testing.T) {
-	configuration := testIngestionConfig()
+	configuration := normalizetest.Config()
 	receiver := NewReceiver(configuration, nil, nil, metrics.New("test", "test", "test"), func(context.Context, string) (auth.Principal, error) {
 		return auth.Principal{}, auth.ErrUnauthorized
 	})
@@ -53,7 +55,7 @@ func TestOTLPHTTPAuthenticatesBeforeReadingBody(t *testing.T) {
 }
 
 func TestOTLPAuthenticationOutageIsRetryable(t *testing.T) {
-	configuration := testIngestionConfig()
+	configuration := normalizetest.Config()
 	receiver := NewReceiver(configuration, nil, nil, metrics.New("test", "test", "test"), func(context.Context, string) (auth.Principal, error) {
 		return auth.Principal{}, errors.New("temporary database outage")
 	})
@@ -158,7 +160,7 @@ func (collector *eventCollector) Submit(_ context.Context, events []telemetry.Ev
 
 func TestOTLPHTTPJSONLogKeepsCorrelation(t *testing.T) {
 	collector := &eventCollector{}
-	configuration := testIngestionConfig()
+	configuration := normalizetest.Config()
 	configuration.MaxRequestBytes = 1 << 20
 	receiver := NewReceiver(configuration, collector, nil, metrics.New("test", "test", "test"), nil)
 	server := NewServer(config.Config{Ingestion: configuration}, receiver)
@@ -173,7 +175,7 @@ func TestOTLPHTTPJSONLogKeepsCorrelation(t *testing.T) {
 }
 
 func TestOTLPRejectsRequestsBeyondConcurrencyLimitBeforeReadingBody(t *testing.T) {
-	configuration := testIngestionConfig()
+	configuration := normalizetest.Config()
 	configuration.MaxConcurrentRequests = 1
 	receiver := NewReceiver(configuration, nil, nil, metrics.New("test", "test", "test"), func(context.Context, string) (auth.Principal, error) {
 		return auth.Principal{ProjectID: configuration.ProjectID, Scopes: []string{"ingest"}}, nil
@@ -205,7 +207,7 @@ func TestOTLPRejectsRequestsBeyondConcurrencyLimitBeforeReadingBody(t *testing.T
 
 func TestOTLPStorageRejectionIsPartialSuccessNotRetry(t *testing.T) {
 	collector := &eventCollector{invalid: 1}
-	configuration := testIngestionConfig()
+	configuration := normalizetest.Config()
 	configuration.MaxRequestBytes = 1 << 20
 	server := NewServer(config.Config{Ingestion: configuration}, NewReceiver(configuration, collector, nil, metrics.New("test", "test", "test"), nil))
 	payload := `{"resourceLogs":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"worker"}}]},"scopeLogs":[{"logRecords":[{"timeUnixNano":"1791507600123456789","body":{"stringValue":"kept"}},{"timeUnixNano":"1791507600123456790","body":{"stringValue":"rejected"}}]}]}]}`
@@ -246,7 +248,7 @@ func TestOTLPMetricsAreAcknowledgedOnlyForStoredPoints(t *testing.T) {
 		{"unstorable point is not retried", metricsStub{rejected: 1}, http.StatusOK, 1},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			configuration := testIngestionConfig()
+			configuration := normalizetest.Config()
 			configuration.MaxRequestBytes = 1 << 20
 			server := NewServer(config.Config{Ingestion: configuration}, NewReceiver(configuration, &eventCollector{}, test.stub, metrics.New("test", "test", "test"), nil))
 			request := httptest.NewRequest(http.MethodPost, "/v1/metrics", strings.NewReader(payload))

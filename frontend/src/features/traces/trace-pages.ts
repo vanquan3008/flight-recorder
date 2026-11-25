@@ -8,7 +8,7 @@ export const maxTraceSpans = 5000;
 /** A page can be shorter than pageSize when its spans are large, so bound the requests too. */
 const maxPages = 60;
 
-export type LoadedTrace = { spans: Span[]; truncated: boolean };
+type LoadedTrace = { spans: Span[]; truncated: boolean };
 
 /**
  * Reads a trace page by page. `truncated` is true only when the server reported

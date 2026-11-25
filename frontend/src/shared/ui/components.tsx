@@ -109,7 +109,7 @@ export function Loading({ page = false }: { page?: boolean }) {
 
 // ── Error notice ───────────────────────────────────────────────────────────────
 
-export type ErrorGuidance = {
+type ErrorGuidance = {
   title: string;
   message: string;
   kind: "auth" | "network" | "error";
@@ -120,7 +120,7 @@ export type ErrorGuidance = {
 };
 
 /** Plain-language guidance first; status codes, server messages and commands go in the details. */
-export function errorGuidance(error: unknown): ErrorGuidance {
+function errorGuidance(error: unknown): ErrorGuidance {
   const message = error instanceof Error ? error.message : "Unable to load this data.";
   if (error instanceof APIError) {
     if (error.status === 401) {
@@ -175,7 +175,7 @@ export function errorGuidance(error: unknown): ErrorGuidance {
 const noticeIcons = { auth: KeyRound, network: WifiOff, error: AlertTriangle } as const;
 
 /** One notification layout for every error: centred icon, short title, plain message, actions, then collapsed details. */
-export function Notice({ guidance, variant = "inline", actions }: { guidance: ErrorGuidance; variant?: "inline" | "page" | "banner"; actions?: ReactNode }) {
+function Notice({ guidance, variant = "inline", actions }: { guidance: ErrorGuidance; variant?: "inline" | "page" | "banner"; actions?: ReactNode }) {
   const Icon = noticeIcons[guidance.kind];
   const { statusText, detail, hint } = guidance;
   const banner = variant === "banner";
@@ -237,23 +237,9 @@ export function CopyButton({ value, label, compact = false }: { value: string; l
   );
 }
 
-/** Long values stay scannable: collapsed by default, expandable in place. */
-export function ExpandableText({ value, limit = 360 }: { value: string; limit?: number }) {
-  const [open, setOpen] = useState(false);
-  if (value.length <= limit) return <pre className="inline-json m-0 max-h-48 max-w-full overflow-auto whitespace-pre-wrap wrap-anywhere font-mono text-[11px] text-code">{value}</pre>;
-  return (
-    <div className="expandable">
-      <pre className="inline-json m-0 max-h-48 max-w-full overflow-auto whitespace-pre-wrap wrap-anywhere font-mono text-[11px] text-code">{open ? value : `${value.slice(0, limit)}…`}</pre>
-      <button type="button" className={`button-secondary ${secondaryButtonClass} compact px-2.5 py-1 text-[11.5px]`} aria-expanded={open} onClick={() => setOpen(!open)}>
-        {open ? "Show less" : `Show all (${value.length.toLocaleString()} chars)`}
-      </button>
-    </div>
-  );
-}
-
 // ── Error Boundary ────────────────────────────────────────────────────────────
 
-export type ErrorBoundaryProps = {
+type ErrorBoundaryProps = {
   children: ReactNode;
   fallback?: (error: Error, reset: () => void) => ReactNode;
 };

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/vanquan3008/tracepilot/internal/xslices"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -241,11 +242,7 @@ func (store *IdentityStore) ListEnvironments(ctx context.Context, projectID stri
 	if queryError != nil {
 		return nil, fmt.Errorf("list environments: %w", queryError)
 	}
-	environments := make([]auth.Environment, 0, len(rows))
-	for _, row := range rows {
-		environments = append(environments, environmentFrom(row))
-	}
-	return environments, nil
+	return xslices.Map(rows, environmentFrom), nil
 }
 
 // ListScopes returns every environment of every project.

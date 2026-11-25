@@ -18,8 +18,8 @@ var (
 	ErrMemberNotFound      = errors.New("member not found")
 	ErrMemberExists        = errors.New("user is already a member")
 	ErrLastOwner           = errors.New("a project must keep at least one owner")
-	ErrLastPlatformAdmin   = errors.New("the platform needs at least one active administrator")
-	ErrRegistrationClosed  = errors.New("registration is closed")
+	ErrLastPlatformAdmin   = errors.New("the super administrator cannot be disabled")
+	ErrPlatformAdminExists = errors.New("a super administrator already exists")
 	ErrTooManyProjects     = errors.New("project limit reached")
 	ErrIngestTokenNotFound = errors.New("ingest token not found")
 	ErrIngestTokenExists   = errors.New("ingest token name already exists")
@@ -128,9 +128,8 @@ type CreateProjectParams struct {
 
 // UpdateUserParams changes only the fields that are set.
 type UpdateUserParams struct {
-	DisplayName   *string
-	PlatformAdmin *bool
-	Disabled      *bool
+	DisplayName *string
+	Disabled    *bool
 }
 
 type UserFilter struct {

@@ -1,10 +1,10 @@
 import { ArrowUpRight } from "lucide-react";
 import { useLocation } from "react-router-dom";
 import { DetailLink } from "../../shared/ui";
-import { contextURL, traceURL } from "../../shared/ui/navigation";
+import { contextURL, traceURL } from "../../shared/ui/links";
 import { KeyValueTable } from "./span-kv-table";
 
-export type SpanLink = { traceID: string; spanID: string; traceState: string; attributes: Record<string, unknown> };
+type SpanLink = { traceID: string; spanID: string; traceState: string; attributes: Record<string, unknown> };
 
 const text = (value: unknown) => (typeof value === "string" ? value : "");
 

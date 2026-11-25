@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/vanquan3008/tracepilot/internal/ingest/otlp/normalize/normalizetest"
+
 	"github.com/vanquan3008/tracepilot/internal/auth"
 	"github.com/vanquan3008/tracepilot/internal/config"
 	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
@@ -31,7 +33,7 @@ func (submitter *captureSubmitter) Submit(_ context.Context, events []telemetry.
 func scopedServer(t *testing.T) (*Server, *captureSubmitter) {
 	t.Helper()
 	submitter := &captureSubmitter{}
-	configuration := testIngestionConfig()
+	configuration := normalizetest.Config()
 	configuration.MaxRequestBytes = 1 << 20
 	keys := map[string]auth.Principal{
 		"key-alpha":   {ProjectID: "project-alpha", Scopes: []string{"ingest"}},
@@ -65,7 +67,7 @@ func scopedServer(t *testing.T) (*Server, *captureSubmitter) {
 func postLog(t *testing.T, server *Server, key, environment string) *httptest.ResponseRecorder {
 	t.Helper()
 	body, marshalError := proto.Marshal(&collectorlogspb.ExportLogsServiceRequest{ResourceLogs: []*logspb.ResourceLogs{{
-		Resource: &resourcepb.Resource{Attributes: []*commonpb.KeyValue{stringKeyValue("service.name", "worker")}},
+		Resource: &resourcepb.Resource{Attributes: []*commonpb.KeyValue{normalizetest.StringKeyValue("service.name", "worker")}},
 		ScopeLogs: []*logspb.ScopeLogs{{LogRecords: []*logspb.LogRecord{{
 			TimeUnixNano: uint64(time.Now().UTC().UnixNano()),
 			Body:         &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: "hello"}},

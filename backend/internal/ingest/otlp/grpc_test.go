@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/vanquan3008/tracepilot/internal/ingest/otlp/normalize/normalizetest"
+
 	"github.com/vanquan3008/tracepilot/internal/config"
 	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
 	"github.com/vanquan3008/tracepilot/internal/ingest/pipeline"
@@ -30,7 +32,7 @@ func TestOTLPGRPCQueuesStreamsBeyondTheProcessingLimit(t *testing.T) {
 		return nil
 	}, metricRegistry)
 	ingestionPipeline.Start()
-	ingestionConfiguration := testIngestionConfig()
+	ingestionConfiguration := normalizetest.Config()
 	ingestionConfiguration.MaxRequestBytes = 1 << 20
 	ingestionConfiguration.MaxConcurrentRequests = 1
 	server := NewServer(config.Config{Ingestion: ingestionConfiguration}, NewReceiver(ingestionConfiguration, ingestionPipeline, nil, metricRegistry, nil))
@@ -51,7 +53,7 @@ func TestOTLPGRPCQueuesStreamsBeyondTheProcessingLimit(t *testing.T) {
 		result := make(chan error, 1)
 		startedAt := time.Now().UTC()
 		request := &collectortracepb.ExportTraceServiceRequest{ResourceSpans: []*tracepb.ResourceSpans{{
-			Resource: &resourcepb.Resource{Attributes: []*commonpb.KeyValue{stringKeyValue("service.name", "api")}},
+			Resource: &resourcepb.Resource{Attributes: []*commonpb.KeyValue{normalizetest.StringKeyValue("service.name", "api")}},
 			ScopeSpans: []*tracepb.ScopeSpans{{Spans: []*tracepb.Span{{
 				TraceId:           bytes.Repeat([]byte{1}, 16),
 				SpanId:            bytes.Repeat([]byte{spanID}, 8),

@@ -2,6 +2,7 @@ import { useId } from "react";
 import type { KeyboardEvent } from "react";
 import type { TopologyEdge, TopologyNode } from "../types";
 import { truncate } from "./graph-layout";
+import { kindClass, plural, typeStripeFill } from "./node-style";
 
 export type FlowLink = { edge: TopologyEdge; node: TopologyNode };
 
@@ -17,15 +18,6 @@ const width = nodeWidth * 2 + centerWidth + columnGap * 2;
 const centerX = nodeWidth + columnGap;
 const rightX = centerX + centerWidth + columnGap;
 
-const plural = (value: number, noun: string) => `${value} ${noun}${value === 1 ? "" : "s"}`;
-const kindClass = (type: string) => type.toLowerCase().replace(/[^a-z0-9]/g, "");
-function typeStripeFill(type: string): string {
-  const k = kindClass(type);
-  if (k === "external") return "fill-violet";
-  if (k === "database" || k === "db") return "fill-cyan";
-  if (k === "messaging" || k === "queue") return "fill-warning";
-  return "fill-accent";
-}
 
 /** A service in the middle, the services that call it on the left and what it calls on the right. */
 export function FlowDiagram({ node, callers, callees, onSelect }: { node: TopologyNode; callers: FlowLink[]; callees: FlowLink[]; onSelect: (id: string) => void }) {
