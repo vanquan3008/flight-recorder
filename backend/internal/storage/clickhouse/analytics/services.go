@@ -2,6 +2,7 @@ package analytics
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -39,18 +40,7 @@ func (store *Analytics) ListServices(ctx context.Context, projectID, environment
 	}
 	where = client.AddTime(where, parameters, "started_at", "from", ">=", from)
 	where = client.AddTime(where, parameters, "started_at", "to", "<=", to)
-	rows, err := client.QueryRows[serviceRow](ctx, store.client, `SELECT
-    service_name AS name,
-    uniqExact(trace_id) AS trace_count,
-    countIf(span_kind = 2) AS request_count,
-    countIf(status_code = 'ERROR') AS error_count,
-    if(count() = 0, 0, error_count / count()) AS error_rate,
-    toInt64(avg(duration_ns)) AS average_latency
-FROM tracepilot_spans FINAL
-WHERE `+strings.Join(where, " AND ")+`
-GROUP BY service_name
-ORDER BY service_name`+client.FinalSettings+`
-FORMAT JSONEachRow`, parameters)
+	rows, err := client.QueryRows[serviceRow](ctx, store.client, fmt.Sprintf(listServicesSQL, strings.Join(where, " AND "), client.FinalSettings), parameters)
 	if err != nil {
 		return nil, err
 	}
@@ -72,32 +62,6 @@ func (store *Analytics) ListServiceDependencies(ctx context.Context, projectID, 
 	parameters["service"], parameters["to"] = serviceName, client.Time(now)
 	parameters["from"] = client.Time(client.MaxTime(from, since))
 	parameters["parent_from"] = client.Time(client.MaxTime(parentStart(from), since))
-	rows, err := client.QueryRows[query.ServiceDependency](ctx, store.client, `SELECT
-    child.service_name AS service_name,
-    count() AS call_count
-FROM (
-    SELECT trace_id, parent_span_id, service_name
-    FROM tracepilot_spans FINAL
-    WHERE project_id = {project:UUID}
-      AND environment_id = {environment:UUID}
-      AND started_at >= {from:DateTime64(9, 'UTC')}
-      AND started_at <= {to:DateTime64(9, 'UTC')}
-      AND parent_span_id != ''
-      AND service_name != {service:String}
-) AS child
-INNER JOIN (
-    SELECT trace_id, span_id
-    FROM tracepilot_spans FINAL
-    WHERE project_id = {project:UUID}
-      AND environment_id = {environment:UUID}
-      AND started_at >= {parent_from:DateTime64(9, 'UTC')}
-      AND started_at <= {to:DateTime64(9, 'UTC')}
-      AND service_name = {service:String}
-) AS parent
-    ON child.trace_id = parent.trace_id
-   AND child.parent_span_id = parent.span_id
-GROUP BY service_name
-ORDER BY call_count DESC, service_name`+client.FinalSettings+`
-FORMAT JSONEachRow`, parameters)
+	rows, err := client.QueryRows[query.ServiceDependency](ctx, store.client, fmt.Sprintf(listServiceDependenciesSQL, client.FinalSettings), parameters)
 	return rows, err
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"sort"
 	"strconv"
@@ -34,15 +35,6 @@ type tracePageRow struct {
 	LastMatch time.Time `json:"last_match"`
 }
 
-const traceSummaryColumns = `
-    s.trace_id AS id,
-    min(s.started_at) AS trace_started,
-    max(s.ended_at) AS trace_ended,
-    toInt64(toUnixTimestamp64Nano(max(s.ended_at)) - toUnixTimestamp64Nano(min(s.started_at))) AS duration_nanos,
-    argMin(s.service_name, tuple(s.parent_span_id != '', s.started_at, toString(s.event_id))) AS root_service,
-    count() AS span_count,
-    countIf(s.status_code = 'ERROR') AS error_count`
-
 // ListTraces returns up to Limit+1 traces ordered by their latest matching span.
 // Without a duration filter the page is chosen from matching spans first and
 // only its traces are summarized; a duration filter needs every match summarized.
@@ -59,11 +51,7 @@ func (store *Traces) ListTraces(ctx context.Context, projectID string, filter qu
 	matching = client.AddEquals(matching, parameters, [3]string{"service_name", "service", filter.Service},
 		[3]string{"span_name", "operation", filter.Operation}, [3]string{"status_code", "status", filter.Status},
 		[3]string{"trace_id", "trace", filter.TraceID})
-	page := `
-    SELECT trace_id, max(started_at) AS last_match
-    FROM tracepilot_spans FINAL
-    WHERE ` + strings.Join(matching, " AND ") + `
-    GROUP BY trace_id`
+	page := fmt.Sprintf(traceMatchesSQL, strings.Join(matching, " AND "))
 	if !filter.Before.IsZero() {
 		page += `
     HAVING (last_match, trace_id) < ({before:DateTime64(9, 'UTC')}, {cursor:String})`
@@ -93,17 +81,7 @@ func (store *Traces) ListTraces(ctx context.Context, projectID string, filter qu
 		having = append(having, "duration_nanos <= {max_duration:Int64}")
 		parameters["max_duration"] = strconv.FormatInt(*filter.MaxDurationNs, 10)
 	}
-	rows, err := client.QueryRows[traceSummaryRow](ctx, store.client, `SELECT`+traceSummaryColumns+`,
-    any(p.last_match) AS cursor_at
-FROM tracepilot_spans AS s FINAL
-INNER JOIN (`+page+`
-) AS p ON s.trace_id = p.trace_id
-WHERE `+strings.Join(summaryWhere, " AND ")+`
-GROUP BY s.trace_id
-HAVING `+strings.Join(having, " AND ")+`
-ORDER BY cursor_at DESC, id DESC
-LIMIT {limit:UInt32}`+client.FinalSettings+`
-FORMAT JSONEachRow`, parameters)
+	rows, err := client.QueryRows[traceSummaryRow](ctx, store.client, fmt.Sprintf(tracesByDurationSQL, traceSummaryColumns, page, strings.Join(summaryWhere, " AND "), strings.Join(having, " AND "), client.FinalSettings), parameters)
 	if err != nil {
 		return nil, err
 	}
@@ -122,11 +100,7 @@ FORMAT JSONEachRow`, parameters)
 		ids[index], lastMatch[match.TraceID] = match.TraceID, match.LastMatch
 	}
 	summaryWhere = append(summaryWhere, client.InStrings("s.trace_id", "trace_", ids, parameters))
-	rows, err := client.QueryRows[traceSummaryRow](ctx, store.client, `SELECT`+traceSummaryColumns+`
-FROM tracepilot_spans AS s FINAL
-WHERE `+strings.Join(summaryWhere, " AND ")+`
-GROUP BY s.trace_id`+client.FinalSettings+`
-FORMAT JSONEachRow`, parameters)
+	rows, err := client.QueryRows[traceSummaryRow](ctx, store.client, fmt.Sprintf(traceSummariesSQL, traceSummaryColumns, strings.Join(summaryWhere, " AND "), client.FinalSettings), parameters)
 	if err != nil {
 		return nil, err
 	}
@@ -167,13 +141,7 @@ func (store *Traces) GetTrace(ctx context.Context, projectID, environmentID, tra
 	}
 	where = append(where, "trace_id = {trace:String}")
 	parameters["trace"] = traceID
-	bounds, err := client.QueryRows[traceBounds](ctx, store.client, `SELECT
-    min(started_at) AS first_started,
-    max(ended_at) AS last_ended
-FROM tracepilot_trace_index
-WHERE `+strings.Join(where, " AND ")+`
-HAVING count() > 0
-FORMAT JSONEachRow`, parameters)
+	bounds, err := client.QueryRows[traceBounds](ctx, store.client, fmt.Sprintf(traceBoundsSQL, strings.Join(where, " AND ")), parameters)
 	if err != nil || len(bounds) == 0 {
 		return nil, false, err
 	}
@@ -184,12 +152,7 @@ FORMAT JSONEachRow`, parameters)
 		parameters["after"], parameters["after_id"] = client.Time(page.AfterStartedAt), page.AfterEventID
 	}
 	parameters["limit"] = strconv.Itoa(page.Limit + 1)
-	response, err := store.client.OpenResponse(ctx, "SELECT "+SpanColumns+`
-FROM tracepilot_spans FINAL
-WHERE `+strings.Join(where, " AND ")+`
-ORDER BY started_at, toString(event_id)
-LIMIT {limit:UInt32}`+client.FinalSettings+`
-FORMAT JSONEachRow`, parameters, nil, false)
+	response, err := store.client.OpenResponse(ctx, fmt.Sprintf(traceSpansSQL, SpanColumns, strings.Join(where, " AND "), client.FinalSettings), parameters, nil, false)
 	if err != nil {
 		return nil, false, err
 	}

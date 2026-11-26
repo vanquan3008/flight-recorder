@@ -38,23 +38,7 @@ func (store *Analytics) ListMetricPoints(ctx context.Context, projectID string, 
 	where = client.AddTime(where, parameters, "occurred_at", "to", "<=", filter.To)
 	where = client.AddEquals(where, parameters, [3]string{"service_name", "service", filter.Service}, [3]string{"metric_name", "metric", filter.Metric})
 	parameters["limit"] = strconv.Itoa(filter.Limit)
-	rows, err := client.QueryRows[metricPointRow](ctx, store.client, `SELECT
-    toString(id) AS id,
-    metric_name,
-    metric_unit,
-    metric_type,
-    service_name,
-    occurred_at,
-    value,
-    hist_count,
-    hist_sum,
-    attributes,
-    exemplars
-FROM tracepilot_metric_points FINAL
-WHERE `+strings.Join(where, " AND ")+`
-ORDER BY occurred_at DESC, id DESC
-LIMIT {limit:UInt32}`+client.FinalSettings+`
-FORMAT JSONEachRow`, parameters)
+	rows, err := client.QueryRows[metricPointRow](ctx, store.client, fmt.Sprintf(listMetricPointsSQL, strings.Join(where, " AND "), client.FinalSettings), parameters)
 	if err != nil {
 		return nil, err
 	}
@@ -95,34 +79,11 @@ func (store *Analytics) SignalQuality(ctx context.Context, projectID string, fil
 	metricWindow := client.AddTime(append([]string{}, where...), parameters, "occurred_at", "from", ">=", filter.From)
 	metricWindow = client.AddTime(metricWindow, parameters, "occurred_at", "to", "<=", filter.To)
 	metricWindow = client.AddEquals(metricWindow, parameters, [3]string{"service_name", "service", filter.Service})
-	rows, err := client.QueryRows[signalQualityRow](ctx, store.client, `SELECT
-    (
-        SELECT count()
-        FROM tracepilot_spans FINAL
-        WHERE `+strings.Join(spanWindow, " AND ")+`
-    ) AS spans,
-    (
-        SELECT count()
-        FROM (
-            SELECT trace_id, parent_span_id
-            FROM tracepilot_spans FINAL
-            WHERE `+strings.Join(spanWindow, " AND ")+`
-              AND parent_span_id != ''
-        ) AS child
-        LEFT ANTI JOIN (
-            SELECT trace_id, span_id
-            FROM tracepilot_spans FINAL
-            WHERE `+strings.Join(parents, " AND ")+`
-        ) AS parent
-            ON child.trace_id = parent.trace_id
-           AND child.parent_span_id = parent.span_id
-    ) AS orphan_spans,
-    (
-        SELECT count()
-        FROM tracepilot_metric_points FINAL
-        WHERE `+strings.Join(metricWindow, " AND ")+`
-    ) AS metric_points`+client.FinalSettings+`
-FORMAT JSONEachRow`, parameters)
+	statement := fmt.Sprintf(signalQualitySQL,
+		strings.Join(spanWindow, " AND "), strings.Join(spanWindow, " AND "),
+		strings.Join(parents, " AND "), strings.Join(metricWindow, " AND "), client.FinalSettings,
+	)
+	rows, err := client.QueryRows[signalQualityRow](ctx, store.client, statement, parameters)
 	if err != nil || len(rows) == 0 {
 		return 0, 0, 0, err
 	}

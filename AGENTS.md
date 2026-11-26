@@ -31,6 +31,11 @@
 ## Verification
 
 - Run `make fmt` for Go formatting and import organization; CI enforces `make fmt-check`.
+- Keep PostgreSQL application SQL in `backend/db/queries` for sqlc. Keep multiline
+  ClickHouse queries and aggregate column fragments in each storage package's
+  `sql/*.sql`, embedded by `queries.go`. Only interpolate code-controlled SQL
+  fragments; bind request values through typed parameters. Short predicates,
+  shared read-column lists, and operational schema/retention statements may stay in Go.
 - For logic changes, add a small regression test and run the relevant tests, Go vet, and Go build.
 - For frontend changes, run type checking, tests, and the build.
 - For SQL and migration changes, run integration tests against a disposable PostgreSQL database.
