@@ -95,15 +95,10 @@ func (store *Rollups) RefreshSpanRollups(
 func (store *Rollups) serverTime(
 	ctx context.Context,
 ) (time.Time, error) {
-	const query = `
-		SELECT now64(3, 'UTC') AS server_now
-		FORMAT JSONEachRow
-	`
-
 	rows, err := client.QueryRows[serverClock](
 		ctx,
 		store.client,
-		query,
+		serverTimeSQL,
 		nil,
 	)
 	if err != nil {

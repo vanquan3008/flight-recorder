@@ -5,9 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/vanquan3008/tracepilot/internal/storage/clickhouse/client"
-
 	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
+	"github.com/vanquan3008/tracepilot/internal/storage/clickhouse/client"
 )
 
 const SpanColumns = `event_id, trace_id, span_id, parent_span_id, trace_state, span_name, span_kind,

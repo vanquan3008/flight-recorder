@@ -11,9 +11,8 @@ import (
 	"time"
 
 	"github.com/vanquan3008/tracepilot/internal/domain/telemetry/telemetrytest"
-	"github.com/vanquan3008/tracepilot/internal/storage/clickhouse/clienttest"
-
 	"github.com/vanquan3008/tracepilot/internal/storage/clickhouse/client"
+	"github.com/vanquan3008/tracepilot/internal/storage/clickhouse/clienttest"
 
 	"github.com/vanquan3008/tracepilot/internal/query"
 )

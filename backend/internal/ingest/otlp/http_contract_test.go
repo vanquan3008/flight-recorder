@@ -10,12 +10,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/vanquan3008/tracepilot/internal/ingest/otlp/normalize/normalizetest"
-
-	"github.com/vanquan3008/tracepilot/internal/auth"
-	"github.com/vanquan3008/tracepilot/internal/config"
-	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
-	"github.com/vanquan3008/tracepilot/internal/observability/metrics"
 	collectorlogspb "go.opentelemetry.io/proto/otlp/collector/logs/v1"
 	collectormetricspb "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
 	collectortracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
@@ -23,6 +17,12 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
+
+	"github.com/vanquan3008/tracepilot/internal/auth"
+	"github.com/vanquan3008/tracepilot/internal/config"
+	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
+	"github.com/vanquan3008/tracepilot/internal/ingest/otlp/normalize/normalizetest"
+	"github.com/vanquan3008/tracepilot/internal/observability/metrics"
 )
 
 type unreadBody struct{ read bool }

@@ -1,10 +1,11 @@
 package config
 
 import (
-	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
 )
 
 const (

@@ -6,11 +6,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vanquan3008/tracepilot/internal/storage/clickhouse/clienttest"
-	"github.com/vanquan3008/tracepilot/internal/storage/clickhouse/logs"
-
 	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
 	"github.com/vanquan3008/tracepilot/internal/query"
+	"github.com/vanquan3008/tracepilot/internal/storage/clickhouse/clienttest"
+	"github.com/vanquan3008/tracepilot/internal/storage/clickhouse/logs"
 )
 
 func TestWeeklyLogsDeduplicateRetriesPreserveJSONAndPageByNanosecond(t *testing.T) {

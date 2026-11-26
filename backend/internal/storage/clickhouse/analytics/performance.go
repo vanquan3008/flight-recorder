@@ -8,9 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/vanquan3008/tracepilot/internal/storage/clickhouse/client"
-
 	"github.com/vanquan3008/tracepilot/internal/query"
+	"github.com/vanquan3008/tracepilot/internal/storage/clickhouse/client"
 )
 
 // rollupMinimumWindow is the shortest window that reads minute rollups; shorter
@@ -48,54 +47,15 @@ func (store *Analytics) RequestPerformance(ctx context.Context, projectID string
 	spans := client.AddTime(append(append([]string{}, where...), "span_kind = 2"), parameters, "started_at", "from", ">=", from)
 	spans = client.AddTime(spans, parameters, "started_at", "to", "<", filter.To)
 	rollups := append(append([]string{}, where...), "span_kind = 2")
-	source := `
-    SELECT
-        service_name,
-        endpoint,
-        toInt32(intDiv(toUnixTimestamp64Nano(started_at) - {from_ns:Int64}, {bucket_ns:Int64})) AS bucket,
-        count() AS calls,
-        countIf(request_failed) AS failed,
-        sum(duration_ns) AS duration_sum,
-        quantilesTDigestState(0.95, 0.99)(duration_ns) AS quantile_state
-    FROM tracepilot_spans FINAL
-    WHERE ` + strings.Join(spans, " AND ")
-	prefix := ""
+	prefix, exclusion, rollupSource := "", "", ""
 	if filter.To.Sub(filter.From) >= rollupMinimumWindow {
 		prefix = "WITH clean AS (" + cleanMinutes(from, filter.To, parameters) + ")\n"
-		source += `
-      AND toDateTime(toStartOfMinute(started_at), 'UTC') NOT IN (SELECT minute FROM clean)
-    GROUP BY service_name, endpoint, bucket
-    UNION ALL
-    SELECT
-        service_name,
-        endpoint,
-        toInt32(intDiv(toUnixTimestamp64Nano(toDateTime64(minute, 9, 'UTC')) - {from_ns:Int64}, {bucket_ns:Int64})),
-        sum(calls),
-        sum(failed),
-        sum(duration_sum),
-        quantilesTDigestMergeState(0.95, 0.99)(duration_quantiles)
-    FROM tracepilot_span_minutes FINAL
-    WHERE ` + strings.Join(rollups, " AND ") + `
-      AND minute IN (SELECT minute FROM clean)
-    GROUP BY service_name, endpoint, 3`
-	} else {
-		source += `
-    GROUP BY service_name, endpoint, bucket`
+		exclusion = "AND toDateTime(toStartOfMinute(started_at), 'UTC') NOT IN (SELECT minute FROM clean)"
+		rollupSource = fmt.Sprintf(performanceRollupsSQL, strings.Join(rollups, " AND "))
 	}
-	rows, err := client.QueryRows[performanceRow](ctx, store.client, prefix+`SELECT
-    multiIf(grouping(bucket) = 0, 'bucket', grouping(endpoint) = 0, 'endpoint', grouping(service_name) = 0, 'service', 'summary') AS dimension,
-    service_name,
-    endpoint,
-    bucket,
-    toInt64(sum(calls)) AS requests,
-    toInt64(sum(failed)) AS errors,
-    if(requests = 0, 0, toInt64(sum(duration_sum) / requests)) AS average_ns,
-    quantilesTDigestMerge(0.95, 0.99)(quantile_state) AS quantiles
-FROM (`+source+`
-)
-GROUP BY GROUPING SETS ((), (service_name), (service_name, endpoint), (bucket))`+client.FinalSettings+
-		`, force_grouping_standard_compatibility = 1
-FORMAT JSONEachRow`, parameters)
+	source := fmt.Sprintf(performanceSpansSQL, strings.Join(spans, " AND "), exclusion) + rollupSource
+	statement := fmt.Sprintf(requestPerformanceSQL, prefix, source, client.FinalSettings)
+	rows, err := client.QueryRows[performanceRow](ctx, store.client, statement, parameters)
 	if err != nil {
 		return result, fmt.Errorf("query request performance: %w", err)
 	}
@@ -131,26 +91,7 @@ FORMAT JSONEachRow`, parameters)
 // after their latest span arrived.
 func cleanMinutes(from, to time.Time, parameters map[string]string) string {
 	parameters["clean_from"], parameters["clean_to"] = client.Time(from), client.Time(to)
-	window := `project_id = {project:UUID}
-          AND environment_id = {environment:UUID}
-          AND minute >= {clean_from:DateTime64(9, 'UTC')}
-          AND minute + INTERVAL 1 MINUTE <= {clean_to:DateTime64(9, 'UTC')}`
-	return `
-    SELECT marks.minute AS minute
-    FROM (
-        SELECT minute, max(marked_at) AS marked
-        FROM tracepilot_span_minute_marks
-        WHERE ` + window + `
-        GROUP BY minute
-    ) AS marks
-    INNER JOIN (
-        SELECT minute, max(computed_at) AS computed
-        FROM tracepilot_span_minute_done
-        WHERE ` + window + `
-        GROUP BY minute
-    ) AS done ON marks.minute = done.minute
-    WHERE done.computed >= marks.marked
-`
+	return cleanMinutesSQL
 }
 
 func topGroups(groups []query.PerformanceGroup, limit int) []query.PerformanceGroup {

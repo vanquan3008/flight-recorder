@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
-
 	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/render"
 )
 

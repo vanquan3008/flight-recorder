@@ -4,6 +4,7 @@ package outbox
 
 import (
 	"github.com/jackc/pgx/v5/pgxpool"
+
 	sqlcstore "github.com/vanquan3008/tracepilot/internal/storage/postgres/sqlc"
 )
 

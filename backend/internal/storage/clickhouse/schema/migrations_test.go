@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/vanquan3008/tracepilot/internal/storage/clickhouse/clienttest"
-
 	"github.com/vanquan3008/tracepilot/internal/storage/clickhouse/logs"
 
 	"github.com/vanquan3008/tracepilot/db"
@@ -16,7 +15,7 @@ import (
 
 func latestClickHouseVersion(t *testing.T) uint {
 	t.Helper()
-	list, err := db.List(db.ClickHouseMigrations)
+	list, err := db.ListMigrations(db.ClickHouseMigrations)
 	if err != nil {
 		t.Fatal(err)
 	}

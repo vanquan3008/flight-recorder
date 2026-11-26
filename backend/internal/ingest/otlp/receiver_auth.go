@@ -3,10 +3,10 @@ package otlp
 import (
 	"context"
 	"errors"
-	"github.com/vanquan3008/tracepilot/internal/ingest/otlp/normalize"
 
 	"github.com/vanquan3008/tracepilot/internal/auth"
 	"github.com/vanquan3008/tracepilot/internal/config"
+	"github.com/vanquan3008/tracepilot/internal/ingest/otlp/normalize"
 )
 
 // ErrUnknownEnvironment reports an environment the token's project does not have.

@@ -4,9 +4,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/vanquan3008/tracepilot/internal/storage/clickhouse/client"
-
 	"github.com/vanquan3008/tracepilot/internal/query"
+	"github.com/vanquan3008/tracepilot/internal/storage/clickhouse/client"
 )
 
 func (store *Logs) logFilter(projectID string, filter query.LogFilter) ([]string, map[string]string, error) {

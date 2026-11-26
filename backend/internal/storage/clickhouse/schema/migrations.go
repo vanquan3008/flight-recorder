@@ -11,7 +11,7 @@ import (
 )
 
 func (store *Schema) MigrationStatus(ctx context.Context) (migrations.Status, error) {
-	list, err := db.List(db.ClickHouseMigrations)
+	list, err := db.ListMigrations(db.ClickHouseMigrations)
 	if err != nil {
 		return migrations.Status{}, err
 	}
@@ -49,7 +49,7 @@ FROM tracepilot_schema_migrations GROUP BY version ORDER BY version DESC LIMIT 1
 // Migrate manages ClickHouse independently of PostgreSQL.
 // shortcut: ClickHouse has no migration lock; use one updater for non-idempotent DDL.
 func (store *Schema) Migrate(ctx context.Context) error {
-	list, err := db.List(db.ClickHouseMigrations)
+	list, err := db.ListMigrations(db.ClickHouseMigrations)
 	if err != nil {
 		return err
 	}
@@ -71,7 +71,7 @@ version UInt64, dirty Bool) ENGINE = MergeTree ORDER BY (version, dirty)`, nil, 
 		if migration.Version <= state.Version {
 			continue
 		}
-		data, err := db.SQL.ReadFile(migration.File)
+		data, err := db.MigrationFiles.ReadFile(migration.FilePath)
 		if err != nil {
 			return err
 		}

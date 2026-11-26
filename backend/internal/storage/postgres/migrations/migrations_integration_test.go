@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
 	"github.com/vanquan3008/tracepilot/db"
 )
 
@@ -96,10 +97,10 @@ func TestMigrationFailureLeavesDirtyAndBlocksRetryIntegration(t *testing.T) {
 		t.Fatal("conflicting schema was accepted")
 	}
 	state, err := Inspect(ctx, endpoint)
-	list, listErr := db.List(db.PostgresMigrations)
+	list, listErr := db.ListMigrations(db.PostgresMigrations)
 	var identityVersion uint
 	for _, migration := range list {
-		if strings.HasSuffix(migration.File, "_init.up.sql") {
+		if strings.HasSuffix(migration.FilePath, "_init.up.sql") {
 			identityVersion = migration.Version
 		}
 	}

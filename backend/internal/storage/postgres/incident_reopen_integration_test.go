@@ -2,9 +2,10 @@ package postgres
 
 import (
 	"context"
-	"github.com/vanquan3008/tracepilot/internal/auth"
 	"testing"
 	"time"
+
+	"github.com/vanquan3008/tracepilot/internal/auth"
 
 	"github.com/vanquan3008/tracepilot/internal/config"
 	notificationdomain "github.com/vanquan3008/tracepilot/internal/domain/notification"

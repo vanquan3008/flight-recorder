@@ -6,10 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/vanquan3008/tracepilot/internal/storage/clickhouse/client"
-
 	"github.com/vanquan3008/tracepilot/internal/config"
 	"github.com/vanquan3008/tracepilot/internal/domain/analysis"
+	"github.com/vanquan3008/tracepilot/internal/storage/clickhouse/client"
 )
 
 const (
@@ -34,17 +33,6 @@ type windowSignalRow struct {
 	TraceIDs             []string `json:"trace_ids"`
 }
 
-const windowSignalColumns = `
-    countIf(started_at >= {current:DateTime64(9, 'UTC')}) AS current_calls,
-    countIf(started_at < {current:DateTime64(9, 'UTC')}) AS baseline_calls,
-    countIf(started_at >= {current:DateTime64(9, 'UTC')} AND status_code = 'ERROR') AS current_errors,
-    countIf(started_at < {current:DateTime64(9, 'UTC')} AND status_code = 'ERROR') AS baseline_errors,
-    if(current_calls = 0, 0,
-       sumIf(duration_ns, started_at >= {current:DateTime64(9, 'UTC')}) / current_calls) AS current_latency_nanos,
-    if(baseline_calls = 0, 0,
-       sumIf(duration_ns, started_at < {current:DateTime64(9, 'UTC')}) / baseline_calls) AS baseline_latency_nanos,
-    arraySlice(arraySort(groupUniqArrayIf(trace_id, started_at >= {current:DateTime64(9, 'UTC')})), 1, 5) AS trace_ids`
-
 // windowSignals compares the five minutes before end with the thirty before them.
 func (store *Detector) windowSignals(ctx context.Context, ingestion config.IngestionConfig, end time.Time, columns, condition, groups string) ([]windowSignalRow, time.Time, error) {
 	where, parameters, err := client.Scope(ingestion.ProjectID, ingestion.EnvironmentID)
@@ -55,13 +43,7 @@ func (store *Detector) windowSignals(ctx context.Context, ingestion config.Inges
 	parameters["current"] = client.Time(currentStart)
 	where = client.AddTime(where, parameters, "started_at", "baseline", ">=", currentStart.Add(-baselineWindow))
 	where = client.AddTime(where, parameters, "started_at", "end", "<", end)
-	rows, err := client.QueryRows[windowSignalRow](ctx, store.client, `SELECT
-    `+columns+`,`+windowSignalColumns+`
-FROM tracepilot_spans FINAL
-WHERE `+strings.Join(where, " AND ")+`
-  AND `+condition+`
-GROUP BY `+groups+client.FinalSettings+`
-FORMAT JSONEachRow`, parameters)
+	rows, err := client.QueryRows[windowSignalRow](ctx, store.client, fmt.Sprintf(windowSignalsSQL, columns, windowSignalColumns, strings.Join(where, " AND "), condition, groups, client.FinalSettings), parameters)
 	return rows, currentStart, err
 }
 

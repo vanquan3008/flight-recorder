@@ -4,6 +4,7 @@ import (
 	"embed"
 	"fmt"
 	"log/slog"
+	"path"
 	"sort"
 	"strings"
 
@@ -16,85 +17,121 @@ const (
 )
 
 //go:embed postgres/migrations/*.sql clickhouse/migrations/*.sql
-var SQL embed.FS
+var MigrationFiles embed.FS
 
+// Migration describes an embedded database migration.
 type Migration struct {
-	Version uint
-	File    string
+	Version  uint
+	FilePath string
 }
 
-func List(directory string) ([]Migration, error) {
-	entries, err := SQL.ReadDir(directory)
+// ListMigrations returns the ordered up migrations in directory.
+func ListMigrations(directory string) ([]Migration, error) {
+	entries, err := MigrationFiles.ReadDir(directory)
 	if err != nil {
-		return nil, fmt.Errorf("read migrations from %q: %w", directory, err)
+		return nil, fmt.Errorf(
+			"read migration directory %q: %w",
+			directory,
+			err,
+		)
 	}
-
 	migrations := make([]Migration, 0, len(entries))
-	versions := make(map[uint]struct{}, len(entries))
+	registeredVersions := make(map[uint]string, len(entries))
 
 	for _, entry := range entries {
-		filename := entry.Name()
-		if entry.IsDir() || !strings.HasSuffix(filename, ".sql") {
+		fileName := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(fileName, ".sql") {
 			continue
 		}
-
-		parsed, err := source.DefaultParse(filename)
+		parsedMigration, err := source.DefaultParse(fileName)
 		if err != nil {
-			return nil, fmt.Errorf("parse migration %q: %w", filename, err)
-		}
-
-		if parsed.Direction != source.Up {
-			continue
-		}
-
-		if parsed.Version == 0 {
-			return nil, fmt.Errorf("invalid migration version in %q", filename)
-		}
-
-		if _, exists := versions[parsed.Version]; exists {
 			return nil, fmt.Errorf(
-				"duplicate migration version %d in %q",
-				parsed.Version,
-				directory,
+				"parse migration file %q: %w",
+				path.Join(directory, fileName),
+				err,
 			)
 		}
 
-		versions[parsed.Version] = struct{}{}
+		if parsedMigration.Direction != source.Up {
+			continue
+		}
+
+		if err := validateMigrationVersion(
+			parsedMigration.Version,
+			fileName,
+			directory,
+			registeredVersions,
+		); err != nil {
+			return nil, err
+		}
+
+		registeredVersions[parsedMigration.Version] = fileName
+
 		migrations = append(migrations, Migration{
-			Version: parsed.Version,
-			File:    directory + "/" + filename,
+			Version:  parsedMigration.Version,
+			FilePath: path.Join(directory, fileName),
 		})
 	}
 
 	if len(migrations) == 0 {
-		return nil, fmt.Errorf("no up migrations found in %q", directory)
+		return nil, fmt.Errorf(
+			"no up migrations found in directory %q",
+			directory,
+		)
 	}
 
-	sort.Slice(migrations, func(i, j int) bool {
-		return migrations[i].Version < migrations[j].Version
+	sort.Slice(migrations, func(firstIndex, secondIndex int) bool {
+		return migrations[firstIndex].Version <
+			migrations[secondIndex].Version
 	})
 
-	slog.Debug("Database migrations loaded",
-		"directory", directory,
-		"count", len(migrations),
-		"latest_version", migrations[len(migrations)-1].Version,
+	slog.Debug(
+		"Database migrations loaded",
+		slog.String("directory", directory),
+		slog.Int("count", len(migrations)),
+		slog.Uint64(
+			"latest_version",
+			uint64(migrations[len(migrations)-1].Version),
+		),
 	)
 
 	return migrations, nil
 }
 
+// LatestVersion returns the highest embedded migration version.
 func LatestVersion(directory string) (uint, error) {
-	migrations, err := List(directory)
+	migrations, err := ListMigrations(directory)
 	if err != nil {
 		return 0, err
 	}
 
-	version := migrations[len(migrations)-1].Version
+	return migrations[len(migrations)-1].Version, nil
+}
 
-	slog.Debug("Latest migration version resolved",
-		"directory", directory,
-		"version", version,
-	)
+// validateMigrationVersion checks if the migration version is valid and not duplicated.
+func validateMigrationVersion(
+	version uint,
+	fileName string,
+	directory string,
+	registeredVersions map[uint]string,
+) error {
+	if version == 0 {
+		return fmt.Errorf(
+			"invalid migration version 0 in file %q",
+			path.Join(directory, fileName),
+		)
+	}
 
-	return version, nil
+	existingFileName, exists := registeredVersions[version]
+	if exists {
+		return fmt.Errorf(
+			"duplicate migration version %d in directory %q: files %q and %q",
+			version,
+			directory,
+			existingFileName,
+			fileName,
+		)
+	}
+
+	return nil
 }

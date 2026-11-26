@@ -10,10 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/vanquan3008/tracepilot/internal/storage/clickhouse/client"
-
 	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
 	"github.com/vanquan3008/tracepilot/internal/query"
+	"github.com/vanquan3008/tracepilot/internal/storage/clickhouse/client"
 )
 
 func (store *Logs) StoreLogs(ctx context.Context, projectID, environmentID string, events []telemetry.Event) error {
@@ -54,12 +53,7 @@ func (store *Logs) ListLogs(ctx context.Context, projectID string, filter query.
 		return nil, err
 	}
 	parameters["limit"] = strconv.Itoa(filter.Limit + 1)
-	keys, err := store.readLogKeys(ctx, `SELECT occurred_at, toString(event_id) AS id
-FROM tracepilot_log_records FINAL
-WHERE `+strings.Join(where, " AND ")+`
-ORDER BY occurred_at DESC, id DESC
-LIMIT {limit:UInt32}`+client.FinalSettings+`
-FORMAT JSONEachRow`, parameters)
+	keys, err := store.readLogKeys(ctx, fmt.Sprintf(listLogKeysSQL, strings.Join(where, " AND "), client.FinalSettings), parameters)
 	if err != nil {
 		return nil, err
 	}
@@ -73,12 +67,7 @@ FORMAT JSONEachRow`, parameters)
 		return nil, err
 	}
 	parameters["limit"] = strconv.Itoa(len(keys))
-	return store.readLogs(ctx, "SELECT "+Columns+`
-FROM tracepilot_log_records FINAL
-WHERE `+strings.Join(where, " AND ")+`
-ORDER BY occurred_at DESC, toString(event_id) DESC
-LIMIT {limit:UInt32}`+client.FinalSettings+`
-FORMAT JSONEachRow`, parameters)
+	return store.readLogs(ctx, fmt.Sprintf(listLogsSQL, Columns, strings.Join(where, " AND "), client.FinalSettings), parameters)
 }
 
 type logKey struct {
@@ -117,11 +106,7 @@ func (store *Logs) GetLogSince(ctx context.Context, projectID, environmentID, ev
 	where = append(where, "event_id = {event:UUID}")
 	parameters["event"] = eventID
 	where = client.AddTime(where, parameters, "occurred_at", "retention_cutoff", ">=", since)
-	rows, err := store.readLogs(ctx, "SELECT "+Columns+`
-FROM tracepilot_log_records FINAL
-WHERE `+strings.Join(where, " AND ")+`
-LIMIT 1`+client.FinalSettings+`
-FORMAT JSONEachRow`, parameters)
+	rows, err := store.readLogs(ctx, fmt.Sprintf(getLogSQL, Columns, strings.Join(where, " AND "), client.FinalSettings), parameters)
 	if err != nil || len(rows) == 0 {
 		return query.LogRecord{}, err
 	}
@@ -155,12 +140,7 @@ func (store *Logs) LogQuality(ctx context.Context, projectID, environmentID, ser
 	where = client.AddTime(where, parameters, "occurred_at", "from", ">=", from)
 	where = client.AddTime(where, parameters, "occurred_at", "to", "<=", to)
 	where = client.AddEquals(where, parameters, [3]string{"service_name", "service", service})
-	data, err := store.client.Execute(ctx, `SELECT
-    count() AS logs,
-    countIf(trace_id = '') AS uncorrelated
-FROM tracepilot_log_records FINAL
-WHERE `+strings.Join(where, " AND ")+client.FinalSettings+`
-FORMAT JSONEachRow`, parameters, nil, false)
+	data, err := store.client.Execute(ctx, fmt.Sprintf(logQualitySQL, strings.Join(where, " AND "), client.FinalSettings), parameters, nil, false)
 	if err != nil {
 		return 0, 0, err
 	}

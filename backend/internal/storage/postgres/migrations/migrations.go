@@ -11,6 +11,7 @@ import (
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/pgx/v5"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
+
 	"github.com/vanquan3008/tracepilot/db"
 	"github.com/vanquan3008/tracepilot/internal/config"
 )
@@ -131,7 +132,7 @@ func apply(ctx context.Context, databaseURL, operation string, steps int, option
 }
 
 func checkRollback(version uint, steps int) error {
-	history, err := db.List(db.PostgresMigrations)
+	history, err := db.ListMigrations(db.PostgresMigrations)
 	if err != nil {
 		return err
 	}
@@ -140,8 +141,8 @@ func checkRollback(version uint, steps int) error {
 		if migration.Version > version {
 			continue
 		}
-		path := strings.TrimSuffix(migration.File, ".up.sql") + ".down.sql"
-		if _, err := db.SQL.ReadFile(path); err != nil {
+		path := strings.TrimSuffix(migration.FilePath, ".up.sql") + ".down.sql"
+		if _, err := db.MigrationFiles.ReadFile(path); err != nil {
 			return fmt.Errorf("migration %d has no rollback SQL; use a new corrective migration", migration.Version)
 		}
 		steps--
@@ -153,7 +154,7 @@ func checkRollback(version uint, steps int) error {
 }
 
 func open(ctx context.Context, databaseURL string, options Options) (*migrate.Migrate, error) {
-	source, err := iofs.New(db.SQL, db.PostgresMigrations)
+	source, err := iofs.New(db.MigrationFiles, db.PostgresMigrations)
 	if err != nil {
 		return nil, err
 	}

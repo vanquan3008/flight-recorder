@@ -7,11 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vanquan3008/tracepilot/internal/storage/clickhouse/clienttest"
-
 	"github.com/vanquan3008/tracepilot/db"
 	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
 	"github.com/vanquan3008/tracepilot/internal/query"
+	"github.com/vanquan3008/tracepilot/internal/storage/clickhouse/clienttest"
 )
 
 func TestClickHouseRerunAfterLostJournalKeepsLogsIntegration(t *testing.T) {
@@ -77,7 +76,7 @@ func TestClickHouseReadinessRequiresMaterializedViewsIntegration(t *testing.T) {
 		if err := store.Ready(ctx); err == nil || !strings.Contains(err.Error(), view.name) {
 			t.Fatalf("readiness without %s: %v", view.name, err)
 		}
-		ddl, err := db.SQL.ReadFile("clickhouse/migrations/" + view.migration)
+		ddl, err := db.MigrationFiles.ReadFile("clickhouse/migrations/" + view.migration)
 		if err != nil {
 			t.Fatal(err)
 		}

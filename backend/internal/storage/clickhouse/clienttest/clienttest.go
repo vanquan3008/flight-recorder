@@ -10,10 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vanquan3008/tracepilot/internal/domain/telemetry/telemetrytest"
-
 	"github.com/vanquan3008/tracepilot/internal/config"
 	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
+	"github.com/vanquan3008/tracepilot/internal/domain/telemetry/telemetrytest"
 	"github.com/vanquan3008/tracepilot/internal/storage/clickhouse/client"
 )
 

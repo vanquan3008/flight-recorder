@@ -7,7 +7,7 @@ import (
 
 func TestEmbeddedHistoryIsOrderedAndComplete(t *testing.T) {
 	for _, directory := range []string{PostgresMigrations, ClickHouseMigrations} {
-		list, err := List(directory)
+		list, err := ListMigrations(directory)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -15,12 +15,12 @@ func TestEmbeddedHistoryIsOrderedAndComplete(t *testing.T) {
 			if i > 0 && migration.Version <= list[i-1].Version {
 				t.Fatalf("unordered history: %+v", list)
 			}
-			data, err := SQL.ReadFile(migration.File)
+			data, err := MigrationFiles.ReadFile(migration.FilePath)
 			if err != nil || len(strings.TrimSpace(string(data))) == 0 {
-				t.Fatalf("missing SQL for %s: %v", migration.File, err)
+				t.Fatalf("missing SQL for %s: %v", migration.FilePath, err)
 			}
 			if directory == PostgresMigrations && i > 0 {
-				if _, err := SQL.ReadFile(strings.Replace(migration.File, ".up.sql", ".down.sql", 1)); err != nil {
+				if _, err := MigrationFiles.ReadFile(strings.Replace(migration.FilePath, ".up.sql", ".down.sql", 1)); err != nil {
 					t.Fatal(err)
 				}
 			}

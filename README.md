@@ -388,6 +388,25 @@ Use these exported tags when you complete [configuration](#stack-and-configurati
 
 ## Development
 
+Run `make fmt` before submitting Go changes. It uses a pinned version of
+`goimports`, which applies Go formatting and groups imports as standard library,
+external dependencies, then `github.com/vanquan3008/tracepilot` packages.
+`make fmt-check` checks the same convention without changing files and runs in CI.
+The workspace settings enable formatting and import organization on save with
+the Go extension in VS Code and compatible editors. EditorConfig defines tabs
+for Go and four spaces for SQL. Go formatters do not format SQL inside strings.
+
+PostgreSQL application queries belong in `backend/db/queries/*.sql`; regenerate
+their Go bindings with `make sqlc-generate`. Never edit generated sqlc files.
+ClickHouse multiline queries and aggregate column fragments belong in the owning
+storage package's `sql/*.sql` directory and are embedded by `queries.go`.
+Their `%s` placeholders accept only SQL fragments controlled by Go code, such as
+column lists, WHERE terms and query settings. Pass all request values separately
+as typed ClickHouse parameters (`{name:Type}`), never through `fmt.Sprintf`.
+Escape a literal percent as `%%` in a template used by `fmt.Sprintf`.
+Keep SQL keywords uppercase and use four spaces for indentation. Short predicates,
+shared read-column lists and operational schema/retention statements may stay in Go.
+
 For a local ClickHouse and CH-UI stack, set `CLICKHOUSE_PASSWORD` and `CH_UI_SECRET_KEY`, then run `docker compose -f deploy/docker-compose.yaml up -d`. Keep the ClickHouse credentials in this stack consistent with `backend/.env`.
 
 Run these checks after installing frontend dependencies with `npm --prefix frontend ci`.

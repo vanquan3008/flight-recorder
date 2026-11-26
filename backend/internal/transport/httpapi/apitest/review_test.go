@@ -7,11 +7,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/render/rendertest"
-
 	"github.com/vanquan3008/tracepilot/internal/auth"
 	"github.com/vanquan3008/tracepilot/internal/config"
 	"github.com/vanquan3008/tracepilot/internal/transport/httpapi"
+	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/render/rendertest"
 )
 
 func (backend *identityBackend) RemoveMember(_ context.Context, _, userID string, _ auth.Actor, allowed func(string) bool) error {

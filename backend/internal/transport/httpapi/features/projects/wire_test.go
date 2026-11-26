@@ -3,9 +3,8 @@ package projects
 import (
 	"testing"
 
-	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/render/rendertest"
-
 	"github.com/vanquan3008/tracepilot/internal/auth"
+	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/render/rendertest"
 )
 
 func TestResponsesKeepWireFormat(t *testing.T) {

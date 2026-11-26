@@ -7,12 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vanquan3008/tracepilot/internal/ingest/otlp/normalize/normalizetest"
-
-	"github.com/vanquan3008/tracepilot/internal/config"
-	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
-	"github.com/vanquan3008/tracepilot/internal/ingest/pipeline"
-	"github.com/vanquan3008/tracepilot/internal/observability/metrics"
 	collectortracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 	resourcepb "go.opentelemetry.io/proto/otlp/resource/v1"
@@ -20,6 +14,12 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/test/bufconn"
+
+	"github.com/vanquan3008/tracepilot/internal/config"
+	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
+	"github.com/vanquan3008/tracepilot/internal/ingest/otlp/normalize/normalizetest"
+	"github.com/vanquan3008/tracepilot/internal/ingest/pipeline"
+	"github.com/vanquan3008/tracepilot/internal/observability/metrics"
 )
 
 func TestOTLPGRPCQueuesStreamsBeyondTheProcessingLimit(t *testing.T) {

@@ -11,9 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
-
 	"github.com/vanquan3008/tracepilot/internal/auth"
+	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
 	"github.com/vanquan3008/tracepilot/internal/query"
 	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/api"
 	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/openapi"

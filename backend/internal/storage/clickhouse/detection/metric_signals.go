@@ -7,10 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/vanquan3008/tracepilot/internal/storage/clickhouse/client"
-
 	"github.com/vanquan3008/tracepilot/internal/config"
 	"github.com/vanquan3008/tracepilot/internal/domain/analysis"
+	"github.com/vanquan3008/tracepilot/internal/storage/clickhouse/client"
 )
 
 // counterLookback reads points before the baseline so the first baseline
@@ -55,25 +54,7 @@ func (store *Detector) DetectMetricEvidence(ctx context.Context, ingestion confi
 	baselineStart := currentStart.Add(-baselineWindow)
 	where = client.AddTime(where, parameters, "occurred_at", "from", ">=", baselineStart.Add(-counterLookback))
 	where = client.AddTime(where, parameters, "occurred_at", "end", "<", end)
-	response, err := store.client.OpenResponse(ctx, `SELECT
-    series_id,
-    service_name,
-    metric_name,
-    metric_unit,
-    metric_type,
-    is_monotonic,
-    temporality,
-    attributes,
-    occurred_at,
-    started_at,
-    value,
-    hist_count,
-    hist_sum
-FROM tracepilot_metric_points FINAL
-WHERE `+strings.Join(where, " AND ")+`
-  AND bitAnd(flags, 1) = 0
-ORDER BY series_id, occurred_at, id`+client.FinalSettings+`
-FORMAT JSONEachRow`, parameters, nil, false)
+	response, err := store.client.OpenResponse(ctx, fmt.Sprintf(metricEvidenceSQL, strings.Join(where, " AND "), client.FinalSettings), parameters, nil, false)
 	if err != nil {
 		return nil, fmt.Errorf("detect metric signals: %w", err)
 	}

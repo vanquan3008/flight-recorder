@@ -6,9 +6,8 @@ import (
 	"math"
 	"time"
 
-	"github.com/vanquan3008/tracepilot/internal/storage/clickhouse/client"
-
 	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
+	"github.com/vanquan3008/tracepilot/internal/storage/clickhouse/client"
 )
 
 const Columns = `id, series_id, metric_name, metric_unit, metric_type, service_name, service_version,

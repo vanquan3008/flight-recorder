@@ -10,10 +10,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/render/rendertest"
-
 	"github.com/vanquan3008/tracepilot/internal/auth"
 	"github.com/vanquan3008/tracepilot/internal/observability/logging"
+	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/render/rendertest"
 )
 
 func TestInternalErrorsLogTheRequestTraceAndHideTheCause(t *testing.T) {

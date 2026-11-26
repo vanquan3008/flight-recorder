@@ -7,10 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/render/rendertest"
-
 	"github.com/vanquan3008/tracepilot/internal/auth"
 	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/api"
+	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/render/rendertest"
 )
 
 const (

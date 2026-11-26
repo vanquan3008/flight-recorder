@@ -9,8 +9,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/vanquan3008/tracepilot/internal/config"
 	"google.golang.org/grpc"
+
+	"github.com/vanquan3008/tracepilot/internal/config"
 )
 
 type Server struct {

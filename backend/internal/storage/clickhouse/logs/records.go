@@ -7,10 +7,9 @@ import (
 	"math"
 	"time"
 
-	"github.com/vanquan3008/tracepilot/internal/storage/clickhouse/client"
-
 	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
 	"github.com/vanquan3008/tracepilot/internal/query"
+	"github.com/vanquan3008/tracepilot/internal/storage/clickhouse/client"
 )
 
 const Columns = `event_id, occurred_at, observed_at, trace_id, span_id, trace_flags,
