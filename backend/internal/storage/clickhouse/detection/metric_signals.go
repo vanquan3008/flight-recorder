@@ -7,10 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/vanquan3008/tracepilot/internal/storage/clickhouse/client"
-
 	"github.com/vanquan3008/tracepilot/internal/config"
 	"github.com/vanquan3008/tracepilot/internal/domain/analysis"
+	"github.com/vanquan3008/tracepilot/internal/storage/clickhouse/client"
 )
 
 // counterLookback reads points before the baseline so the first baseline

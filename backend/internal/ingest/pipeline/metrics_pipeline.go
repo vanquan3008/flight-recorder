@@ -7,9 +7,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"golang.org/x/sync/semaphore"
+
 	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
 	"github.com/vanquan3008/tracepilot/internal/observability/metrics"
-	"golang.org/x/sync/semaphore"
 )
 
 var errOversizedBatch = errors.New("metrics request exceeds the pipeline byte budget")

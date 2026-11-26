@@ -11,6 +11,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+
 	"github.com/vanquan3008/tracepilot/db"
 	migrationstate "github.com/vanquan3008/tracepilot/internal/storage/migrations"
 )

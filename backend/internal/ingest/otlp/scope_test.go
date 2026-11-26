@@ -8,17 +8,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vanquan3008/tracepilot/internal/ingest/otlp/normalize/normalizetest"
-
-	"github.com/vanquan3008/tracepilot/internal/auth"
-	"github.com/vanquan3008/tracepilot/internal/config"
-	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
-	"github.com/vanquan3008/tracepilot/internal/observability/metrics"
 	collectorlogspb "go.opentelemetry.io/proto/otlp/collector/logs/v1"
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 	logspb "go.opentelemetry.io/proto/otlp/logs/v1"
 	resourcepb "go.opentelemetry.io/proto/otlp/resource/v1"
 	"google.golang.org/protobuf/proto"
+
+	"github.com/vanquan3008/tracepilot/internal/auth"
+	"github.com/vanquan3008/tracepilot/internal/config"
+	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
+	"github.com/vanquan3008/tracepilot/internal/ingest/otlp/normalize/normalizetest"
+	"github.com/vanquan3008/tracepilot/internal/observability/metrics"
 )
 
 type captureSubmitter struct{ events []telemetry.Event }

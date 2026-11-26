@@ -10,13 +10,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vanquan3008/tracepilot/internal/ingest/otlp/normalize/normalizetest"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/vanquan3008/tracepilot/internal/auth"
 	"github.com/vanquan3008/tracepilot/internal/config"
+	"github.com/vanquan3008/tracepilot/internal/ingest/otlp/normalize/normalizetest"
 	"github.com/vanquan3008/tracepilot/internal/observability/metrics"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 type guardFixture struct {

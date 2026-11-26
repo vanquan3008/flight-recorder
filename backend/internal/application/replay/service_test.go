@@ -3,8 +3,9 @@ package replay
 import (
 	"context"
 	"errors"
-	"github.com/vanquan3008/tracepilot/internal/auth"
 	"testing"
+
+	"github.com/vanquan3008/tracepilot/internal/auth"
 
 	"github.com/vanquan3008/tracepilot/internal/application/replay/capture"
 	replaydomain "github.com/vanquan3008/tracepilot/internal/domain/replay"

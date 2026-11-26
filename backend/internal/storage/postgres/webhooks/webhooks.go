@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
 	notificationdomain "github.com/vanquan3008/tracepilot/internal/domain/notification"
 	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
 	"github.com/vanquan3008/tracepilot/internal/storage/postgres/pgvalue"

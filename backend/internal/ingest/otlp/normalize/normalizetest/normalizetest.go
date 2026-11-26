@@ -2,9 +2,10 @@
 package normalizetest
 
 import (
+	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
+
 	"github.com/vanquan3008/tracepilot/internal/config"
 	"github.com/vanquan3008/tracepilot/internal/domain/telemetry/telemetrytest"
-	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 )
 
 // Config is a small ingestion scope with generous limits.

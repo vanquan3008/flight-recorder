@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/vanquan3008/tracepilot/internal/auth"
 	collectorlogspb "go.opentelemetry.io/proto/otlp/collector/logs/v1"
 	collectormetricspb "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
 	collectortracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
@@ -18,6 +17,8 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
+
+	"github.com/vanquan3008/tracepilot/internal/auth"
 )
 
 const (

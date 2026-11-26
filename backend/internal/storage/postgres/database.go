@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/vanquan3008/tracepilot/internal/config"
 	notificationdomain "github.com/vanquan3008/tracepilot/internal/domain/notification"
 	"github.com/vanquan3008/tracepilot/internal/observability/metrics"

@@ -5,11 +5,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vanquan3008/tracepilot/internal/storage/clickhouse/clienttest"
-
 	"github.com/vanquan3008/tracepilot/internal/domain/analysis"
 	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
 	"github.com/vanquan3008/tracepilot/internal/query"
+	"github.com/vanquan3008/tracepilot/internal/storage/clickhouse/clienttest"
 )
 
 // readFixture stores one trace: an api SERVER root, an orders SERVER child and

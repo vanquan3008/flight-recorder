@@ -7,9 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vanquan3008/tracepilot/internal/storage/clickhouse/clienttest"
-
 	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
+	"github.com/vanquan3008/tracepilot/internal/storage/clickhouse/clienttest"
 )
 
 func TestSpansAndMetricsDeduplicateRetriesAndExpireByDay(t *testing.T) {

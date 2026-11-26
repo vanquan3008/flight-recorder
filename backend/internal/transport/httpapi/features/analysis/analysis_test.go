@@ -1,10 +1,11 @@
 package analysis
 
 import (
-	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/render"
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/render"
 )
 
 func TestParseAnalysisFilterDefaultsAndBounds(t *testing.T) {

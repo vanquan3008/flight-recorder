@@ -1,6 +1,8 @@
 SQLC_IMAGE := sqlc/sqlc:1.31.1
+GOIMPORTS_VERSION := v0.48.0
+GOIMPORTS := go -C backend run golang.org/x/tools/cmd/goimports@$(GOIMPORTS_VERSION) -local github.com/vanquan3008/tracepilot
 
-.PHONY: build test test-race bench-pipeline bench-postgres vet staticcheck vulncheck fmt-check size-check sqlc-generate sqlc-vet sqlc-check web-install web-check web-test web-build web-dev web-ci ci run dev start migrate migrate-postgres migrate-clickhouse migrate-all migrate-status migrate-version clean test-docker load-docker
+.PHONY: build test test-race bench-pipeline bench-postgres vet staticcheck vulncheck fmt fmt-check size-check sqlc-generate sqlc-vet sqlc-check web-install web-check web-test web-build web-dev web-ci ci run dev start migrate migrate-postgres migrate-clickhouse migrate-all migrate-status migrate-version clean test-docker load-docker
 
 FRONTEND_NPM := npm --prefix frontend
 
@@ -57,8 +59,12 @@ staticcheck:
 vulncheck:
 	cd backend && go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
+fmt:
+	$(GOIMPORTS) -w .
+
 fmt-check:
-	@test -z "$$(find backend -type f -name '*.go' -exec gofmt -l {} +)" || (find backend -type f -name '*.go' -exec gofmt -l {} + && exit 1)
+	@files="$$($(GOIMPORTS) -l .)" || exit $$?; \
+	if [ -n "$$files" ]; then printf '%s\n' "$$files"; exit 1; fi
 
 size-check:
 	@failed=0; \

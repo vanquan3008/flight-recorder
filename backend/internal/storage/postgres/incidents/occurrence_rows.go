@@ -3,9 +3,9 @@ package incidents
 import (
 	"cmp"
 	"context"
-	"github.com/vanquan3008/tracepilot/internal/domain/analysis"
 
 	"github.com/vanquan3008/tracepilot/internal/config"
+	"github.com/vanquan3008/tracepilot/internal/domain/analysis"
 	"github.com/vanquan3008/tracepilot/internal/domain/incident"
 	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
 	"github.com/vanquan3008/tracepilot/internal/storage/postgres/pgvalue"

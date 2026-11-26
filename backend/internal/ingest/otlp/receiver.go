@@ -5,15 +5,15 @@ import (
 	"errors"
 	"net/netip"
 
-	"github.com/vanquan3008/tracepilot/internal/ingest/otlp/normalize"
+	collectorlogspb "go.opentelemetry.io/proto/otlp/collector/logs/v1"
+	collectormetricspb "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
+	collectortracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 
 	"github.com/vanquan3008/tracepilot/internal/auth"
 	"github.com/vanquan3008/tracepilot/internal/config"
 	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
+	"github.com/vanquan3008/tracepilot/internal/ingest/otlp/normalize"
 	"github.com/vanquan3008/tracepilot/internal/observability/metrics"
-	collectorlogspb "go.opentelemetry.io/proto/otlp/collector/logs/v1"
-	collectormetricspb "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
-	collectortracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 )
 
 // Submitter stores trace and log events. It returns the committed count, the

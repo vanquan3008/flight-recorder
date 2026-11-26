@@ -4,11 +4,12 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
-	"github.com/vanquan3008/tracepilot/internal/auth"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/vanquan3008/tracepilot/internal/auth"
 
 	"github.com/vanquan3008/tracepilot/internal/config"
 	notificationdomain "github.com/vanquan3008/tracepilot/internal/domain/notification"

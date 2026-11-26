@@ -10,16 +10,16 @@ import (
 	"sync"
 	"time"
 
-	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/middleware"
-
-	"github.com/vanquan3008/tracepilot/internal/auth"
-	"github.com/vanquan3008/tracepilot/internal/config"
 	collectorlogspb "go.opentelemetry.io/proto/otlp/collector/logs/v1"
 	collectormetricspb "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
 	collectortracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	statuspb "google.golang.org/genproto/googleapis/rpc/status"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
+
+	"github.com/vanquan3008/tracepilot/internal/auth"
+	"github.com/vanquan3008/tracepilot/internal/config"
+	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/middleware"
 )
 
 func newHTTPServer(configuration config.Config, server *Server) *http.Server {

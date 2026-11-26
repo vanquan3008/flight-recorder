@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgconn"
+
 	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
 )
 

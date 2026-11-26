@@ -1,0 +1,14 @@
+{
+  "[go]": {
+    "editor.defaultFormatter": "golang.go",
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": {
+      "source.organizeImports": "explicit"
+    }
+  },
+  "go.formatTool": "goimports",
+  "go.formatFlags": ["-local", "github.com/vanquan3008/tracepilot"],
+  "gopls": {
+    "local": "github.com/vanquan3008/tracepilot"
+  }
+}

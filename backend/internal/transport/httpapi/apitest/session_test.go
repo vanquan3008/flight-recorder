@@ -8,10 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/render/rendertest"
-
 	"github.com/vanquan3008/tracepilot/internal/auth"
 	"github.com/vanquan3008/tracepilot/internal/config"
+	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/render/rendertest"
 )
 
 // The refresh cookie and the attempt limits are part of the console's contract, so the tests pin them.

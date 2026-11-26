@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+
 	"github.com/vanquan3008/tracepilot/internal/config"
 )
 

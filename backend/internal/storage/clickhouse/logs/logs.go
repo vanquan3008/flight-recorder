@@ -10,10 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/vanquan3008/tracepilot/internal/storage/clickhouse/client"
-
 	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
 	"github.com/vanquan3008/tracepilot/internal/query"
+	"github.com/vanquan3008/tracepilot/internal/storage/clickhouse/client"
 )
 
 func (store *Logs) StoreLogs(ctx context.Context, projectID, environmentID string, events []telemetry.Event) error {

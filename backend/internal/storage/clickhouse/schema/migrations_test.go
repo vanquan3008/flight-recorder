@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/vanquan3008/tracepilot/internal/storage/clickhouse/clienttest"
-
 	"github.com/vanquan3008/tracepilot/internal/storage/clickhouse/logs"
 
 	"github.com/vanquan3008/tracepilot/db"

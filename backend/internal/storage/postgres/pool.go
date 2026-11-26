@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/vanquan3008/tracepilot/internal/config"
 )
 

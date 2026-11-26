@@ -1,9 +1,10 @@
 package normalize
 
 import (
-	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 	resourcepb "go.opentelemetry.io/proto/otlp/resource/v1"
+
+	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
 )
 
 // source is what a span or a log record inherits from where it came from: its resource, its

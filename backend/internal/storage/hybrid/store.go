@@ -5,8 +5,11 @@ package hybrid
 import (
 	"context"
 	"fmt"
-	"github.com/vanquan3008/tracepilot/internal/storage/clickhouse/client"
 	"time"
+
+	"github.com/vanquan3008/tracepilot/internal/storage/clickhouse/client"
+
+	"golang.org/x/sync/errgroup"
 
 	"github.com/vanquan3008/tracepilot/internal/auth"
 	"github.com/vanquan3008/tracepilot/internal/config"
@@ -14,7 +17,6 @@ import (
 	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
 	"github.com/vanquan3008/tracepilot/internal/query"
 	"github.com/vanquan3008/tracepilot/internal/storage/postgres"
-	"golang.org/x/sync/errgroup"
 )
 
 type clickHouseStore interface {

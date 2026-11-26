@@ -4,10 +4,11 @@ import (
 	"errors"
 	"math"
 
-	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 	metricspb "go.opentelemetry.io/proto/otlp/metrics/v1"
 	resourcepb "go.opentelemetry.io/proto/otlp/resource/v1"
+
+	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
 )
 
 // Normalize each point independently and apply admission before doing its work.

@@ -28,6 +28,7 @@ node_modules/
 # Local logs, editors, and OS files
 *.log
 .idea/
-.vscode/
+.vscode/*
+!.vscode/settings.json
 .DS_Store
 Thumbs.db

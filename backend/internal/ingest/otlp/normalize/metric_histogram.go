@@ -5,9 +5,10 @@ import (
 	"math"
 	"time"
 
-	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
 	metricspb "go.opentelemetry.io/proto/otlp/metrics/v1"
 	resourcepb "go.opentelemetry.io/proto/otlp/resource/v1"
+
+	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
 )
 
 func (n *Normalizer) histogramPoints(base telemetry.MetricDataPoint, raw []*metricspb.HistogramDataPoint, resource *resourcepb.Resource, limit int) ([]telemetry.MetricDataPoint, int) {

@@ -5,8 +5,9 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
 	metricspb "go.opentelemetry.io/proto/otlp/metrics/v1"
+
+	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
 )
 
 func temporalityName(temporality metricspb.AggregationTemporality) string {

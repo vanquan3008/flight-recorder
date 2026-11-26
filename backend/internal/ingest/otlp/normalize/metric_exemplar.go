@@ -6,8 +6,9 @@ import (
 	"math"
 	"time"
 
-	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
 	metricspb "go.opentelemetry.io/proto/otlp/metrics/v1"
+
+	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
 )
 
 func (n *Normalizer) metricExemplars(values []*metricspb.Exemplar, fallback time.Time) ([]telemetry.MetricExemplar, error) {

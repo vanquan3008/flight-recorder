@@ -30,6 +30,7 @@
 
 ## Verification
 
+- Run `make fmt` for Go formatting and import organization; CI enforces `make fmt-check`.
 - For logic changes, add a small regression test and run the relevant tests, Go vet, and Go build.
 - For frontend changes, run type checking, tests, and the build.
 - For SQL and migration changes, run integration tests against a disposable PostgreSQL database.
