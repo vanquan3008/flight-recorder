@@ -22,7 +22,7 @@ func Inspect(ctx context.Context, databaseURL string) (migrationstate.Status, er
 }
 
 func inspect(ctx context.Context, databaseURL string, options Options) (migrationstate.Status, error) {
-	list, err := db.List(db.PostgresMigrations)
+	list, err := db.ListMigrations(db.PostgresMigrations)
 	if err != nil {
 		return migrationstate.Status{}, err
 	}

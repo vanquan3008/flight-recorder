@@ -15,7 +15,7 @@ import (
 
 func latestClickHouseVersion(t *testing.T) uint {
 	t.Helper()
-	list, err := db.List(db.ClickHouseMigrations)
+	list, err := db.ListMigrations(db.ClickHouseMigrations)
 	if err != nil {
 		t.Fatal(err)
 	}
