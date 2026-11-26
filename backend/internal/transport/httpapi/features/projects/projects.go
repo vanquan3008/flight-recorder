@@ -20,10 +20,13 @@ type Backend interface {
 	CreateProject(ctx context.Context, params auth.CreateProjectParams, creatorUserID string, ownedLimit int, actor auth.Actor) (auth.Project, auth.Environment, error)
 	GetProject(context.Context, string) (auth.Project, error)
 	RenameProject(ctx context.Context, projectID, name string, actor auth.Actor) (auth.Project, error)
-	GetProjectRetention(ctx context.Context, projectID string) (*int32, error)
-	UpdateProjectRetention(ctx context.Context, projectID string, days *int32, actor auth.Actor) error
 	ListEnvironments(context.Context, string) ([]auth.Environment, error)
 	CreateEnvironment(ctx context.Context, projectID, name string, actor auth.Actor) (auth.Environment, error)
+}
+
+type RetentionBackend interface {
+	GetProjectRetention(ctx context.Context, projectID string) (*int32, error)
+	UpdateProjectRetention(ctx context.Context, projectID string, days *int32, actor auth.Actor) error
 }
 
 // Cache is the router's project and environment cache, cleared when a project changes.
@@ -33,15 +36,16 @@ type Cache interface {
 }
 
 type Handler struct {
-	backend Backend
-	cache   Cache
-	errors  api.Errors
+	backend   Backend
+	retention RetentionBackend
+	cache     Cache
+	errors    api.Errors
 	// defaultRetention is the retention a project without its own setting inherits.
 	defaultRetention time.Duration
 }
 
-func New(backend Backend, cache Cache, defaultRetention time.Duration, logger *slog.Logger) *Handler {
-	return &Handler{backend: backend, cache: cache, errors: api.Errors{Logger: logger}, defaultRetention: defaultRetention}
+func New(backend Backend, retention RetentionBackend, cache Cache, defaultRetention time.Duration, logger *slog.Logger) *Handler {
+	return &Handler{backend: backend, retention: retention, cache: cache, errors: api.Errors{Logger: logger}, defaultRetention: defaultRetention}
 }
 
 func (handler *Handler) Routes() []api.Route {
@@ -182,7 +186,7 @@ func (handler *Handler) getRetention(responseWriter http.ResponseWriter, request
 	if !api.RequireProject(responseWriter, principal) {
 		return
 	}
-	days, err := handler.backend.GetProjectRetention(request.Context(), principal.ProjectID)
+	days, err := handler.retention.GetProjectRetention(request.Context(), principal.ProjectID)
 	if !handler.errors.Identity(responseWriter, request, "read project retention", err) {
 		handler.writeRetention(responseWriter, days)
 	}
@@ -202,7 +206,7 @@ func (handler *Handler) updateRetention(responseWriter http.ResponseWriter, requ
 		render.WriteAPIError(responseWriter, http.StatusBadRequest, "INVALID_REQUEST", "retention_days must be a positive supported number of days or null to inherit the default")
 		return
 	}
-	if err := handler.backend.UpdateProjectRetention(request.Context(), principal.ProjectID, payload.Days, principal.Actor()); !handler.errors.Identity(responseWriter, request, "update project retention", err) {
+	if err := handler.retention.UpdateProjectRetention(request.Context(), principal.ProjectID, payload.Days, principal.Actor()); !handler.errors.Identity(responseWriter, request, "update project retention", err) {
 		handler.writeRetention(responseWriter, payload.Days)
 	}
 }

@@ -1,4 +1,4 @@
-package hybrid
+package main
 
 import (
 	"context"
@@ -35,7 +35,7 @@ func TestMigrateAllStopsAtFailedDatabaseWithoutRollbackIntegration(t *testing.T)
 	cfg := config.Config{Database: config.DatabaseConfig{URL: os.Getenv("TRACEPILOT_DATABASE_URL")},
 		ClickHouse: config.ClickHouseConfig{URL: server.URL, Database: "test", Username: "default",
 			RequestTimeout: time.Second, MaxConnections: 2}}
-	if err := MigrateAll(ctx, cfg); err == nil || !strings.Contains(err.Error(), "PostgreSQL was not rolled back") || requests.Load() == 0 {
+	if err := migrateAll(ctx, cfg); err == nil || !strings.Contains(err.Error(), "PostgreSQL was not rolled back") || requests.Load() == 0 {
 		t.Fatalf("ClickHouse failure did not stop the workflow: requests=%d error=%v", requests.Load(), err)
 	}
 	state, err := migrations.Inspect(ctx, cfg.Database.URL)
@@ -65,7 +65,7 @@ func TestMigrateAllStopsAtFailedDatabaseWithoutRollbackIntegration(t *testing.T)
 	endpoint.RawQuery = query.Encode()
 	cfg.Database.URL = endpoint.String()
 	requests.Store(0)
-	if err := MigrateAll(ctx, cfg); err == nil || requests.Load() != 0 {
+	if err := migrateAll(ctx, cfg); err == nil || requests.Load() != 0 {
 		t.Fatalf("PostgreSQL failure reached ClickHouse: requests=%d error=%v", requests.Load(), err)
 	}
 }
@@ -86,7 +86,7 @@ func TestMigrateAllDoesNotRequireApplicationSecretsIntegration(t *testing.T) {
 	defer clienttest.DropDatabase(t, cfg.ClickHouse)
 	// Migration readiness only needs database access, never application credentials.
 	cfg.Notifications.EncryptionKey = "not-a-webhook-key"
-	if err := MigrateAll(ctx, cfg); err != nil {
+	if err := migrateAll(ctx, cfg); err != nil {
 		t.Fatal(err)
 	}
 }

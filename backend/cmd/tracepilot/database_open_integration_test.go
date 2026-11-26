@@ -1,4 +1,4 @@
-package hybrid
+package main
 
 import (
 	"context"
@@ -49,10 +49,10 @@ func TestStorageStartupFailureClosesPostgresPoolIntegration(t *testing.T) {
 		ClickHouse: config.ClickHouseConfig{URL: server.URL, Database: "test", Username: "default",
 			RequestTimeout: time.Second, MaxConnections: 2},
 	}
-	store, err := Open(ctx, cfg)
+	store, err := openDatabases(ctx, cfg)
 	if err == nil || store != nil {
 		if store != nil {
-			store.Close()
+			store.lifecycle.Close()
 		}
 		t.Fatal("startup accepted unavailable ClickHouse")
 	}

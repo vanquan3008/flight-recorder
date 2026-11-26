@@ -67,14 +67,14 @@ func (store *recordingStore) CountExpiredProjectEvents(context.Context, time.Tim
 func (store *recordingStore) DropExpiredTelemetryPartitions(_ context.Context, now time.Time, fallback time.Duration) (int64, error) {
 	return store.record("shared-partitions", now.Add(-fallback))
 }
-func (store *recordingStore) DropExpiredClickHousePartitions(_ context.Context, now time.Time, fallback time.Duration) error {
+func (store *recordingStore) DropExpiredPartitions(_ context.Context, now time.Time, fallback time.Duration) error {
 	_, err := store.record("clickhouse-partitions", now.Add(-fallback))
 	return err
 }
 func (store *recordingStore) PruneProjectTelemetry(_ context.Context, project string, now time.Time, fallback time.Duration, _ int) (int64, error) {
 	return store.record("telemetry-"+project, now.Add(-fallback))
 }
-func (store *recordingStore) PruneProjectLogs(_ context.Context, project string, now time.Time, fallback time.Duration) error {
+func (store *recordingStore) PruneProject(_ context.Context, project string, now time.Time, fallback time.Duration) error {
 	_, err := store.record("logs-"+project, now.Add(-fallback))
 	return err
 }
@@ -90,21 +90,20 @@ func (store *recordingStore) DeleteDeliveriesBefore(_ context.Context, before ti
 
 func runOnce(store *recordingStore, policy Policy) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	pruneAll(context.Background(), logger, store, metrics.New("test", "test", "test"), policy, 10)
+	pruneAll(context.Background(), logger, store, store, metrics.New("test", "test", "test"), policy, 10, testNow)
 }
 
 func TestEachGroupExpiresOnItsOwnCutoff(t *testing.T) {
 	store := &recordingStore{cutoffs: map[string]time.Time{}}
 	day := 24 * time.Hour
-	started := time.Now()
 	runOnce(store, Policy{Telemetry: 7 * day, Incidents: 90 * day, Audit: 180 * day, Deliveries: 30 * day})
 	for group, age := range map[string]time.Duration{"telemetry-alpha": 7 * day, "logs-beta": 7 * day, "incidents": 90 * day, "audit": 180 * day, "deliveries": 30 * day} {
 		cutoff, ran := store.cutoffs[group]
 		if !ran {
 			t.Fatalf("group %s did not run", group)
 		}
-		if drift := started.Add(-age).Sub(cutoff).Abs(); drift > time.Minute {
-			t.Fatalf("group %s cutoff is %s away from now-%s", group, drift, age)
+		if want := testNow.Add(-age); !cutoff.Equal(want) {
+			t.Fatalf("group %s cutoff = %v, want %v", group, cutoff, want)
 		}
 	}
 }

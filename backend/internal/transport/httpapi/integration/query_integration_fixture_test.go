@@ -10,33 +10,41 @@ import (
 	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
 	"github.com/vanquan3008/tracepilot/internal/query"
 	"github.com/vanquan3008/tracepilot/internal/storage/postgres"
+	"github.com/vanquan3008/tracepilot/internal/transport/httpapi"
 )
 
-// postgresBackend serves the API from PostgreSQL alone. Telemetry lives only
-// in ClickHouse, whose integration suite covers its reads, so it is empty here.
-type postgresBackend struct{ *postgres.Database }
+// emptyTelemetry lets the metadata API tests run with just PostgreSQL.
+type emptyTelemetry struct{}
 
-func (postgresBackend) ListLogs(context.Context, string, query.LogFilter) ([]query.LogRecord, error) {
+func postgresBackends(database *postgres.Database) httpapi.Backends {
+	return httpapi.Backends{
+		Access: database, Session: database, Users: database, Projects: database, ProjectRetention: database,
+		Members: database, IngestTokens: database, Incidents: database, Webhooks: database,
+		Traces: emptyTelemetry{}, Logs: emptyTelemetry{}, Services: emptyTelemetry{},
+	}
+}
+
+func (emptyTelemetry) ListLogs(context.Context, string, query.LogFilter) ([]query.LogRecord, error) {
 	return nil, nil
 }
 
-func (postgresBackend) GetLog(context.Context, string, string, string) (query.LogRecord, error) {
+func (emptyTelemetry) GetLog(context.Context, string, string, string) (query.LogRecord, error) {
 	return query.LogRecord{}, nil
 }
 
-func (postgresBackend) ListTraces(context.Context, string, query.TraceFilter) ([]query.TraceSummary, error) {
+func (emptyTelemetry) ListTraces(context.Context, string, query.TraceFilter) ([]query.TraceSummary, error) {
 	return []query.TraceSummary{}, nil
 }
 
-func (postgresBackend) GetTrace(context.Context, string, string, string, query.SpanPage) ([]query.SpanRecord, bool, error) {
+func (emptyTelemetry) GetTrace(context.Context, string, string, string, query.SpanPage) ([]query.SpanRecord, bool, error) {
 	return nil, false, nil
 }
 
-func (postgresBackend) ListServices(context.Context, string, string, time.Time, time.Time) ([]query.ServiceSummary, error) {
+func (emptyTelemetry) ListServices(context.Context, string, string, time.Time, time.Time) ([]query.ServiceSummary, error) {
 	return nil, nil
 }
 
-func (postgresBackend) ListServiceDependencies(context.Context, string, string, string) ([]query.ServiceDependency, error) {
+func (emptyTelemetry) ListServiceDependencies(context.Context, string, string, string) ([]query.ServiceDependency, error) {
 	return nil, nil
 }
 

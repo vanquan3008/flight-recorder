@@ -1,4 +1,4 @@
-package hybrid
+package retention
 
 import (
 	"context"
@@ -11,7 +11,6 @@ import (
 type retentionCache struct {
 	ttl        time.Duration
 	limit      int
-	now        func() time.Time
 	mu         sync.Mutex
 	generation uint64
 	entries    map[string]retentionEntry
@@ -23,15 +22,14 @@ type retentionEntry struct {
 }
 
 func newRetentionCache(ttl time.Duration, limit int) *retentionCache {
-	return &retentionCache{ttl: ttl, limit: max(limit, 1), now: time.Now, entries: map[string]retentionEntry{}}
+	return &retentionCache{ttl: ttl, limit: max(limit, 1), entries: map[string]retentionEntry{}}
 }
 
 // get does not cache a value loaded while forget ran.
-func (cache *retentionCache) get(ctx context.Context, project string, load func(context.Context, string) (*int32, error)) (*int32, error) {
+func (cache *retentionCache) get(ctx context.Context, project string, now time.Time, load func(context.Context, string) (*int32, error)) (*int32, error) {
 	if cache == nil || cache.ttl <= 0 {
 		return load(ctx, project)
 	}
-	now := cache.now()
 	cache.mu.Lock()
 	entry, found := cache.entries[project]
 	generation := cache.generation

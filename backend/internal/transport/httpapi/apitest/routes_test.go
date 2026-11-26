@@ -26,7 +26,7 @@ const (
 // authOnlyBackend knows four people: an owner and a user of the project, an outsider who belongs to
 // nothing, and a super administrator. Every other Backend method is nil, so a handler that runs
 // without being expected to would panic the test.
-type authOnlyBackend struct{ httpapi.Backend }
+type authOnlyBackend struct{ backend }
 
 func (authOnlyBackend) GetUser(_ context.Context, id string) (auth.User, error) {
 	switch id {
@@ -143,7 +143,7 @@ func TestRouterEnforcesEachRouteScopeBeforeItsHandler(t *testing.T) {
 
 // unavailableAuthBackend cannot read accounts. Its other methods are nil, so a handler that ran
 // anyway would panic.
-type unavailableAuthBackend struct{ httpapi.Backend }
+type unavailableAuthBackend struct{ backend }
 
 func (unavailableAuthBackend) GetUser(context.Context, string) (auth.User, error) {
 	return auth.User{}, errors.New("database unavailable")

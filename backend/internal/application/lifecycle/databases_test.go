@@ -1,17 +1,17 @@
-package hybrid
+package lifecycle
 
 import (
 	"context"
 	"errors"
 	"testing"
 	"time"
-
-	"github.com/vanquan3008/tracepilot/internal/config"
 )
 
 type databaseProbeFunc func(context.Context) error
 
 func (probe databaseProbeFunc) Ready(ctx context.Context) error { return probe(ctx) }
+
+func (databaseProbeFunc) Close() {}
 
 func TestDatabaseReadinessRunsConcurrently(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -27,7 +27,7 @@ func TestDatabaseReadinessRunsConcurrently(t *testing.T) {
 		}
 	})
 	done := make(chan error, 1)
-	go func() { done <- checkDatabases(ctx, probe, probe) }()
+	go func() { done <- NewDatabases(probe, probe).Ready(ctx) }()
 	for range 2 {
 		select {
 		case <-started:
@@ -58,20 +58,9 @@ func TestDatabaseReadinessCancelsPeerOnFailure(t *testing.T) {
 			if failed == "ClickHouse" {
 				pg, ch = peer, failure
 			}
-			if err := checkDatabases(ctx, pg, ch); !errors.Is(err, want) {
+			if err := NewDatabases(pg, ch).Ready(ctx); !errors.Is(err, want) {
 				t.Fatalf("readiness lost the database failure: %v", err)
 			}
 		})
-	}
-}
-
-func TestStorageStartupHonorsCancellationBeforeOpeningClients(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	for _, autoMigrate := range []bool{false, true} {
-		store, err := Open(ctx, config.Config{Database: config.DatabaseConfig{AutoMigrate: autoMigrate}})
-		if store != nil || !errors.Is(err, context.Canceled) {
-			t.Fatalf("canceled startup (auto migration=%t) = %v, %v", autoMigrate, store, err)
-		}
 	}
 }

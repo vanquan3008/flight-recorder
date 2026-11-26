@@ -12,16 +12,20 @@ import (
 // groupTimeout bounds one group's cleanup so a slow delete cannot starve the others.
 const groupTimeout = 30 * time.Second
 
-type Store interface {
+// metadataMaintenance prunes incidents, their envelopes, and management history.
+type metadataMaintenance interface {
 	ListRetentionProjects(context.Context) ([]string, error)
 	DropExpiredTelemetryPartitions(context.Context, time.Time, time.Duration) (events int64, err error)
-	DropExpiredClickHousePartitions(context.Context, time.Time, time.Duration) error
 	PruneProjectTelemetry(context.Context, string, time.Time, time.Duration, int) (events int64, err error)
-	PruneProjectLogs(context.Context, string, time.Time, time.Duration) error
 	CountExpiredProjectEvents(context.Context, time.Time, time.Duration) (int64, error)
 	DeleteIncidentsBefore(context.Context, time.Time, int) (int64, error)
 	DeleteAuditBefore(context.Context, time.Time, int) (int64, error)
 	DeleteDeliveriesBefore(context.Context, time.Time, int) (int64, error)
+}
+
+type telemetryMaintenance interface {
+	DropExpiredPartitions(context.Context, time.Time, time.Duration) error
+	PruneProject(context.Context, string, time.Time, time.Duration) error
 }
 
 // Policy is how long each group is kept. Telemetry is the default for projects without an override.
@@ -40,8 +44,8 @@ type group struct {
 
 // Run cleans up expired data now and then every interval until ctx ends. A
 // failing group is logged and counted but never stops the other groups.
-func Run(ctx context.Context, logger *slog.Logger, store Store, selfMetrics *metrics.Registry, policy Policy, interval time.Duration, batchSize int) error {
-	prune := func() { pruneAll(ctx, logger, store, selfMetrics, policy, batchSize) }
+func Run(ctx context.Context, logger *slog.Logger, metadata metadataMaintenance, telemetry telemetryMaintenance, selfMetrics *metrics.Registry, policy Policy, interval time.Duration, batchSize int, now func() time.Time) error {
+	prune := func() { pruneAll(ctx, logger, metadata, telemetry, selfMetrics, policy, batchSize, now().UTC()) }
 
 	prune()
 	ticker := time.NewTicker(interval)
@@ -56,19 +60,19 @@ func Run(ctx context.Context, logger *slog.Logger, store Store, selfMetrics *met
 	}
 }
 
-func pruneAll(ctx context.Context, logger *slog.Logger, store Store, selfMetrics *metrics.Registry, policy Policy, batchSize int) {
-	startedAt := time.Now().UTC()
+func pruneAll(ctx context.Context, logger *slog.Logger, metadata metadataMaintenance, telemetry telemetryMaintenance, selfMetrics *metrics.Registry, policy Policy, batchSize int, now time.Time) {
+	startedAt := time.Now()
 	var failed bool
 	for _, current := range []group{
-		{"incidents", policy.Incidents, store.DeleteIncidentsBefore},
-		{"audit", policy.Audit, store.DeleteAuditBefore},
-		{"deliveries", policy.Deliveries, store.DeleteDeliveriesBefore},
+		{"incidents", policy.Incidents, metadata.DeleteIncidentsBefore},
+		{"audit", policy.Audit, metadata.DeleteAuditBefore},
+		{"deliveries", policy.Deliveries, metadata.DeleteDeliveriesBefore},
 	} {
 		if current.maxAge <= 0 {
 			continue
 		}
 		groupContext, cancel := context.WithTimeout(ctx, groupTimeout)
-		deleted, pruneError := DeleteExpired(groupContext, startedAt.Add(-current.maxAge), batchSize, current.delete)
+		deleted, pruneError := DeleteExpired(groupContext, now.Add(-current.maxAge), batchSize, current.delete)
 		cancel()
 		selfMetrics.ObserveRetentionGroup(current.name, deleted)
 		if pruneError != nil {
@@ -78,29 +82,29 @@ func pruneAll(ctx context.Context, logger *slog.Logger, store Store, selfMetrics
 			logger.InfoContext(ctx, "retention cleanup completed", "group", current.name, "deleted", deleted)
 		}
 	}
-	events, telemetryError := pruneTelemetry(ctx, logger, store, startedAt, policy.Telemetry, batchSize)
+	events, telemetryError := pruneTelemetry(ctx, logger, metadata, telemetry, now, policy.Telemetry, batchSize)
 	selfMetrics.ObserveRetentionGroup("telemetry", events)
 	if telemetryError != nil && ctx.Err() == nil {
 		logger.ErrorContext(ctx, "telemetry retention sweep incomplete", "error", telemetryError)
 	}
-	recordBacklog(ctx, logger, store, selfMetrics, startedAt, policy.Telemetry)
+	recordBacklog(ctx, logger, metadata, selfMetrics, now, policy.Telemetry)
 	selfMetrics.ObserveRetention(time.Since(startedAt), events, failed || telemetryError != nil)
 }
 
 // pruneTelemetry expires incident envelopes in PostgreSQL and signals in
 // ClickHouse: whole partitions first, then each project's shorter policy.
-func pruneTelemetry(ctx context.Context, logger *slog.Logger, store Store, now time.Time, fallback time.Duration, batchSize int) (int64, error) {
+func pruneTelemetry(ctx context.Context, logger *slog.Logger, metadata metadataMaintenance, telemetry telemetryMaintenance, now time.Time, fallback time.Duration, batchSize int) (int64, error) {
 	if batchSize <= 0 {
 		return 0, errors.New("retention batch size must be positive")
 	}
 	work, cancel := context.WithTimeout(ctx, groupTimeout)
-	events, dropError := store.DropExpiredTelemetryPartitions(work, now, fallback)
+	events, dropError := metadata.DropExpiredTelemetryPartitions(work, now, fallback)
 	cancel()
 	work, cancel = context.WithTimeout(ctx, groupTimeout)
-	dropError = errors.Join(dropError, store.DropExpiredClickHousePartitions(work, now, fallback))
+	dropError = errors.Join(dropError, telemetry.DropExpiredPartitions(work, now, fallback))
 	cancel()
 	work, cancel = context.WithTimeout(ctx, groupTimeout)
-	projects, listError := store.ListRetentionProjects(work)
+	projects, listError := metadata.ListRetentionProjects(work)
 	cancel()
 	if listError != nil {
 		return events, errors.Join(dropError, listError)
@@ -111,13 +115,13 @@ func pruneTelemetry(ctx context.Context, logger *slog.Logger, store Store, now t
 			return events, err
 		}
 		work, cancel = context.WithTimeout(ctx, groupTimeout)
-		removed, pgError := store.PruneProjectTelemetry(work, project, now, fallback, batchSize)
+		removed, pgError := metadata.PruneProjectTelemetry(work, project, now, fallback, batchSize)
 		cancel()
 		events += removed
 		work, cancel = context.WithTimeout(ctx, groupTimeout)
-		logError := store.PruneProjectLogs(work, project, now, fallback)
+		telemetryError := telemetry.PruneProject(work, project, now, fallback)
 		cancel()
-		if err := errors.Join(pgError, logError); err != nil {
+		if err := errors.Join(pgError, telemetryError); err != nil {
 			projectFailed = true
 			logger.ErrorContext(ctx, "project retention cleanup failed", "project_id", project, "error", err)
 		}
@@ -129,7 +133,7 @@ func pruneTelemetry(ctx context.Context, logger *slog.Logger, store Store, now t
 }
 
 // recordBacklog reports the events still older than the cutoff after cleanup.
-func recordBacklog(ctx context.Context, logger *slog.Logger, store Store, selfMetrics *metrics.Registry, now time.Time, maxAge time.Duration) {
+func recordBacklog(ctx context.Context, logger *slog.Logger, store metadataMaintenance, selfMetrics *metrics.Registry, now time.Time, maxAge time.Duration) {
 	backlogContext, cancel := context.WithTimeout(ctx, groupTimeout)
 	defer cancel()
 	backlog, backlogError := store.CountExpiredProjectEvents(backlogContext, now, maxAge)

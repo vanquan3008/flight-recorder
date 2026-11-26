@@ -24,39 +24,38 @@ import (
 	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/render"
 )
 
-// Backend is everything the features and the admission guard read from storage. Each feature declares
-// only the methods it calls, so this interface is their union. Webhooks, analysis insights, request
-// performance, and incident analysis are optional: when the store does not implement them, their
-// routes answer 501.
-type Backend interface {
-	access.Store
-	session.Backend
-	users.Backend
-	projects.Backend
-	members.Backend
-	ingesttokens.Backend
-	traces.Backend
-	logs.Backend
-	analysis.Backend
-	incidents.Backend
+// Backends binds each feature to the port it consumes. Optional backends can be left nil.
+type Backends struct {
+	Access           access.Store
+	Session          session.Backend
+	Users            users.Backend
+	Projects         projects.Backend
+	ProjectRetention projects.RetentionBackend
+	Members          members.Backend
+	IngestTokens     ingesttokens.Backend
+	Traces           traces.Backend
+	Logs             logs.Backend
+	Services         analysis.Backend
+	Insights         analysis.InsightsBackend
+	Performance      analysis.PerformanceBackend
+	Incidents        incidents.Backend
+	IncidentAnalysis incidents.AnalysisBackend
+	Webhooks         webhooks.Backend
 }
 
 // featureRoutes builds every feature and returns their combined routes. The router, the OpenAPI
 // document, and the CORS method list all read this list, so no surface can miss an endpoint.
 func (server *Server) featureRoutes(configuration config.Config, dependencies Dependencies) []api.Route {
-	store, logger := dependencies.Store, dependencies.Logger
-	insights, _ := store.(analysis.InsightsBackend)
-	performance, _ := store.(analysis.PerformanceBackend)
-	incidentAnalysis, _ := store.(incidents.AnalysisBackend)
-	webhookStore, _ := store.(webhooks.Backend)
+	backends, logger := dependencies.Backends, dependencies.Logger
+	webhookStore := backends.Webhooks
 	if !configuration.Notifications.Enabled {
 		webhookStore = nil
 	}
 	features := []interface{ Routes() []api.Route }{
-		traces.New(store, logger),
-		logs.New(store, logger),
-		analysis.New(store, insights, performance, logger),
-		incidents.New(store, incidentAnalysis, dependencies.Replay, configuration.Replay.MaxRequestBytes, logger),
+		traces.New(backends.Traces, logger),
+		logs.New(backends.Logs, logger),
+		analysis.New(backends.Services, backends.Insights, backends.Performance, logger),
+		incidents.New(backends.Incidents, backends.IncidentAnalysis, dependencies.Replay, configuration.Replay.MaxRequestBytes, logger),
 		session.New(session.Config{
 			TokenSecret:     []byte(configuration.Auth.JWTSecret),
 			TokenIssuer:     configuration.Auth.EffectiveIssuer(),
@@ -68,11 +67,11 @@ func (server *Server) featureRoutes(configuration config.Config, dependencies De
 			Production:      configuration.App.Production,
 			TLS:             server.tlsCertificate != "",
 			TrustedProxies:  server.trustedProxies,
-		}, store, server.rateLimiter, logger),
-		projects.New(store, server.guard, configuration.Storage.Retention.MaxAge, logger),
-		members.New(store, server.guard, logger),
-		ingesttokens.New(store, []byte(configuration.Auth.EffectiveIngestJWTSecret()), dependencies.TokenInvalidator, logger),
-		users.New(store, logger),
+		}, backends.Session, server.rateLimiter, logger),
+		projects.New(backends.Projects, backends.ProjectRetention, server.guard, configuration.Storage.Retention.MaxAge, logger),
+		members.New(backends.Members, server.guard, logger),
+		ingesttokens.New(backends.IngestTokens, []byte(configuration.Auth.EffectiveIngestJWTSecret()), dependencies.TokenInvalidator, logger),
+		users.New(backends.Users, logger),
 		webhooks.New(webhookStore, logger),
 		stream.New(dependencies.StreamHub),
 	}

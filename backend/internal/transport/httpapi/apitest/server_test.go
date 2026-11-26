@@ -12,7 +12,33 @@ import (
 	"github.com/vanquan3008/tracepilot/internal/config"
 	"github.com/vanquan3008/tracepilot/internal/observability/metrics"
 	"github.com/vanquan3008/tracepilot/internal/transport/httpapi"
+	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/access"
+	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/features/analysis"
+	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/features/incidents"
+	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/features/ingesttokens"
+	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/features/logs"
+	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/features/members"
+	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/features/projects"
+	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/features/session"
+	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/features/traces"
+	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/features/users"
+	"github.com/vanquan3008/tracepilot/internal/transport/httpapi/features/webhooks"
 )
+
+// backend lets an API test share one fake across the features it exercises.
+type backend interface {
+	access.Store
+	session.Backend
+	users.Backend
+	projects.Backend
+	projects.RetentionBackend
+	members.Backend
+	ingesttokens.Backend
+	traces.Backend
+	logs.Backend
+	analysis.Backend
+	incidents.Backend
+}
 
 func testConfig() config.Config {
 	return config.Config{
@@ -25,17 +51,25 @@ func testConfig() config.Config {
 }
 
 // testDependencies discard logs, pass the readiness check, and use a fresh metrics registry.
-func testDependencies(store httpapi.Backend) httpapi.Dependencies {
+func testDependencies(store backend) httpapi.Dependencies {
+	insights, _ := store.(analysis.InsightsBackend)
+	performance, _ := store.(analysis.PerformanceBackend)
+	incidentAnalysis, _ := store.(incidents.AnalysisBackend)
+	webhookStore, _ := store.(webhooks.Backend)
 	return httpapi.Dependencies{
 		Logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Metrics:   metrics.New("test", "test", "test"),
 		Readiness: func(context.Context) error { return nil },
-		Store:     store,
+		Backends: httpapi.Backends{
+			Access: store, Session: store, Users: store, Projects: store, ProjectRetention: store, Members: store,
+			IngestTokens: store, Traces: store, Logs: store, Services: store, Incidents: store,
+			Insights: insights, Performance: performance, IncidentAnalysis: incidentAnalysis, Webhooks: webhookStore,
+		},
 	}
 }
 
 // newTestServerWith serves store with testConfig changed by adjust.
-func newTestServerWith(store httpapi.Backend, adjust ...func(*config.Config)) *httpapi.Server {
+func newTestServerWith(store backend, adjust ...func(*config.Config)) *httpapi.Server {
 	configuration := testConfig()
 	for _, change := range adjust {
 		change(&configuration)

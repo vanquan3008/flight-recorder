@@ -30,8 +30,8 @@ type Dependencies struct {
 	Logger    *slog.Logger
 	Metrics   *metrics.Registry
 	Readiness func(context.Context) error
-	// Store serves the API. Without it only health checks, /metrics, and the OpenAPI document are served.
-	Store Backend
+	// Backends serves the API. Without an access store only health checks, /metrics, and OpenAPI are mounted.
+	Backends Backends
 	// Replay runs captured requests. Without it the replay route is left out.
 	Replay incidents.ReplayRunner
 	// TokenInvalidator drops revoked ingest tokens from the ingest cache at once.
@@ -105,13 +105,13 @@ func New(configuration config.Config, dependencies Dependencies) *Server {
 		MaxConcurrentQueries:    configuration.HTTP.MaxConcurrentQueries,
 		MaxConcurrentLogQueries: configuration.HTTP.MaxConcurrentLogQueries,
 		RequestTimeout:          configuration.HTTP.RequestTimeout,
-	}, dependencies.Store, dependencies.Logger, dependencies.Metrics)
+	}, dependencies.Backends.Access, dependencies.Logger, dependencies.Metrics)
 	server.routes = server.featureRoutes(configuration, dependencies)
 
 	router := http.NewServeMux()
 	router.HandleFunc("GET /openapi.json", server.openAPI)
 	var authenticator health.Authenticator
-	if dependencies.Store != nil {
+	if dependencies.Backends.Access != nil {
 		authenticator = server.guard
 		server.RegisterAPIRoutes(router)
 	}

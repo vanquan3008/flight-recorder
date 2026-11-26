@@ -1,4 +1,4 @@
-package hybrid
+package main
 
 import (
 	"context"
@@ -45,9 +45,9 @@ func TestAutoMigrationInitializesBothDatabasesOnlyWhenEnabledIntegration(t *test
 		ClickHouse: config.ClickHouseConfig{URL: os.Getenv("TRACEPILOT_CLICKHOUSE_TEST_URL"), Database: name,
 			Username: "default", RequestTimeout: 5 * time.Second, MaxConnections: 2}}
 	defer clienttest.DropDatabase(t, cfg.ClickHouse)
-	store, err := Open(ctx, cfg)
+	store, err := openDatabases(ctx, cfg)
 	if store != nil {
-		store.Close()
+		store.lifecycle.Close()
 		t.Fatal("uninitialized storage was accepted with auto migration disabled")
 	}
 	if err == nil {
@@ -67,9 +67,9 @@ func TestAutoMigrationInitializesBothDatabasesOnlyWhenEnabledIntegration(t *test
 		t.Fatalf("disabled startup changed ClickHouse: %+v, %v", chState, err)
 	}
 	cfg.Database.AutoMigrate = true
-	store, err = Open(ctx, cfg)
+	store, err = openDatabases(ctx, cfg)
 	if store != nil {
-		store.Close()
+		store.lifecycle.Close()
 		t.Fatal("PostgreSQL-only auto migration also initialized ClickHouse")
 	}
 	if err == nil {
@@ -86,12 +86,12 @@ func TestAutoMigrationInitializesBothDatabasesOnlyWhenEnabledIntegration(t *test
 	cfg.Database.AutoMigrate = false
 	cfg.ClickHouse.AutoMigrate = true
 	for range 2 {
-		store, err := Open(ctx, cfg)
+		store, err := openDatabases(ctx, cfg)
 		if err != nil {
 			t.Fatal(err)
 		}
-		readyErr := store.Ready(ctx)
-		store.Close()
+		readyErr := store.lifecycle.Ready(ctx)
+		store.lifecycle.Close()
 		if readyErr != nil {
 			t.Fatal(readyErr)
 		}
@@ -113,9 +113,9 @@ func TestAutoMigrationInitializesBothDatabasesOnlyWhenEnabledIntegration(t *test
 		t.Fatal(err)
 	}
 	cfg.Database.AutoMigrate = true
-	store, err = Open(ctx, cfg)
+	store, err = openDatabases(ctx, cfg)
 	if store != nil {
-		store.Close()
+		store.lifecycle.Close()
 		t.Fatal("dirty schema allowed startup")
 	}
 	if err == nil || !strings.Contains(err.Error(), "automatic PostgreSQL migration") {

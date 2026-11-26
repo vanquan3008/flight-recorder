@@ -16,9 +16,13 @@ projects, tokens, incidents, webhooks, and replays. The React console runs separ
 
 `cmd/tracepilot` wires dependencies and manages the process lifecycle. `application` coordinates use
 cases through small interfaces. `domain` contains pure rules. `ingest`, `transport/httpapi`, and
-`storage` handle protocol and persistence details. `storage/hybrid` combines the PostgreSQL store with the
-ClickHouse telemetry store, and the event writer in `cmd/tracepilot` routes ingested logs and spans
-through `application/logs`. `application/session` verifies credentials and
+`storage` handle protocol and persistence details. Bootstrap opens PostgreSQL for metadata and
+ClickHouse for telemetry. It passes each HTTP feature the adapter or service that implements its
+interface. The event writer routes logs and spans through `application/logs`. `application/telemetryquery`
+applies project retention and combines incident evidence with topology for incident analysis.
+`application/retention` owns the policy cache and runs telemetry cleanup under PostgreSQL policy locks.
+`application/lifecycle` checks both databases concurrently and closes their clients after shutdown drains.
+`application/session` verifies credentials and
 handles password changes, and `application/live` manages the in-memory telemetry hub. In the console,
 `shared/session` provides the authentication context and `app` owns the session lifecycle and route
 composition. Feature modules stay independent of `app`. See the [MVP scope, release criteria, and
@@ -97,7 +101,7 @@ Individual CLI entry points, `migrate_postgres.go` and `migrate_clickhouse.go`, 
 commands, load the settings for their respective database, and enforce its production TLS policy. These
 commands use `backend/.env` and can run independently of the other database or application settings.
 They call `storage/postgres/migrations.RunWithConfig` and `storage/clickhouse.RunMigration`. Startup
-auto-migration in `storage/hybrid.Open` calls the same runner when that database's flag is enabled.
+auto-migration in `cmd/tracepilot.openDatabases` calls the same runner when that database's flag is enabled.
 
 `storage/postgres/migrations.Run` holds the advisory lock for every `up` and `down` operation, including
 creation of the journal. Callers rely on that lock. `status` and `version` are read-only and skip the
@@ -106,8 +110,8 @@ helper computes the target and pending versions from the selected history. Each 
 migration state and versions, and architecture tests enforce their independence. Cross-database data
 transfers are outside the migration CLI.
 
-`migrate all` calls `storage/hybrid.MigrateAll`, which runs the two independent managers in sequence. It uses the runtime client and readiness
-code paths and requires only database credentials. All commands log JSON through `log/slog` with
+`migrate all` runs the two independent managers in sequence from `cmd/tracepilot`. It uses the runtime
+clients and readiness code paths and requires only database credentials. All commands log JSON through `log/slog` with
 `service.name` and `service.version`. `serve` applies `TRACEPILOT_OBSERVABILITY_LOG_LEVEL`. The `config` package returns errors
 for the calling command to log once. [Configuration](CONFIGURATION.md) describes how settings load.
 
@@ -520,9 +524,9 @@ event ID. The ID hash includes the full nanosecond timestamp, so otherwise ident
 in the same millisecond can have distinct IDs. Stored timestamps and cursors retain nanosecond
 precision.
 
-Log reads, trace matching, and trace summaries enforce the current project cutoff. Each replica caches
-the policy for the scope cache TTL (30 seconds by default). The replica that saves a change applies it
-at once, and others within the TTL. Each sweep first drops,
+The query service enforces the project cutoff on telemetry reads. Each replica caches the policy for the
+scope cache TTL (30 seconds by default). `PolicyService` invalidates the local cache after a successful
+PostgreSQL commit. Other replicas pick up the change within the TTL. Each sweep first drops,
 in every ClickHouse telemetry table, the partitions whose whole time range is older than the longest
 project policy. It holds the same PostgreSQL policy catalog lock as PostgreSQL partition drops and
 skips this step while any project keeps telemetry indefinitely. Then, for each project, it checks each
