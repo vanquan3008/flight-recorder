@@ -71,7 +71,7 @@ func TestAuthenticatedQueryIntegration(t *testing.T) {
 		t.Fatal(executorError)
 	}
 	replayService := replay.NewService(database, executor)
-	server := httpapi.New(configuration, httpapi.Dependencies{Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), Metrics: metrics.New("test", "test", "test"), Readiness: func(context.Context) error { return nil }, Store: postgresBackend{database}, Replay: replayService})
+	server := httpapi.New(configuration, httpapi.Dependencies{Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), Metrics: metrics.New("test", "test", "test"), Readiness: func(context.Context) error { return nil }, Backends: postgresBackends(database), Replay: replayService})
 	// Trace contents come from ClickHouse, whose integration suite covers them.
 	window := "&from=" + timestamp.Add(-time.Minute).Format(time.RFC3339) + "&to=" + timestamp.Add(time.Minute).Format(time.RFC3339)
 	traceRequest := httptest.NewRequest(http.MethodGet, "/api/v1/traces?minDuration=250ms"+window, nil)
@@ -83,7 +83,7 @@ func TestAuthenticatedQueryIntegration(t *testing.T) {
 	}
 	secureConfiguration := configuration
 	secureConfiguration.App.Production = true
-	secureServer := httpapi.New(secureConfiguration, httpapi.Dependencies{Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), Metrics: metrics.New("test", "test", "test"), Readiness: func(context.Context) error { return nil }, Store: postgresBackend{database}, Replay: replayService})
+	secureServer := httpapi.New(secureConfiguration, httpapi.Dependencies{Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), Metrics: metrics.New("test", "test", "test"), Readiness: func(context.Context) error { return nil }, Backends: postgresBackends(database), Replay: replayService})
 	secureMetrics := httptest.NewRecorder()
 	secureServer.ServeHTTP(secureMetrics, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 	if secureMetrics.Code != http.StatusUnauthorized {

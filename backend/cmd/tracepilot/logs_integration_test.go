@@ -12,6 +12,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/vanquan3008/tracepilot/internal/application/retention"
+	"github.com/vanquan3008/tracepilot/internal/application/telemetryquery"
 	"github.com/vanquan3008/tracepilot/internal/auth"
 	"github.com/vanquan3008/tracepilot/internal/config"
 	"github.com/vanquan3008/tracepilot/internal/domain/analysis"
@@ -19,11 +21,10 @@ import (
 	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
 	"github.com/vanquan3008/tracepilot/internal/query"
 	"github.com/vanquan3008/tracepilot/internal/storage/clickhouse"
-	"github.com/vanquan3008/tracepilot/internal/storage/hybrid"
 	"github.com/vanquan3008/tracepilot/internal/storage/postgres"
 )
 
-func TestHybridLogsPreserveIncidentsAndRetry(t *testing.T) {
+func TestTelemetryIngestionPreservesIncidentsAndRetry(t *testing.T) {
 	if os.Getenv("TRACEPILOT_INTEGRATION_TEST") != "1" || os.Getenv("TRACEPILOT_CLICKHOUSE_INTEGRATION_TEST") != "1" {
 		t.Skip("requires disposable PostgreSQL and ClickHouse integration environments")
 	}
@@ -62,12 +63,15 @@ func TestHybridLogsPreserveIncidentsAndRetry(t *testing.T) {
 			t.Error("ClickHouse test cleanup failed", response.StatusCode)
 		}
 	})
-	store, err := hybrid.Open(ctx, cfg)
+	connections, err := openDatabases(ctx, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer store.Close()
-	database := store.Database
+	defer connections.lifecycle.Close()
+	database, telemetryStore := connections.metadata, connections.telemetry
+	policies := retention.NewPolicyService(database, cfg.Storage.Retention.MaxAge, time.Minute, 16, func() time.Time { return at })
+	queries := telemetryquery.New(telemetryStore, telemetryStore, telemetryStore, database, policies)
+	maintenance := retention.NewTelemetryMaintenance(database, telemetryStore)
 	if err := database.EnsureIngestionScope(ctx, scope); err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +101,7 @@ func TestHybridLogsPreserveIncidentsAndRetry(t *testing.T) {
 	span := info
 	span.ID, span.Signal, span.Type, span.SpanKind = telemetry.DeterministicID(at, project, "span"), telemetry.SignalTrace, telemetry.EventRPC, 2
 	span.Status, span.Duration, span.Operation = "OK", time.Millisecond, "GET /orders"
-	writer := eventWriter{store: store}
+	writer := eventWriter{telemetry: telemetryStore, incidents: database}
 	write := storeEventsByScope(newScopeCatalog(scope, database), writer.StoreEvents)
 	for range 2 {
 		if err := write(ctx, []telemetry.Event{info, span, failure}); err != nil {
@@ -116,23 +120,22 @@ func TestHybridLogsPreserveIncidentsAndRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	broken.Close()
-	store.Database = broken
+	brokenWriter := eventWriter{telemetry: telemetryStore, incidents: broken}
 	retry := failure
 	retry.ID = telemetry.DeterministicID(at, project, "retry")
-	if err := writer.StoreEvents(ctx, scope, []telemetry.Event{retry}); err == nil {
+	if err := brokenWriter.StoreEvents(ctx, scope, []telemetry.Event{retry}); err == nil {
 		t.Fatal("ACK despite PostgreSQL failure after ClickHouse commit")
 	}
-	store.Database = database
 	if err := writer.StoreEvents(ctx, scope, []telemetry.Event{retry}); err != nil {
 		t.Fatal(err)
 	}
-	incidents, err := store.ListIncidents(ctx, project, incident.Filter{EnvironmentID: scope.EnvironmentID, Limit: 10})
+	incidents, err := database.ListIncidents(ctx, project, incident.Filter{EnvironmentID: scope.EnvironmentID, Limit: 10})
 	if err != nil || len(incidents) != 1 || incidents[0].OccurrenceCount != 2 {
 		t.Fatalf("incident retries changed counts: %+v, %v", incidents, err)
 	}
-	quality, err := store.TelemetryQuality(ctx, project, analysis.Filter{EnvironmentID: scope.EnvironmentID, From: at.Add(-time.Minute), To: at.Add(time.Minute)})
+	quality, err := queries.TelemetryQuality(ctx, project, analysis.Filter{EnvironmentID: scope.EnvironmentID, From: at.Add(-time.Minute), To: at.Add(time.Minute)})
 	if err != nil || quality.Spans != 1 || quality.Logs != 3 || quality.UncorrelatedLogs != 0 {
-		t.Fatalf("hybrid quality mixed stores incorrectly: %+v, %v", quality, err)
+		t.Fatalf("telemetry quality mixed signals incorrectly: %+v, %v", quality, err)
 	}
 	// A healthy log routed straight to PostgreSQL writes nothing there.
 	if err := database.StoreEvents(ctx, scope, []telemetry.Event{info}); err != nil {
@@ -141,10 +144,10 @@ func TestHybridLogsPreserveIncidentsAndRetry(t *testing.T) {
 	if err := pool.QueryRow(ctx, "SELECT count(*) FROM events WHERE project_id=$1", project).Scan(&envelopes); err != nil || envelopes != 2 {
 		t.Fatalf("envelopes = %d, want the error log and its retry only, %v", envelopes, err)
 	}
-	if record, err := store.GetLog(ctx, project, scope.EnvironmentID, info.ID); err != nil || record.EventID != info.ID {
+	if record, err := queries.GetLog(ctx, project, scope.EnvironmentID, info.ID); err != nil || record.EventID != info.ID {
 		t.Fatalf("log missing from ClickHouse: %+v, %v", record, err)
 	}
-	if traces, err := store.ListTraces(ctx, project, query.TraceFilter{EnvironmentID: scope.EnvironmentID, Limit: 10}); err != nil || len(traces) != 1 {
+	if traces, err := queries.ListTraces(ctx, project, query.TraceFilter{EnvironmentID: scope.EnvironmentID, Limit: 10}); err != nil || len(traces) != 1 {
 		t.Fatalf("trace lookup regressed: %+v, %v", traces, err)
 	}
 
@@ -152,23 +155,23 @@ func TestHybridLogsPreserveIncidentsAndRetry(t *testing.T) {
 		old := info
 		old.Timestamp = at.AddDate(0, 0, -10)
 		old.ID = telemetry.DeterministicID(old.Timestamp, project, "old")
-		if err := store.StoreLogs(ctx, project, scope.EnvironmentID, []telemetry.Event{old}); err != nil {
+		if err := telemetryStore.StoreLogs(ctx, project, scope.EnvironmentID, []telemetry.Event{old}); err != nil {
 			t.Fatal(err)
 		}
 		visible := func(want bool) {
 			t.Helper()
-			row, err := store.GetLog(ctx, project, scope.EnvironmentID, old.ID)
+			row, err := queries.GetLog(ctx, project, scope.EnvironmentID, old.ID)
 			if err != nil || (row.EventID == old.ID) != want {
 				t.Fatalf("old log visible=%t, want %t, error=%v", row.EventID == old.ID, want, err)
 			}
-			rows, err := store.ListLogs(ctx, project, query.LogFilter{EnvironmentID: scope.EnvironmentID, From: old.Timestamp, To: old.Timestamp, Limit: 10})
+			rows, err := queries.ListLogs(ctx, project, query.LogFilter{EnvironmentID: scope.EnvironmentID, From: old.Timestamp, To: old.Timestamp, Limit: 10})
 			if err != nil || (len(rows) == 1) != want {
 				t.Fatalf("list returned %d old logs, want visible=%t, error=%v", len(rows), want, err)
 			}
 		}
 		setDays := func(days int32) {
 			t.Helper()
-			if err := store.UpdateProjectRetention(ctx, project, &days, auth.Actor{}); err != nil {
+			if err := policies.UpdateProjectRetention(ctx, project, &days, auth.Actor{}); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -176,7 +179,7 @@ func TestHybridLogsPreserveIncidentsAndRetry(t *testing.T) {
 		setDays(30)
 		visible(true)
 		setDays(1)
-		if err := store.PruneProjectLogs(ctx, project, at, cfg.Storage.Retention.MaxAge); err != nil {
+		if err := maintenance.PruneProject(ctx, project, at, cfg.Storage.Retention.MaxAge); err != nil {
 			t.Fatal(err)
 		}
 		setDays(30)

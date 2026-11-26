@@ -37,8 +37,7 @@ func buildMetricsPipeline(
 	)
 }
 
-// buildIngestionPipeline constructs the event telemetry ingestion pipeline. It takes the
-// concrete writer because the hybrid store's promoted StoreEvents would refuse logs.
+// buildIngestionPipeline constructs the event telemetry ingestion pipeline.
 func buildIngestionPipeline(
 	cfg config.Config,
 	writer eventWriter,

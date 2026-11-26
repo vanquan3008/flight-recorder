@@ -91,7 +91,5 @@ func TestClickHouseStoresStayIndependent(t *testing.T) {
 				assertNoImport(t, filepath.Join(root, store), "/internal/storage/clickhouse/"+other)
 			}
 		}
-		assertNoImport(t, filepath.Join(root, store), "/internal/storage/hybrid")
 	}
-	assertNoImport(t, filepath.Join(root, "client"), "/internal/storage/hybrid")
 }

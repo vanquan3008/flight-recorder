@@ -8,19 +8,21 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/vanquan3008/tracepilot/internal/application/intelligence"
 	"github.com/vanquan3008/tracepilot/internal/application/live"
 	"github.com/vanquan3008/tracepilot/internal/application/notification"
 	"github.com/vanquan3008/tracepilot/internal/application/partition"
 	"github.com/vanquan3008/tracepilot/internal/application/retention"
+	"github.com/vanquan3008/tracepilot/internal/application/telemetryquery"
 	"github.com/vanquan3008/tracepilot/internal/auth"
 	"github.com/vanquan3008/tracepilot/internal/cache"
 	"github.com/vanquan3008/tracepilot/internal/config"
+	"github.com/vanquan3008/tracepilot/internal/domain/telemetry"
 	ingestotlp "github.com/vanquan3008/tracepilot/internal/ingest/otlp"
 	"github.com/vanquan3008/tracepilot/internal/observability/logging"
 	"github.com/vanquan3008/tracepilot/internal/observability/metrics"
-	"github.com/vanquan3008/tracepilot/internal/storage/hybrid"
 	"github.com/vanquan3008/tracepilot/internal/transport/httpapi"
 )
 
@@ -61,13 +63,13 @@ func runServer(arguments []string) int {
 	// 1. Database initialization
 	// ---------------------------------------------------------
 
-	store, err := hybrid.Open(appCtx, cfg)
+	connections, err := openDatabases(appCtx, cfg)
 	if err != nil {
 		logger.Error("storage initialization failed", "error", err)
 		return 1
 	}
-	defer store.Close()
-	database := store.Database
+	defer connections.lifecycle.Close()
+	database, telemetryStore := connections.metadata, connections.telemetry
 
 	if err := partition.Ensure(appCtx, database, cfg.Database.PartitionWindowDays); err != nil {
 		logger.Error("telemetry partition initialization failed", "error", err)
@@ -89,6 +91,10 @@ func runServer(arguments []string) int {
 		logger.Error("replay subsystem initialization failed", "error", err)
 		return 1
 	}
+	retentionPolicies := retention.NewPolicyService(database, cfg.Storage.Retention.MaxAge,
+		cfg.Cache.EffectiveScopeTTL(), cfg.Cache.EffectiveScopeLimit(), time.Now)
+	queries := telemetryquery.New(telemetryStore, telemetryStore, telemetryStore, database, retentionPolicies)
+	telemetryMaintenance := retention.NewTelemetryMaintenance(database, telemetryStore)
 
 	// ---------------------------------------------------------
 	// 3. Observability
@@ -105,8 +111,10 @@ func runServer(arguments []string) int {
 	// request; the configured project keeps working without a lookup.
 	scopes := newScopeCatalog(cfg.Ingestion, database)
 
-	ingestionPipeline := buildIngestionPipeline(cfg, eventWriter{store: store}, scopes, selfMetrics)
-	metricsPipeline := buildMetricsPipeline(cfg, store.StoreMetrics, scopes, selfMetrics)
+	ingestionPipeline := buildIngestionPipeline(cfg, eventWriter{telemetry: telemetryStore, incidents: database}, scopes, selfMetrics)
+	metricsPipeline := buildMetricsPipeline(cfg, func(ctx context.Context, scope config.IngestionConfig, points []telemetry.MetricDataPoint) error {
+		return telemetryStore.StoreMetrics(ctx, scope.ProjectID, scope.EnvironmentID, points)
+	}, scopes, selfMetrics)
 
 	// ---------------------------------------------------------
 	// 5. Transport servers & Caching
@@ -131,12 +139,17 @@ func runServer(arguments []string) int {
 	serverDependencies := httpapi.Dependencies{
 		Logger:  logger,
 		Metrics: selfMetrics,
-		Readiness: buildReadinessCheck(store,
+		Readiness: buildReadinessCheck(connections.lifecycle,
 			namedReadyComponent{name: "event pipeline", reporter: ingestionPipeline},
 			namedReadyComponent{name: "metrics pipeline", reporter: metricsPipeline},
 			namedReadyComponent{name: "OTLP listener", reporter: otlpServer},
 		),
-		Store:            store,
+		Backends: httpapi.Backends{
+			Access: database, Session: database, Users: database, Projects: database,
+			ProjectRetention: retentionPolicies, Members: database, IngestTokens: database,
+			Traces: queries, Logs: queries, Services: queries, Insights: queries, Performance: queries,
+			Incidents: database, IncidentAnalysis: queries, Webhooks: database,
+		},
 		TokenInvalidator: tokenCache,
 		StreamHub:        streamHub,
 	}
@@ -154,7 +167,7 @@ func runServer(arguments []string) int {
 		{"management-server", true, managementServer.Run},
 		{"otlp-server", true, otlpServer.Run},
 		{"intelligence", false, func(ctx context.Context) error {
-			return intelligence.Run(ctx, logger, buildObservabilityDetectionFunc(scopes, store, selfMetrics), intelligence.DefaultInterval)
+			return intelligence.Run(ctx, logger, buildObservabilityDetectionFunc(scopes, telemetryStore, database, selfMetrics, time.Now), intelligence.DefaultInterval)
 		}},
 		{"partition-maintenance", false, func(ctx context.Context) error {
 			return partition.Run(ctx, logger, database, cfg.Database.PartitionWindowDays, cfg.Database.PartitionCheckInterval)
@@ -179,7 +192,8 @@ func runServer(arguments []string) int {
 		Deliveries: cfg.Storage.Retention.DeliveryMaxAge,
 	}
 	components = append(components, component{"retention", false, func(ctx context.Context) error {
-		return retention.Run(ctx, logger, store, selfMetrics, policy, cfg.Storage.Retention.CheckInterval, cfg.Storage.Retention.BatchSize)
+		return retention.Run(ctx, logger, database, telemetryMaintenance, selfMetrics, policy,
+			cfg.Storage.Retention.CheckInterval, cfg.Storage.Retention.BatchSize, time.Now)
 	}})
 
 	// ---------------------------------------------------------

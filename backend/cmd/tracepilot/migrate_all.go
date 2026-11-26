@@ -5,7 +5,6 @@ import (
 	"errors"
 
 	"github.com/vanquan3008/tracepilot/internal/config"
-	"github.com/vanquan3008/tracepilot/internal/storage/hybrid"
 )
 
 func runAllMigrations(extraArguments []string) int {
@@ -13,7 +12,7 @@ func runAllMigrations(extraArguments []string) int {
 		return invalidMigrationArguments(errors.New("migrate all takes no extra arguments"))
 	}
 	return runMigrationCommand("all", "all", func(ctx context.Context, cfg config.Config) (string, error) {
-		if err := hybrid.MigrateAll(ctx, cfg); err != nil {
+		if err := migrateAll(ctx, cfg); err != nil {
 			return "", err
 		}
 		return "both database schemas are ready", nil

@@ -11,25 +11,36 @@ import (
 	"github.com/vanquan3008/tracepilot/internal/domain/analysis"
 	"github.com/vanquan3008/tracepilot/internal/observability/metrics"
 	"github.com/vanquan3008/tracepilot/internal/storage/clickhouse/rollups"
-	"github.com/vanquan3008/tracepilot/internal/storage/hybrid"
 )
 
+type detectionTelemetry interface {
+	DetectServiceEvidence(context.Context, config.IngestionConfig, time.Time) ([]analysis.DetectedEvidence, error)
+	DetectDependencyEvidence(context.Context, config.IngestionConfig, time.Time) ([]analysis.DetectedEvidence, error)
+	DetectMetricEvidence(context.Context, config.IngestionConfig, time.Time) ([]analysis.DetectedEvidence, error)
+	RefreshSpanRollups(context.Context) (int, error)
+}
+
+type incidentPersister interface {
+	PersistObservabilityIncident(context.Context, config.IngestionConfig, string, time.Time, []analysis.Evidence) error
+}
+
 type incidentStore struct {
-	store     *hybrid.Store
+	store     incidentPersister
 	ingestion config.IngestionConfig
 }
 
 func (store incidentStore) PersistObservabilityIncident(ctx context.Context, service string, end time.Time, evidence []analysis.Evidence) error {
 	return store.store.PersistObservabilityIncident(ctx, store.ingestion, service, end, evidence)
 }
-func detectionServiceFor(store *hybrid.Store, scope config.IngestionConfig) *detection.Service {
+
+func detectionServiceFor(telemetry detectionTelemetry, metadata incidentPersister, scope config.IngestionConfig) *detection.Service {
 	bind := func(detect func(context.Context, config.IngestionConfig, time.Time) ([]analysis.DetectedEvidence, error)) detection.Detector {
 		return detection.DetectorFunc(func(ctx context.Context, end time.Time) ([]analysis.DetectedEvidence, error) {
 			return detect(ctx, scope, end)
 		})
 	}
-	return detection.NewService(incidentStore{store: store, ingestion: scope},
-		bind(store.DetectServiceEvidence), bind(store.DetectDependencyEvidence), bind(store.DetectMetricEvidence))
+	return detection.NewService(incidentStore{store: metadata, ingestion: scope},
+		bind(telemetry.DetectServiceEvidence), bind(telemetry.DetectDependencyEvidence), bind(telemetry.DetectMetricEvidence))
 }
 
 const maxConcurrentDetection = 4
@@ -55,11 +66,11 @@ func refreshRollups(ctx context.Context, refresh func(context.Context) (int, err
 	}
 }
 
-func buildObservabilityDetectionFunc(scopes *scopeCatalog, store *hybrid.Store, selfMetrics *metrics.Registry) func(context.Context) (int, error) {
+func buildObservabilityDetectionFunc(scopes *scopeCatalog, telemetry detectionTelemetry, metadata incidentPersister, selfMetrics *metrics.Registry, clock func() time.Time) func(context.Context) (int, error) {
 	return func(ctx context.Context) (int, error) {
 		startedAt := time.Now()
 		rollupCtx, cancelRollup := context.WithTimeout(ctx, rollupTimeout)
-		minutes, rollupError := refreshRollups(rollupCtx, store.RefreshSpanRollups, rollups.Batch)
+		minutes, rollupError := refreshRollups(rollupCtx, telemetry.RefreshSpanRollups, rollups.Batch)
 		cancelRollup()
 		selfMetrics.ObserveSpanRollup(minutes, rollupError != nil)
 		all, listError := scopes.All(ctx)
@@ -83,7 +94,7 @@ func buildObservabilityDetectionFunc(scopes *scopeCatalog, store *hybrid.Store, 
 			total    int
 			runError = rollupError
 			wg       sync.WaitGroup
-			now      = time.Now()
+			now      = clock()
 		)
 		for range workerCount {
 			wg.Add(1)
@@ -94,7 +105,7 @@ func buildObservabilityDetectionFunc(scopes *scopeCatalog, store *hybrid.Store, 
 						return
 					}
 					scopeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-					count, evaluateError := detectionServiceFor(store, scope).Run(scopeCtx, now)
+					count, evaluateError := detectionServiceFor(telemetry, metadata, scope).Run(scopeCtx, now)
 					cancel()
 					mu.Lock()
 					total += count

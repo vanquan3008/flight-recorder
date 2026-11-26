@@ -10,7 +10,7 @@ through them and where new code belongs.
 ```text
 backend/internal/transport/httpapi/
 ├── server.go            Server, Dependencies, New, Run, middleware chain, rate-limit classes
-├── routes.go            Backend, feature assembly, route registration, OpenAPI, CORS methods
+├── routes.go            Backends, feature assembly, route registration, OpenAPI, CORS methods
 ├── api/                 the contract between the router and the features
 │   ├── route.go           Route, Handler, header names
 │   ├── errors.go          DecodeBody, Errors.Internal, Errors.Identity
@@ -79,15 +79,18 @@ flowchart LR
   features --> app["application: session, incident, replay, live"]
   access --> domain["auth"]
   features --> domain
-  root -.->|"Backend: the union of every feature's interface"| store["storage/hybrid<br/>PostgreSQL + ClickHouse"]
+  cmd --> postgres["PostgreSQL metadata adapter"]
+  cmd --> services["Telemetry query and retention services"]
+  services --> postgres
+  services --> clickhouse["ClickHouse telemetry adapter"]
 ```
 
-Dependencies point inward: no subpackage imports the root package. `routes.go` defines `Backend` as
-the union of `access.Store` and each feature's `Backend`, and `cmd/tracepilot` passes the hybrid
-store, so the transport never imports SQL code.
+The root package assembles `access` and the features. `routes.go` defines `Backends` with a field
+for each consumer interface. `cmd/tracepilot` supplies the PostgreSQL adapter for metadata, the
+query service for telemetry and incident analysis, and the retention policy service for settings.
 
-Some storage is optional. When the store does not implement the webhook, analysis insight, request
-performance, or incident analysis interfaces, `routes.go` passes nil and those routes answer 501.
+Webhook, analysis insight, request performance, and incident analysis backends are optional. Their
+routes answer 501 when the corresponding dependency is nil.
 Webhook routes also answer 501 while notifications are disabled. Without a replay runner the replay
 route is not mounted and the OpenAPI document leaves it out.
 
@@ -186,7 +189,7 @@ marks the server ready, and serves until the application context ends. Then it:
 3. calls `http.Server.Shutdown` for up to `TRACEPILOT_APP_SHUTDOWN_TIMEOUT`, and forces the
    remaining connections closed if it expires.
 
-The store is closed by `cmd/tracepilot` only after the supervisor returns, so active requests keep
+`cmd/tracepilot` closes the database clients after the supervisor returns, so active requests keep
 their dependencies until they finish. The only goroutines the API starts are the serve loop in `Run`
 and one access watcher per open stream, which stops with the stream's context.
 
@@ -199,8 +202,8 @@ and one access watcher per open stream, which stops with the stream's context.
    the project and environment from the `auth.Principal` the router passes in, never from headers.
 3. Decode bodies with `api.DecodeBody`, and serve paged lists with `api.ListPage`. Parse other
    queries with `render`. Pass `request.Context()` to every storage call.
-4. If the handler needs a new storage method, add it to the feature's `Backend` interface and
-   implement it in storage. The root `Backend` picks it up through the embedded interface.
+4. Declare new methods on the feature's consumer interface. Implement them in the relevant adapter
+   or application service and supply that dependency through `Backends`.
 5. Map expected errors explicitly and send everything else to `Errors.Internal`.
 6. Add a unit test next to the handler. `apitest` checks the new route's scope enforcement through
    the OpenAPI document, and the root OpenAPI contract tests check its declaration. Update
